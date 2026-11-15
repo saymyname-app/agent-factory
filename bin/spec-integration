@@ -136,6 +136,7 @@ import host_slots  # noqa: E402
 # keeps its verdict (af-8mjdai; lib/ci_test_reaper.py).
 REAPER = [sys.executable, str(Path(__file__).resolve().parents[1] / "lib" / "ci_test_reaper.py"), "--keep-status"]
 import test_budgets  # noqa: E402
+import trial_lock  # noqa: E402
 
 BUDGETS = test_budgets.load(Path(__file__).resolve().parents[1])
 DEFAULT_TIMEOUT = test_budgets.deadline(BUDGETS, "full")
@@ -394,18 +395,21 @@ def discard_work_tree(repo: Repo, path: Path) -> None:
 def work_tree(repo: Repo, convoy_id: str, commit: str) -> Iterator[Path]:
     """A work tree of its own for the merges of one pass, detached at
     `commit`: nothing is checked out in the repository itself. One left by
-    an interrupted pass is removed first."""
+    an interrupted pass is removed first. The pass holds the trial lock of
+    the tree while it lives: what a killed pass leaves running there is
+    stopped by bin/project-launch sweep (af-3vcqd3)."""
     base = Path(os.environ.get("SPEC_INTEGRATION_WORK_DIR") or lock_dir() / "agent-factory-spec-integration")
     path = base / safe(convoy_id)
-    discard_work_tree(repo, path)
     base.mkdir(parents=True, exist_ok=True)
-    proc = repo.git("worktree", "add", "--quiet", "--detach", str(path), commit)
-    if proc.returncode != 0:
-        raise Refusal(f"arbre de travail de fusion impossible à créer : {detail_of(proc)}")
-    try:
-        yield path
-    finally:
+    with trial_lock.hold(path):
         discard_work_tree(repo, path)
+        proc = repo.git("worktree", "add", "--quiet", "--detach", str(path), commit)
+        if proc.returncode != 0:
+            raise Refusal(f"arbre de travail de fusion impossible à créer : {detail_of(proc)}")
+        try:
+            yield path
+        finally:
+            discard_work_tree(repo, path)
 
 
 # --- open ------------------------------------------------------------------------

@@ -172,6 +172,7 @@ Every answer is one JSON object on stdout.
 | End code review of the Spec | `gc.flow.end_review` | convoy | T25: `rounds`, oldest first, each `commit` (the commit of the gate it read), `base` (the tip of the protected branch that commit holds), `outcome` (`favorable`, `unfavorable`, `incomplete`; computed), `findings` (`id`, `axis`, `blocking`, `summary`, `citation`, `demoted`; a Blocking Finding with its `repair_draft`, then `repair` or `repair_refused`), `coverage` (`axes`, `files`, `missing`, `missing_count`), `extent` (`files`, `commits`, `insertions`, `deletions`, `digest`), `models` (`authors`, `reviewer`, `same_model`), `recorded_by`, `conversation` when known, `launched_at`, `duration_seconds`, `at`; `request` while a review is open (`commit`, `base`, `extent`, `models`, `launches`: at most two, each `bead`, `at`, and `result: incomplete`; `at`); `stop` (`reason`: `end_review_no_result`, `end_review_repair_refused`; `detail`, `commit`, `at`, then `bead` and `raised`) |
 | Evidence Pack | `gc.flow.evidence_pack` | convoy | T27: `commit` (the commit of the integration branch the pack is tied to), `digest` (the fingerprint of its page), `path` (its folder, absolute), `conforming` (whether every condition of the end of the Spec it reports was met), `inadmissible` (the number of pieces the evidence store refused), `version` (`evidence-pack/v1`), `at` |
 | Last round of the end counted | `gc.flow.end_round` | convoy | T25: `commit` (the tip of the integration branch the last round of the end was counted for), `source` (what refused that tip first: `regression`, `fidelity`, `end_review`, `outcome_evaluation`; T26), `at`; T26, optional, for the early stops: `not_observed` (the user stories the Outcome Evaluation did not observe at that tip), `previous_not_observed` (those of the round before), `refused_before` (every story not observed at an earlier counted tip) — numbers of user stories, ascending, each once |
+| Stops of the rounds of the end lifted | `gc.flow.end_stop_lifts` | convoy | af-strhoy: `entries`, oldest first, each the `end_stop` record as it was (request included) with `answer` (`a`), `answered_at` (the date of the operator's answer) and `lifted_at`; `show` gives the list as `convoy.end_stop_lifts` (`[]` when none) |
 | Stop of the rounds of the end | `gc.flow.end_stop` | convoy | T26: `reason` (`end_rounds_exhausted`, `stories_not_reduced`, `story_refused_twice`), `detail` (one line), `commit` (the tip that was refused when the stop was written), `source` (as for `end_round`), `rounds` (the rounds counted then), `at`; then `request`, once the « non conforme » request reached the operator: `bead`, `commit` and `digest` (the Evidence Pack it carries), `page` (the absolute path of its page), `at` |
 | Delivered Outcome | `gc.flow.delivered` | convoy | T26: `commit` (the one commit of the integration branch the seven conditions of the end of the Spec were met on), `protected` (the tip of the protected branch that commit holds), `pack` (the fingerprint of the Evidence Pack generated there), `version` (`spec-end/v4`), `at` |
 | Acceptance | `gc.flow.acceptance` | convoy | T28: what the acceptance of the convoy holds before Benjamin's answer, tied to the one commit of the dossier he judges -- `commit`, `pack` (the fingerprint of that Evidence Pack), `at`; then `request`, once the Acceptance Request reached the operator: `bead`, `page` (the absolute path of the page of the pack), `at`; and `panne`, when the product of an Acceptance Session did not start at that commit: `detail` (one line), `at`, then `ticket` (the `repair` published for it) |
@@ -611,13 +612,23 @@ write** by any refusal of the end that counts a round or stops the rounds,
 and by `record-spec-end` at another commit: one commit more outdates every
 verdict.
 
-Not done here, on purpose: no command withdraws `end_stop` — what the
-operator answers to the request (another round, back to planning, abandon)
-is handed to the escalation door by `bin/acceptance-session record` (T28)
-and read by nothing: T29 records his answer to a Delivered Outcome only
-(`docs/OWNER_ANSWER.md`, Limits); and `set-counter --counter end_rounds
---value 0` resets the counter only, it clears neither `end_round` nor
-`end_stop`.
+`lift-end-stop --answer a --answered-at STAMP` withdraws `end_stop` on the
+operator's answer « a » (« Relancer un tour de réparation ») to its
+« non conforme » request, which `bin/convoy-advance` reads on the request's
+bead (af-strhoy). In one write: the stop, request included, is appended to
+`gc.flow.end_stop_lifts` with `answer`, `answered_at` and `lifted_at`;
+`end_stop` is removed; and the round the stop held back is counted for the
+tip it refused, as `end_refusal_values` counts any round (counter,
+`end_round` with its stories, Delivered withdrawn) but above the bound and
+never as a stop. The bound itself is unchanged: the next refusal of
+another tip stops the rounds again. When `end_round` already names that
+tip, no round is counted. Refused, nothing written: no stop, a stop whose
+request has not reached the operator, another answer than `a` (« b » and
+« c » leave the convoy stopped), a malformed date, or a date not later
+than `end_stop.request.at` (an answer to an earlier request of the bead).
+
+Not done here, on purpose: `set-counter --counter end_rounds --value 0`
+resets the counter only, it clears neither `end_round` nor `end_stop`.
 
 ### The acceptance record (T28)
 

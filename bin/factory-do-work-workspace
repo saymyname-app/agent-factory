@@ -80,10 +80,12 @@
 #       opened, worktree left as is.
 #
 #       Nothing to deliver (af-cjaj8o): when the branch's head is exactly
-#       the head of a PR already merged into <base-branch>, or its tree has
-#       no difference with origin/<base-branch>, `finish` pushes nothing,
-#       opens no PR, prints no URL, removes the worktree and exits 4. The
-#       caller must then leave the ticket's delivery record untouched.
+#       the head of a PR already merged into <base-branch>, its tree has
+#       no difference with origin/<base-branch>, or it has no commit ahead
+#       of origin/<base-branch> (af-hi8i79, also checked again after a
+#       rebase), `finish` opens no PR, prints no URL, removes the worktree
+#       and exits 4. The caller must then leave the ticket's delivery
+#       record untouched.
 #
 #   factory-do-work-workspace restart <bead-id> <worktree-path> <branch> <reason>
 #       O04: "starting over requires a written reason." The one supported
@@ -194,6 +196,15 @@ rebase_in_progress() {
     [ -d "$(git -C "$1" rev-parse --path-format=absolute --git-path "$d" 2>/dev/null)" ] && return 0
   done
   return 1
+}
+
+# no_commits_ahead <worktree-path> <base-branch> — prints 1 when HEAD has no
+# commit that origin/<base-branch> lacks; 0 otherwise, or when the count
+# cannot be read (a missing origin/<base-branch> is not "nothing to deliver").
+no_commits_ahead() {
+  local n
+  n=$(git -C "$1" rev-list --count "origin/$2..HEAD" 2>/dev/null) || n=""
+  [ "$n" = "0" ] && echo 1 || echo 0
 }
 
 # remote_tip_integrated <worktree-path> <branch> <sha> — af-j54vl1: true when
@@ -490,6 +501,13 @@ MSG
       git -C "$WT" diff --quiet "origin/$BASE_BRANCH" HEAD 2>/dev/null \
         && DELIVERED="it has no difference with origin/$BASE_BRANCH"
     fi
+    # af-hi8i79 (af-7curg1): a branch with no commit of its own, left behind
+    # an origin/<base> that moved on, differs from the base's tree, so the
+    # test above lets it through; gh then refuses "No commits between" and
+    # finish exited 0 with no URL, asking for an empty PR by hand.
+    if [ -z "$DELIVERED" ] && [ "$(no_commits_ahead "$WT" "$BASE_BRANCH")" = "1" ]; then
+      DELIVERED="it has no commit ahead of origin/$BASE_BRANCH"
+    fi
 
     case "$BASE_BRANCH" in
       integration/*)
@@ -531,6 +549,9 @@ MSG
         echo "factory-do-work-workspace: could not push $BRANCH (attempt $attempt of 3)" >&2
         exit 1
       }
+      # a rebase above drops the commits the base already holds
+      [ "$(no_commits_ahead "$WT" "$BASE_BRANCH")" = "1" ] \
+        && DELIVERED="it has no commit ahead of origin/$BASE_BRANCH once rebased"
     fi
 
     PR_URL=""

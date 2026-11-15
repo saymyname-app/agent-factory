@@ -71,11 +71,33 @@ EXHAUSTED_PROOF = (
     "test_the_answer_that_lifts_makes_the_ticket_and_its_descendants_startable_again"
 )
 
+END_STOP_LIFT_PROOF = (
+    "tests/convoy-stops-fixture-city-test.py::"
+    "test_the_answer_a_to_the_non_conforme_request_lifts_the_stop_and_grants_exactly_one_round_more"
+)
+
+
+def end_stop_contract() -> dict[str, object]:
+    """The stop of the rounds of the end (T26): its « non conforme » request
+    offers three issues; « a » is lifted by code (af-strhoy)."""
+    return {
+        "exit": operator("« non conforme » request through escalation-door on the convoy"),
+        "options": {
+            "Relancer un tour de réparation": transition(
+                "convoy-advance reads the answer « a » given after the request, then lift-end-stop counts "
+                "one round more and the next pass replays the end of the Spec", END_STOP_LIFT_PROOF),
+            "Retourner à la planification": operator("Planning Run: a Planning Exception on the Spec or its graph"),
+            "Abandonner": operator("Benjamin: nothing is merged into the protected branch"),
+        },
+    }
+
 
 # The keys are the public closed lists accepted by bin/convoy-state.  ``exit``
 # covers the stop/parking itself; ``options`` covers every choice its request
 # builder can offer.  ``*`` means any answer to an operator-authored request.
 CONTRACT = {
+    **{("end_stop", reason): end_stop_contract()
+       for reason in ("end_rounds_exhausted", "stories_not_reduced", "story_refused_twice")},
     # A repair that only moves a proof is no longer stopped all green, and one
     # stopped so before is resumed by code (cause proof_moved, af-oa2ci4,
     # tests/convoy-advance-resumes-stops-end-test.py), and so is, once, a stop
@@ -262,6 +284,8 @@ BUILDERS = {
                "outcome_repair_refused")}),
     ("bin/correction-round", "operator_request"): ({3, 4}, {("ticket_stop", "still_refused")}),
     ("bin/convoy-advance", "grouped_request"): ({2}, {("park", "resumes_exhausted")}),
+    ("bin/convoy-advance", "non_conforme_request"): ({3}, {
+        ("end_stop", reason) for reason in ("end_rounds_exhausted", "stories_not_reduced", "story_refused_twice")}),
 }
 
 
@@ -329,6 +353,7 @@ class StateExitContractTest(unittest.TestCase):
             *(('ticket_stop', reason) for reason in literal_tuple("lib/convoy_state.py", "STOP_REASONS")),
             *(('outcome_stop', reason) for reason in literal_tuple("lib/convoy_state.py", "OUTCOME_STOPS")),
             *(('park', reason) for reason in literal_tuple("lib/convoy_state.py", "PARK_CAUSES")),
+            *(('end_stop', reason) for reason in literal_tuple("lib/convoy_state.py", "END_STOPS")),
         }
         self.assertEqual(expected, set(CONTRACT), "reason added/removed without updating the class-I exit table")
         for key, entry in CONTRACT.items():

@@ -4742,6 +4742,64 @@ class ConvoyStateTest(unittest.TestCase):
         self.assert_refused_and_nothing_written("end-stop-raised", CONVOY, mention="bead")
         self.assertNotIn("request", self.end_stop())
 
+    def raised_stopped_convoy(self):
+        """A stopped convoy whose « non conforme » request reached the
+        operator. Returns the refused tip and the date of the request."""
+        tip = self.stopped_convoy()
+        self.ok(*self.pack(tip, "--non-conforming"))
+        self.ok("end-stop-raised", CONVOY, "--bead", CONVOY)
+        return tip, self.end_stop()["request"]["at"]
+
+    def test_lift_end_stop_keeps_the_stop_with_the_answer_and_counts_the_one_round_it_held_back(self):
+        tip, _ = self.raised_stopped_convoy()
+        base = self.git("rev-parse", "main")
+        stop = self.end_stop()
+        self.write_log.write_text("")
+
+        self.ok("lift-end-stop", CONVOY, "--answer", "a", "--answered-at", "2999-01-01T00:00:00Z")
+
+        # The lift and the round are one tracker write.
+        self.assertEqual(1, len(self.writes()))
+        convoy = self.show()["convoy"]
+        self.assertIsNone(convoy["end_stop"])
+        [lift] = convoy["end_stop_lifts"]
+        self.assertEqual(stop, {name: value for name, value in lift.items()
+                                if name not in ("answer", "answered_at", "lifted_at")})
+        self.assertEqual(("a", "2999-01-01T00:00:00Z"), (lift["answer"], lift["answered_at"]))
+        # One round more than the bound, for the tip the stop refused.
+        self.assertEqual({"end_rounds": 3}, convoy["counters"])
+        self.assertEqual((tip, "regression"), (convoy["end_round"]["commit"], convoy["end_round"]["source"]))
+        self.assertFalse(self.show()["unruled"])
+        # Exactly one round more: the next refusal stops the rounds again.
+        self.ok("clear-integration-red", CONVOY)
+        self.ok(*self.red_of_the_end(base, base))
+        self.assertEqual({"end_rounds": 3}, self.show()["convoy"]["counters"])
+        self.assertEqual(("end_rounds_exhausted", 3), (self.end_stop()["reason"], self.end_stop()["rounds"]))
+        self.assertEqual(1, len(self.show()["convoy"]["end_stop_lifts"]))
+
+    def test_lift_end_stop_refuses_a_convoy_that_is_not_stopped(self):
+        self.integrated()
+        self.assert_refused_and_nothing_written(
+            "lift-end-stop", CONVOY, "--answer", "a", "--answered-at", "2999-01-01T00:00:00Z", mention="pas arrêtés")
+
+    def test_lift_end_stop_refuses_a_stop_whose_request_has_not_reached_the_operator(self):
+        self.stopped_convoy()
+        self.assert_refused_and_nothing_written(
+            "lift-end-stop", CONVOY, "--answer", "a", "--answered-at", "2999-01-01T00:00:00Z", mention="pas encore remontée")
+        self.assertIsNotNone(self.end_stop())
+
+    def test_lift_end_stop_refuses_another_answer_and_an_answer_not_later_than_the_request(self):
+        _, asked = self.raised_stopped_convoy()
+        for answer, at, mention in (("b", "2999-01-01T00:00:00Z", "seule la réponse"),
+                                    ("c", "2999-01-01T00:00:00Z", "seule la réponse"),
+                                    ("a", asked, "pas postérieure"),
+                                    ("a", "2000-01-01T00:00:00Z", "pas postérieure"),
+                                    ("a", "hier", "date de la réponse")):
+            with self.subTest(answer=answer, at=at):
+                self.assert_refused_and_nothing_written(
+                    "lift-end-stop", CONVOY, "--answer", answer, "--answered-at", at, mention=mention)
+        self.assertIn("request", self.end_stop())
+
     def test_a_stop_of_the_rounds_of_the_end_written_outside_the_command_is_a_state_without_rule(self):
         tip, _ = self.integrated()
         for record in ({"reason": "lassitude", "detail": "x", "commit": tip, "source": "regression", "rounds": 2, "at": "x"},

@@ -138,6 +138,7 @@ import ci_test_reaper  # noqa: E402
 import convoy_state  # noqa: E402
 import host_slots  # noqa: E402
 import test_budgets  # noqa: E402
+import trial_lock  # noqa: E402
 
 BUDGETS = test_budgets.load(BIN.parent)
 COMMAND_TIMEOUT = int(BUDGETS["criterion_test_seconds"])
@@ -1187,25 +1188,28 @@ def cmd_check(args: argparse.Namespace) -> int:
     """The check of one step. It writes nothing: bin/evidence-capture runs it
     and seals its report. It is the subreaper of all it starts: what a
     command killed at its deadline left, and the reaper with it, dies with
-    the check (af-8mjdai)."""
+    the check (af-8mjdai). Killed itself, it can kill nothing: the lock it
+    holds on its folder tells bin/project-launch sweep that what is left
+    there has no trial any more (af-3vcqd3)."""
     reaping = ci_test_reaper.subreaper()
     work = Path(tempfile.mkdtemp(prefix="tdd-step-"))
-    try:
-        proof = CHECKS[args.step](Check(args, work))
-    except NotNewFlow as exc:
-        print(json.dumps(exc.answer, sort_keys=True, ensure_ascii=False))
-        return EXIT_NOT_NEW_FLOW
-    except Refusal as exc:
-        answer: dict[str, Any] = {"ok": False, "error": str(exc)}
-        if exc.stop:
-            answer["stop"] = exc.stop
-        print(json.dumps(answer, sort_keys=True, ensure_ascii=False))
-        return EXIT_REFUSED
-    finally:
-        if reaping:
-            for pid, line in ci_test_reaper.kill_left().items():
-                print(f"{PROGRAM}: left alive by the check, now killed: {pid} {line}", file=sys.stderr, flush=True)
-        shutil.rmtree(work, ignore_errors=True)
+    with trial_lock.hold(work):
+        try:
+            proof = CHECKS[args.step](Check(args, work))
+        except NotNewFlow as exc:
+            print(json.dumps(exc.answer, sort_keys=True, ensure_ascii=False))
+            return EXIT_NOT_NEW_FLOW
+        except Refusal as exc:
+            answer: dict[str, Any] = {"ok": False, "error": str(exc)}
+            if exc.stop:
+                answer["stop"] = exc.stop
+            print(json.dumps(answer, sort_keys=True, ensure_ascii=False))
+            return EXIT_REFUSED
+        finally:
+            if reaping:
+                for pid, line in ci_test_reaper.kill_left().items():
+                    print(f"{PROGRAM}: left alive by the check, now killed: {pid} {line}", file=sys.stderr, flush=True)
+            shutil.rmtree(work, ignore_errors=True)
     print(json.dumps(proof, indent=2, sort_keys=True, ensure_ascii=False))
     return 0
 
