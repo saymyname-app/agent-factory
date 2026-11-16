@@ -76,9 +76,8 @@
     },
     "delivery-reviewer": {
       "label": "Relecteur de code (rôle de livraison, lecture seule)",
-      "why": "T03 (af-pbxbgj) : même règle que delivery-author. Lecture seule : seul un profil lancé par bin/delivery-role-sandbox convient. Codex en tête (af-npz9v1.12, Benjamin 2026-10-17 « Essayer un autre fournisseur ») : la revue tourne sur un autre modèle que l'auteur (Claude), après son essai d'adoption ; Claude lecture seule en repli quand le pool openai est épuisé ou en erreur.",
+      "why": "T03 (af-pbxbgj) : même règle que delivery-author. Lecture seule : seul un profil lancé par bin/delivery-role-sandbox convient. Claude seul depuis le 16/11/2026 (Benjamin, ses mots, 20:39 Paris : « Claude d'abord, Codex gratuit ensuite » ; il ne renouvelle pas ChatGPT Pro et codex exec refuse tous les modèles sur l'hôte, af-q55qqx). Remplace, tant que Codex ne fonctionne pas sans abonnement, son choix du 2026-10-17 « Essayer un autre fournisseur » (Codex en tête, af-npz9v1.12). Le profil codex-readonly reste défini pour y revenir après un essai d'adoption.",
       "chain": [
-        "codex-readonly",
         "claude-readonly"
       ]
     },

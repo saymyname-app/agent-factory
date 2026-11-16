@@ -230,11 +230,12 @@ silent**: `same_model: true` is stored with the verdicts, and
 `model_independence` says « relecture non indépendante… » in the output of
 `review`, of `remaining` (text included), of `check` and of the publication
 door. Since af-npz9v1.12 (Benjamin, 2026-10-17: « Essayer un autre
-fournisseur ») the reviewer role runs on Codex first (`codex-readonly`,
-tried by `bin/role-adoption-trial`, chain in `config/provider-policy.json`),
-so a graph written by a Claude session gets an independent reviewer; it is
-flagged this way again only while the OpenAI pool is exhausted and
-`bin/provider-failover` falls back to `claude-readonly`. A review whose
+fournisseur ») the reviewer role ran on Codex first (`codex-readonly`,
+tried by `bin/role-adoption-trial`, chain in `config/provider-policy.json`).
+Since 2026-11-16 (Benjamin: « Claude d'abord, Codex gratuit ensuite », no
+ChatGPT Pro renewal, af-q55qqx) its chain is `claude-readonly` alone, so a
+graph written by a Claude session is flagged this way until a free Codex
+lane is tried again. A review whose
 author model is not declared, or
 whose reviewer model cannot be read, is refused.
 
