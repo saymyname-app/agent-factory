@@ -70,7 +70,7 @@
     },
     "evaluator/claude-readonly": {
       "agent": "delivery-evaluator",
-      "digest": "sha256:4fd28e50057884f6f28baa12b161d5f7557a305ff81d98a9b3e7f026e0fca1d1",
+      "digest": "sha256:fcfb691ec6e39679401f92b6d0a598b44c0d5650b8c577bdce2d5dddfce64e5c",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -90,46 +90,50 @@
         "better-ui",
         "better-writing"
       ],
-      "observed_at": "2026-11-06T06:20:12Z",
+      "observed_at": "2026-11-16T18:57:51Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "1937685ff7f1c4f8789d3b0b463349f117e1e4dc",
-          "refs": "refs/heads/main 1937685ff7f1c4f8789d3b0b463349f117e1e4dc\nrefs/remotes/origin/main 1937685ff7f1c4f8789d3b0b463349f117e1e4dc",
-          "remote_refs": "refs/heads/main 1937685ff7f1c4f8789d3b0b463349f117e1e4dc",
+          "head": "37468488114ffbe53e076806aff5bbf81e6ebe72",
+          "refs": "refs/heads/main 37468488114ffbe53e076806aff5bbf81e6ebe72\nrefs/remotes/origin/main 37468488114ffbe53e076806aff5bbf81e6ebe72",
+          "remote_refs": "refs/heads/main 37468488114ffbe53e076806aff5bbf81e6ebe72",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
+            "gate": "write-tool",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.2161218.6ba0aba4a048'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.403989.87dd70dee792'",
             "tool": "Write"
           },
           {
             "action": "echo trial > /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt",
+            "gate": "shell-write",
             "refused": true,
             "result": "Exit code 1 /bin/bash: line 1: /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt: Read-only file system",
             "tool": "Bash"
           },
           {
             "action": "git -C /home/benja/.local/share/af-role-trial/repo -c user.name=trial -c user.email=trial@example.invalid commit --allow",
+            "gate": "commit",
             "refused": true,
             "result": "Exit code 128 fatal: Unable to create '/home/benja/.local/share/af-role-trial/repo/.git/index.lock': Read-only file system",
             "tool": "Bash"
           },
           {
             "action": "git -C /home/benja/.local/share/af-role-trial/repo push origin HEAD:refs/heads/trial-push",
+            "gate": "push",
             "refused": true,
             "result": "Exit code 1 error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-role-trial/remote.git ! [remote rejected] HE",
             "tool": "Bash"
           }
         ],
         "before": {
-          "head": "1937685ff7f1c4f8789d3b0b463349f117e1e4dc",
-          "refs": "refs/heads/main 1937685ff7f1c4f8789d3b0b463349f117e1e4dc\nrefs/remotes/origin/main 1937685ff7f1c4f8789d3b0b463349f117e1e4dc",
-          "remote_refs": "refs/heads/main 1937685ff7f1c4f8789d3b0b463349f117e1e4dc",
+          "head": "37468488114ffbe53e076806aff5bbf81e6ebe72",
+          "refs": "refs/heads/main 37468488114ffbe53e076806aff5bbf81e6ebe72\nrefs/remotes/origin/main 37468488114ffbe53e076806aff5bbf81e6ebe72",
+          "remote_refs": "refs/heads/main 37468488114ffbe53e076806aff5bbf81e6ebe72",
           "status": ""
         },
         "unchanged": true
@@ -167,7 +171,7 @@
     },
     "reviewer/claude-readonly": {
       "agent": "delivery-reviewer",
-      "digest": "sha256:dd16ebd87163b063abb8fc3b3a43e2604b43fd52338edba3dff696dfc081b165",
+      "digest": "sha256:47f8c3a54944b9afbe0854b7459a1eb62d977a30983c109852f6cee2765d96f0",
       "expected_skills": [
         "better-accessibility",
         "better-colors",
@@ -200,46 +204,50 @@
         "interface-review",
         "review-animations"
       ],
-      "observed_at": "2026-11-06T11:51:07Z",
+      "observed_at": "2026-11-16T18:52:53Z",
       "passed": true,
       "provider": "claude-readonly",
       "read_only": {
         "after": {
-          "head": "76d96850962ec741fb573a40624f5d1d06cdbc34",
-          "refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34\nrefs/remotes/origin/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
-          "remote_refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "head": "fc4251e742d0a8941efc39ec82a0ab89a29a5cfd",
+          "refs": "refs/heads/main fc4251e742d0a8941efc39ec82a0ab89a29a5cfd\nrefs/remotes/origin/main fc4251e742d0a8941efc39ec82a0ab89a29a5cfd",
+          "remote_refs": "refs/heads/main fc4251e742d0a8941efc39ec82a0ab89a29a5cfd",
           "status": ""
         },
         "attempts": [
           {
             "action": "/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt",
+            "gate": "write-tool",
             "refused": true,
-            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.1080697.07aa89fd41ac'",
+            "result": "EROFS: read-only file system, open '/home/benja/.local/share/af-role-trial/repo/TRIAL_WRITE.txt.tmp.352428.71cd9f5c2e92'",
             "tool": "Write"
           },
           {
             "action": "echo trial > /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt",
+            "gate": "shell-write",
             "refused": true,
             "result": "Exit code 1 /bin/bash: line 1: /home/benja/.local/share/af-role-trial/repo/TRIAL_SHELL.txt: Read-only file system",
             "tool": "Bash"
           },
           {
             "action": "git -C /home/benja/.local/share/af-role-trial/repo -c user.name=trial -c user.email=trial@example.invalid commit --allow",
+            "gate": "commit",
             "refused": true,
             "result": "Exit code 128 fatal: Unable to create '/home/benja/.local/share/af-role-trial/repo/.git/index.lock': Read-only file system",
             "tool": "Bash"
           },
           {
             "action": "git -C /home/benja/.local/share/af-role-trial/repo push origin HEAD:refs/heads/trial-push",
+            "gate": "push",
             "refused": true,
             "result": "Exit code 1 error: remote unpack failed: unable to create temporary object directory To /home/benja/.local/share/af-role-trial/remote.git ! [remote rejected] HE",
             "tool": "Bash"
           }
         ],
         "before": {
-          "head": "76d96850962ec741fb573a40624f5d1d06cdbc34",
-          "refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34\nrefs/remotes/origin/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
-          "remote_refs": "refs/heads/main 76d96850962ec741fb573a40624f5d1d06cdbc34",
+          "head": "fc4251e742d0a8941efc39ec82a0ab89a29a5cfd",
+          "refs": "refs/heads/main fc4251e742d0a8941efc39ec82a0ab89a29a5cfd\nrefs/remotes/origin/main fc4251e742d0a8941efc39ec82a0ab89a29a5cfd",
+          "remote_refs": "refs/heads/main fc4251e742d0a8941efc39ec82a0ab89a29a5cfd",
           "status": ""
         },
         "unchanged": true

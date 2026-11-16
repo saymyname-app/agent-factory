@@ -1,0 +1,8 @@
+# One probe of the Cockpit from outside its process (bin/cockpit-probe).
+[Unit]
+Description=Agent Factory Cockpit probe (port 8173 and tailnet URL)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/agent-factory
+ExecStart=/bin/bash -lc 'exec %h/agent-factory/bin/cockpit-probe'

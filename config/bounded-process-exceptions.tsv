@@ -12,8 +12,6 @@
 2026-10-30	bin/outcome-evaluation:run	Outcome Evaluation wrapper retains its detached-launch mode.
 2026-10-30	bin/outcome-promote:run	Outcome promotion wrapper retains its detached-launch mode.
 2026-10-30	bin/project-isolation-oracle:sandboxed_read	Sandboxed read is outside study B's open set.
-2026-10-30	bin/reversibility-check:read_diff	GitHub diff read is outside study B's open set.
-2026-10-30	bin/reversibility-check:read_diff#2	Local Git diff read is outside study B's open set.
 2026-10-30	bin/role-adoption-trial:TrialCity.run	Disposable trial command wrapper is outside study B's open set.
 2026-10-30	bin/ticket-evaluation:run	Ticket Evaluation wrapper retains its detached-launch mode.
 2026-10-30	bin/ticket-graph-publish:notify_mayor	Mayor notification is an existing single control-plane command.

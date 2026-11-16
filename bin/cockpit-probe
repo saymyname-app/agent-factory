@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""cockpit-probe — is the Cockpit answering, seen from outside its process?
+
+    cockpit-probe            one probe; exit 0 when both addresses answer 200
+
+Run every 5 minutes by `cockpit-probe.timer` (config/systemd/, docs/COCKPIT.md
+« Sous systemd »). It asks two addresses for `/`: the Cockpit's own port on
+127.0.0.1 (`COCKPIT_PORT`, 8173) and the address Benjamin opens
+(`public_url` of cockpit-local.json, the tailnet URL behind Tailscale Serve).
+
+- An address that does not answer 200 within 15 s is down.
+- When the state changes (up → down, down → up), one Pushover notification
+  says so, with the address and what it answered. A state that stays the
+  same says nothing more.
+- After two probes in a row where the local port is down, it restarts the
+  Cockpit's unit once (`COCKPIT_PROBE_RESTART`, by default
+  `systemctl --user restart cockpit.service`). That catches a process that
+  is alive but no longer answers, which `Restart=on-failure` cannot see.
+
+Its state lives beside the pid file: `cockpit-probe-state.json`.
+
+Intent (Benjamin, his words, 16/11/2026, af-q55qqx decision 10): « Pilotage
+multi-projets » — the Cockpit « tourne sous systemd avec une sonde externe ».
+Mechanism (agent interpretation): the Cockpit live stopped on 28/10/2026 at
+18:55 Paris and nobody knew for 19 days; Restart=on-failure brings back a
+crash, this probe reports everything else.
+"""
+import json
+import os
+import shlex
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "lib"))
+from cockpit.core.config import Config  # noqa: E402
+from cockpit.notify.pushover import PushoverAdapter  # noqa: E402
+from cockpit.notify.secrets import read_secrets_from_file  # noqa: E402
+
+TIMEOUT_SECONDS = 15
+RESTART_AFTER = 2
+DEFAULT_RESTART = "systemctl --user restart cockpit.service"
+
+
+def answer(url):
+    """What ``url`` answered: an HTTP status, or the reason it did not."""
+    try:
+        with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as resp:
+            return resp.status
+    except urllib.error.HTTPError as error:
+        return error.code
+    except (OSError, ValueError) as error:
+        return type(error).__name__ + (": %s" % error.reason if hasattr(error, "reason") else "")
+
+
+def read_state(path):
+    try:
+        with open(path) as fh:
+            state = json.load(fh)
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_state(path, state):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(state, fh)
+    os.replace(tmp, path)
+
+
+def main():
+    config = Config()
+    addresses = [("port local", "http://127.0.0.1:%d/" % config.port)]
+    public = (config.public_url or "").rstrip("/")
+    if public and public + "/" != addresses[0][1]:
+        addresses.append(("adresse tailnet", public + "/"))
+    seen = [(name, url, answer(url)) for name, url in addresses]
+    down = [(name, url, said) for name, url, said in seen if said != 200]
+    for name, url, said in seen:
+        print("cockpit-probe: %s %s → %s" % (name, url, said))
+
+    path = os.path.join(os.path.dirname(config.pid_file), "cockpit-probe-state.json")
+    state = read_state(path)
+    was_up = state.get("up", True)
+    local_down = any(name == "port local" for name, _, _ in down)
+    failures = state.get("local_failures", 0) + 1 if local_down else 0
+
+    if bool(down) == was_up:
+        if down:
+            message = "Cockpit injoignable : " + " ; ".join("%s %s → %s" % d for d in down)
+        else:
+            message = "Cockpit de nouveau joignable (%s)." % ", ".join(url for _, url, _ in seen)
+        try:
+            PushoverAdapter(lambda: read_secrets_from_file(config.pushover_secrets_file),
+                            url=config.pushover_url).send("Cockpit", message, 1 if down else 0)
+            print("cockpit-probe: notifié — %s" % message)
+        except Exception as error:  # a failed notification must not stop the probe
+            print("cockpit-probe: notification impossible : %s" % error, file=sys.stderr)
+
+    if failures >= RESTART_AFTER:
+        command = shlex.split(os.environ.get("COCKPIT_PROBE_RESTART", DEFAULT_RESTART))
+        completed = subprocess.run(command, capture_output=True, text=True)
+        print("cockpit-probe: redémarrage (%s) → %d %s" % (" ".join(command), completed.returncode,
+                                                           completed.stderr.strip()))
+        failures = 0
+
+    write_state(path, {"up": not down, "at": int(time.time()), "local_failures": failures,
+                       "seen": [[name, url, str(said)] for name, url, said in seen]})
+    return 1 if down else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

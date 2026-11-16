@@ -6,6 +6,7 @@ verbatim in substance: five of its eleven migrations would have deserved a
 declaration, and nothing noticed at the time.
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -207,6 +208,68 @@ class Cli(unittest.TestCase):
                                     text=True, capture_output=True)
             self.assertEqual(3, result.returncode, result.stdout + result.stderr)
             self.assertIn("V2__drop.sql", result.stdout)
+
+
+# A fake gh for --pr mode. Like the real one it refuses the diff of a pull
+# request above 300 files (HTTP 406, PR #889); it answers the PR, its file list
+# (as `--jq` would print it) and a file's raw content at a commit.
+FAKE_GH = r"""#!/usr/bin/env python3
+import json, os, sys
+pr = json.load(open(os.environ["FAKE_PR"]))
+args = sys.argv[1:]
+with open(os.environ["FAKE_PR"] + ".log", "a") as log:
+    log.write(" ".join(args) + "\n")
+if args[:2] == ["pr", "diff"]:
+    if pr["changed_files"] > 300:
+        sys.exit("HTTP 406: Sorry, the diff exceeded the maximum number of files (300). (too_large)")
+    sys.exit("this fake serves no diff")
+path = [a for a in args if a.startswith("repos/")][0]
+if path.endswith("/pulls/7"):
+    print(json.dumps({"head": {"sha": "abc123"}, "changed_files": pr["changed_files"]}))
+elif "/pulls/7/files?" in path and "--paginate" in args:
+    for f in pr["files"]:
+        print(json.dumps(f))
+elif "/contents/" in path and path.endswith("?ref=abc123"):
+    print(pr["contents"][path.split("/contents/", 1)[1].split("?")[0]], end="")
+else:
+    sys.exit(f"fake gh: unexpected {args}")
+"""
+
+
+class PullRequestMode(unittest.TestCase):
+    def run_pr(self, files, changed_files, contents):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "gh").write_text(FAKE_GH, encoding="utf-8")
+            (Path(tmp) / "gh").chmod(0o755)
+            fixture = Path(tmp) / "pr.json"
+            fixture.write_text(json.dumps({"files": files, "changed_files": changed_files,
+                                           "contents": contents}), encoding="utf-8")
+            env = {**os.environ, "PATH": f"{tmp}:{os.environ['PATH']}", "FAKE_PR": str(fixture)}
+            result = subprocess.run([sys.executable, str(ROOT / "bin" / "reversibility-check"),
+                                     "--pr", "7", "--repo", "o/r", "--json"],
+                                    text=True, capture_output=True, env=env)
+            return result, (Path(tmp) / "pr.json.log").read_text(encoding="utf-8")
+
+    def test_a_pr_too_large_for_a_diff_is_checked_from_its_file_list(self):
+        files = [{"filename": f"src/f{i}.py", "status": "modified", "previous_filename": None}
+                 for i in range(348)]
+        files += [{"filename": f"{MIG}/V12__drop.sql", "status": "added", "previous_filename": None},
+                  {"filename": f"{MIG}/V3__renamed.sql", "status": "renamed",
+                   "previous_filename": f"{MIG}/V3__init.sql"}]
+        result, calls = self.run_pr(files, 350, {f"{MIG}/V12__drop.sql": V4})
+        self.assertEqual(3, result.returncode, result.stderr)
+        verdicts = {f["file"].rsplit("/", 1)[1]: (f["verdict"], f["classes"])
+                    for f in json.loads(result.stdout)["findings"]}
+        self.assertEqual({"V12__drop.sql": ("needs_declaration", ["schema_loss"]),
+                          "V3__renamed.sql": ("history_rewrite", [])}, verdicts)
+        self.assertNotIn("pr diff", calls)
+
+    def test_a_partial_file_list_is_not_judged(self):
+        files = [{"filename": f"src/f{i}.py", "status": "modified", "previous_filename": None}
+                 for i in range(3000)]
+        result, _ = self.run_pr(files, 3001, {})
+        self.assertEqual(2, result.returncode, result.stdout)
+        self.assertIn("lists 3000 of its 3001 files", result.stderr)
 
 
 if __name__ == "__main__":
