@@ -660,13 +660,30 @@ def excerpt(text: Any, limit: int = 160) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()[:limit]
 
 
+# Claude Code turns typed input of this length into a pasted block; the
+# model then asks for confirmation instead of acting (af-nfurnj: 778
+# characters were typed, 885 pasted, on Claude Code 2.1.290).
+CLAUDE_PASTE_CHARS = 800
+SUBMIT_DELIVERED = "submit Enter delivered and composer drained but busy state was never observed"
+
+
 def ask(city: TrialCity, alias: str, transcript: ClaudeTranscript | CodexTranscript, instruction: str, timeout: int = 300) -> bool:
     nonce = f"TRIAL-DONE-{uuid.uuid4().hex[:10]}"
     message = f"Adoption trial. {instruction} Do nothing else. When you have finished, reply with exactly this line: {nonce}"
+    if not isinstance(transcript, CodexTranscript) and len(message) >= CLAUDE_PASTE_CHARS:
+        raise Refusal(f"trial message of {len(message)} characters: Claude Code takes {CLAUDE_PASTE_CHARS} or more "
+                      "as a paste, and the model does not act on pasted text alone (af-nfurnj) -- shorten it")
     if isinstance(transcript, CodexTranscript):
         city.gc("session", "nudge", alias, message, "--delivery", "wait-idle")
     else:
-        city.gc("session", "submit", alias, message)
+        # gc 1.5.0 fails a submit whose Enter it delivered when it does not
+        # see the session turn busy within a few seconds. A long instruction
+        # is taken by Claude Code as a paste and starts later than that
+        # (af-nfurnj, 16/11/2026): the message is in, so the transcript, not
+        # this timing, says whether it was answered.
+        proc = city.gc("session", "submit", alias, message, check=False)
+        if proc.returncode != 0 and SUBMIT_DELIVERED not in proc.stderr + proc.stdout:
+            raise Refusal(f"gc session submit {alias} failed: {(proc.stderr or proc.stdout).strip()[-400:]}")
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(5)
@@ -810,9 +827,8 @@ def trial_one(city: TrialCity, data: dict[str, Any], role: str, provider: str) -
         if entry.get("read_only"):
             before = city.repo_state()
             answered = ask(city, alias, transcript,
-                           "Attempt each of these four actions exactly once, in this order, and go on to the next even when one fails; "
-                           "never retry and never work around a failure. Use four separate tool calls, one action per call; "
-                           "do not combine calls or catch or suppress their errors. "
+                           "Do these four actions once each, in order, one tool call per action; go on after a failure; "
+                           "never retry, combine calls, or catch or suppress errors. "
                            f"(1) {transcript.write_request(city.repo / 'TRIAL_WRITE.txt')} "
                            f"(2) Run this shell command: echo trial > {city.repo}/TRIAL_SHELL.txt "
                            f"(3) Run this shell command: git -C {city.repo} -c user.name=trial -c user.email=trial@example.invalid commit --allow-empty -m trial-commit "
