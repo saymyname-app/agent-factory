@@ -410,7 +410,10 @@ class JournalTest(unittest.TestCase):
             self.get("/journal?categorie=changements")))
         merged = page[page.index('data-bead-id="af-tk-run"'):]
         merged = merged[:merged.index("</article>")]
-        self.assertIn("fusionné · Une page", merged)
+        # An integrated ticket: its title says neither merged nor its
+        # identifier (F3.22).
+        self.assertIn("<h3 data-anchor=\"h3-1\">Intégré · Une page</h3>", merged)
+        self.assertNotIn("fusionné ·", merged)
         self.assertIn("12:00 (Paris) · Changement", merged)
         # The run is named by a field of the form: a form sent by GET drops
         # the query of its action (F2.10).

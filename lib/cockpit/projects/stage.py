@@ -331,7 +331,7 @@ def _convoy_chantiers_all(beads, promotion_results=None, pack_reads=None):
         termine = False
         a_regarder = ""
         if bead.get("status") != "closed":
-            detail = "%d/%d tickets mergés · %d en cours · %d en PR" % (merged, total, en_cours, en_pr)
+            detail = "%d/%d tickets fermés · %d en cours · %d en PR" % (merged, total, en_cours, en_pr)
             stage = LIVRAISON
             # spec .44: "convoi ouvert sans ticket prêt, en cours ni en
             # PR" -- the silence-is-not-a-blocage carve-out means an empty
@@ -353,7 +353,7 @@ def _convoy_chantiers_all(beads, promotion_results=None, pack_reads=None):
                 termine = True
                 etat_val, cible = _etat_for(bead, extra_beads=tickets)
             elif not accepted:
-                detail = "Livré : %d/%d tickets mergés" % (merged, total)
+                detail = "Livré : %d/%d tickets fermés" % (merged, total)
                 stage = LIVRE
                 etat_val, cible = _etat_for(bead, extra_beads=tickets, a_toi_de_jouer=True, cible=bead_id)
             else:

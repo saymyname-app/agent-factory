@@ -109,7 +109,7 @@ from cockpit.core.readmodel import PARIS
 from cockpit.projects.decisions import decisions_line
 from cockpit.projects.outcome import ABANDONED, ACCEPTED, MERGED, MERGING, VOIDED, read_outcome
 from cockpit.runs.derive import (AGENT, CODE, DONE, HUMAN, LIVE, PASSED, REFUSED, STOPPED, WAIT, WAITING, _decoded, _ts,
-                                 run_from_bead, tone)
+                                 INTEGRATED, run_from_bead, tone)
 from cockpit.runs.trace import _epoch
 
 READ_TIMEOUT_SECONDS = 20
@@ -682,7 +682,9 @@ def _state(jobs, tickets, outcomes, closed, result=None):
         return DONE, result["label"], DONE_STEP
     if closed:
         if "merged" in outcomes:
-            return DONE, "Fusionné", DONE_STEP
+            # Its tickets merged into the integration branch: no merge of
+            # the result into the protected branch (F3.21; derive.INTEGRATED).
+            return DONE, INTEGRATED, DONE_STEP
         if outcomes and all(outcome == "withdrawn" for outcome in outcomes):
             return DONE, "Abandonné", DONE_STEP
         return DONE, "Terminé", DONE_STEP

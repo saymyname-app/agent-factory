@@ -237,7 +237,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
         saymyname = self.chantiers(payload, "saymyname")
         self.assertEqual(["af-conv-a"], list(saymyname))
         self.assertEqual("Livraison", saymyname["af-conv-a"]["stage"])
-        self.assertEqual("1/4 tickets mergés · 1 en cours · 1 en PR", saymyname["af-conv-a"]["detail"])
+        self.assertEqual("1/4 tickets fermés · 1 en cours · 1 en PR", saymyname["af-conv-a"]["detail"])
         self.assertEqual("probleme_remonte", saymyname["af-conv-a"]["etat"])
         self.assertEqual("af-tk-a4", saymyname["af-conv-a"]["etat_cible"])
 
@@ -254,8 +254,8 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertIn('<section class="zone cockpit-projects" data-state="filled">', body)
         self.assertIn("<h3>SayMyName</h3>", body)
         self.assertIn("<h3>Usine</h3>", body)
-        self.assertIn("Livraison · 1/4 tickets mergés · 1 en cours · 1 en PR", body)
-        self.assertIn("Livré : 2/2 tickets mergés", body)
+        self.assertIn("Livraison · 1/4 tickets fermés · 1 en cours · 1 en PR", body)
+        self.assertIn("Livré : 2/2 tickets fermés", body)
         self.assertIn('class="stepper cockpit-stepper"', body)
         # "Problème remonté" leads in one click to the request that carries the question.
         self.assertIn('href="#d-af-tk-a4" data-goto="af-tk-a4"', body)

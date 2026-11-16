@@ -176,5 +176,27 @@ class EndedSessionsUnreadTest(unittest.TestCase):
         self.assertEqual(["Agent inconnu · sessions terminées illisibles · Auteur"], agents)
 
 
+    def test_a_closed_ticket_merged_into_the_integration_branch_is_integrated_on_its_run(self):
+        # Spec af-fgcw0d: « Ticket fermé/intégré ne signifie pas fusion du
+        # résultat dans la branche protégée. » The run of a ticket a
+        # workflow worked on says what the ticket says (F3.21), never
+        # « Fusionné ».
+        ticket = bead("af-tk", status="closed", closed_at="2026-10-19T10:55:00Z",
+                      gc__flow__merge={"at": "2026-10-19T10:55:00Z", "outcome": "merged",
+                                       "into": "integration/af-spec"})
+        ticket.update(issue_type="task", created_at="2026-10-19T10:00:00Z")
+        tracker = [
+            ticket,
+            {"id": "af-w-in", "issue_type": "convoy", "status": "closed", "created_at": "2026-10-19T10:01:00Z",
+             "metadata": {"gc.synthetic": "true"},
+             "dependencies": [{"issue_id": "af-w-in", "depends_on_id": "af-tk", "type": "tracks"}]},
+            {"id": "af-w", "issue_type": "task", "status": "closed", "title": "mol-ticket-author",
+             "created_at": "2026-10-19T10:01:00Z", "closed_at": "2026-10-19T10:50:00Z",
+             "metadata": {"gc.kind": "workflow", "gc.formula_name": "mol-ticket-author", "gc.input_convoy_id": "af-w-in",
+                          "gc.routed_to": "delivery-author"}},
+        ]
+        run = next(r for r in workflow_runs(tracker, [], NOW) if r["id"] == "af-tk")
+        self.assertEqual(("Intégré", "done"), (run["status"], run["state"]))
+
 if __name__ == "__main__":
     unittest.main()

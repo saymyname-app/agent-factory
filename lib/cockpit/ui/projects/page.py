@@ -243,8 +243,8 @@ def _render_chantier_actions(chantier):
 
 
 def _render_chantier(chantier):
-    # "Livraison · 5/9 tickets mergés"; a detail that already starts with
-    # its stage ("Livré : 4/4 tickets mergés") is not prefixed twice.
+    # "Livraison · 5/9 tickets fermés"; a detail that already starts with
+    # its stage ("Livré : 4/4 tickets fermés") is not prefixed twice.
     if chantier.detail.startswith(chantier.stage):
         sous_titre = chantier.detail
     else:

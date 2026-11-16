@@ -124,12 +124,14 @@ def journal_items(entries, runs, projects=None):
     for run in runs or []:
         for event in run["events"]:
             text = event["text"]
+            # Its title names neither the ticket's identifier nor a merge
+            # for what only entered the integration branch (F3.22).
             if text.startswith("Fusionné"):
-                title = "%s fusionné" % run["ticket"]
+                title = "Intégré"
             elif text.startswith("Arrêt"):
-                title = "%s arrêté" % run["ticket"]
+                title = "Arrêté"
             elif text == "Ticket lancé":
-                title = "%s lancé" % run["ticket"]
+                title = "Lancé"
             else:
                 continue
             items.append({"at": event["at"], "log": False, "category": "changements", "label": "Changement",
