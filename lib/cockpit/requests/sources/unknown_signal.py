@@ -27,6 +27,10 @@ KNOWN_SOURCES = frozenset({LOOP_GUARD})
 # Mayor was paged about first (spec af-oohx2x .9: never the operator's until
 # promoted): a question to the operator, a page of the Mayor.
 ROUTED_KEYS = ("gc.needs_benjamin", "gc.escalation_mayor_paged_at")
+# The maintenance bead bin/proposal-door files when the Factory takes a
+# proposal over (ADR-0029): work the Factory owns, which the health zone
+# already says (« corrige seule »), never a signal for the operator.
+TAKEN_OVER_KEY = "gc.proposal_id"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -66,7 +70,7 @@ def unknown_signals_of(beads):
         source = metadata.get(SOURCE_KEY)
         if not isinstance(source, str) or not source or source in KNOWN_SOURCES:
             continue
-        if any(metadata.get(key) for key in ROUTED_KEYS):
+        if any(metadata.get(key) for key in ROUTED_KEYS) or metadata.get(TAKEN_OVER_KEY):
             continue
         signals.append(UnknownSignal(
             id=bead.get("id") or "",

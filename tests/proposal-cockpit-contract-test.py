@@ -286,8 +286,10 @@ class DoorAndCockpit(unittest.TestCase):
                     self.assertEqual(metadata["gc.proposal_quoi"], request["quoi"])
                 import html as html_module
                 self.assertIn(html_module.escape(metadata["gc.proposal_pourquoi"]), home)
-        self.assertIn("cockpit-request-motif", home)
-        self.assertIn("cockpit-request-origine", home)
+        # Why a field was replaced and the producer's own text, in the
+        # folded details of the request (Cockpit landed, af-q55qqx J1).
+        self.assertIn("<span>Remplacé (", home)
+        self.assertIn("<span>Texte écrit (", home)
 
     def test_identifiers_go_in_details_and_show_only_folded(self):
         payload = dict(
@@ -301,7 +303,11 @@ class DoorAndCockpit(unittest.TestCase):
         self.assertFalse(request["incomplete"], request)
         self.assertEqual(payload["details"], request["precisions"])
         home = self.get("/")
-        self.assertIn('cockpit-request-precisions"><span>Précisions</span><code>af-6jyjrz', home)
+        row = '<span>Précisions</span><span><code>af-6jyjrz'
+        self.assertIn(row, home)
+        # Only folded: the row lies inside the request's closed details.
+        before = home[:home.index(row)]
+        self.assertGreater(before.rfind('<details class="more pn-request-details">'), before.rfind("</details>"))
 
     def test_door_and_cockpit_agree_on_every_case(self):
         """One verdict per payload, whichever side gives it."""

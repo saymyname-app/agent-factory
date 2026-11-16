@@ -63,7 +63,6 @@ DATED_BEHAVIOR_EXCEPTIONS = {
     "cockpit/core/fake-bd": "2026-10-29: read-only canned list responses; it accepts no write",
     "cockpit/core/fake-gc-supervisor-cli": "2026-10-29: supervisor/status transport only; it accepts no tracker write",
     "cockpit/health/fake-bd-health": "2026-10-29: read-only health polling; it accepts no write",
-    "cockpit/operator-actions/fake-gc-bin": "2026-10-29: order-run transport only; it accepts no tracker write",
     "cockpit/requests/fake-bd": "2026-10-29: read-only request polling; it accepts no write",
     "cockpit/requests/silent-bd": "2026-10-29: deliberately never answers; it models an unreadable tracker",
     "cockpit/synthetic-city/gc": "2026-10-29: transparent proxy; its mutable tracker is synthetic-city/bd",
