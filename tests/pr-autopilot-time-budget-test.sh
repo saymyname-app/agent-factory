@@ -52,6 +52,7 @@ JSON
     else
       exit 1
     fi ;;
+  "api repos/"*/files) exit 0 ;;   # the PR's file list: no project descriptor in it
   "api repos/"*) exit 1 ;;   # ruleset unreadable (fine-grained PAT) -> "unknown", proceed on config
   *) echo "gh stub: unsupported: gh \$*" >&2; exit 1 ;;
 esac
