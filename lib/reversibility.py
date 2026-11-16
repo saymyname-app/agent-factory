@@ -146,7 +146,14 @@ def parse_diff(diff: str) -> list[dict[str, Any]]:
 
 
 def assess(diff: str) -> dict[str, Any]:
-    files = parse_diff(diff)
+    return assess_files(parse_diff(diff))
+
+
+def assess_files(files: list[dict[str, Any]]) -> dict[str, Any]:
+    """The verdict on a change's files, each a dict as `parse_diff` returns it:
+    path, old_path (None unless renamed), status, and the added text -- which
+    only a new migration needs. A file list read without the diff (a pull
+    request too large for GitHub to diff) is judged the same way."""
     present = {f["path"] for f in files if f["status"] in {"added", "modified", "renamed"}}
     findings: list[dict[str, Any]] = []
     for f in files:

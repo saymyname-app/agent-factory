@@ -6,6 +6,8 @@ docs/DELIVERY.md (Réversibilité par défaut) for what a writer should do.
 
   reversibility-check --git <repo> [--base origin/dev] [--head HEAD]   before opening a PR
   reversibility-check --pr <number> --repo <owner/name>                what pr-autopilot runs
+                       (reads the PR's file list page by page, never its whole
+                       diff: GitHub refuses a diff above 300 files, af-u0uuhr)
   reversibility-check --diff-file <file>                               any unified diff
 
   --json       machine-readable result
@@ -21,28 +23,80 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 import reversibility as rv  # noqa: E402
+from bounded_process import run as bounded_run  # noqa: E402
+
+
+# GitHub's status of a pull request file, as parse_diff names it.
+GH_STATUS = {"added": "added", "copied": "added", "removed": "deleted", "renamed": "renamed",
+             "modified": "modified", "changed": "modified", "unchanged": "modified"}
+
+
+def gh_api(*args: str) -> str:
+    result = bounded_run(["gh", "api", *args], text=True, capture_output=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"gh api {args[-1]} failed")
+    return result.stdout
+
+
+def pr_head(pr: str, repo: str) -> tuple[str, int]:
+    pull = json.loads(gh_api(f"repos/{repo}/pulls/{pr}"))
+    return pull["head"]["sha"], int(pull["changed_files"])
+
+
+def read_pr_files(pr: str, repo: str) -> list[dict]:
+    """The PR's files as parse_diff returns them, without `gh pr diff`.
+
+    GitHub answers HTTP 406 to the diff of a PR above 300 files, so a large
+    PR (#889, 400 commits) was never checked and pr-autopilot logged an error
+    on every pass (af-u0uuhr). The file list pages through any size up to
+    GitHub's 3000-file cap; a list shorter than the PR's own count is a
+    partial view and is refused, never judged. A new migration is read whole
+    at the head commit, which its patch -- cut on a large file -- may not be.
+    """
+    sha, count = pr_head(pr, repo)
+    rows = gh_api("--paginate", f"repos/{repo}/pulls/{pr}/files?per_page=100",
+                  "--jq", ".[] | {filename, status, previous_filename}")
+    files = []
+    for line in rows.splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        status = GH_STATUS.get(row["status"], "modified")
+        files.append({"path": row["filename"], "status": status, "text": "",
+                      "old_path": row.get("previous_filename") if status == "renamed" else None})
+    if len(files) < count:
+        raise RuntimeError(f"PR #{pr} lists {len(files)} of its {count} files "
+                           "(GitHub stops at 3000): not checked on a partial view")
+    for f in files:
+        if f["status"] == "added" and rv.MIGRATION.search(f["path"]):
+            f["text"] = gh_api("-H", "Accept: application/vnd.github.raw",
+                               f"repos/{repo}/contents/{quote(f['path'])}?ref={sha}")
+    if pr_head(pr, repo)[0] != sha:
+        raise RuntimeError(f"PR #{pr} moved while it was read: checked on the next pass")
+    return files
+
+
+def read_files(args: argparse.Namespace) -> list[dict]:
+    if args.pr:
+        if not args.repo:
+            raise ValueError("--pr needs --repo owner/name")
+        return read_pr_files(str(args.pr), args.repo)
+    return rv.parse_diff(read_diff(args))
 
 
 def read_diff(args: argparse.Namespace) -> str:
     if args.diff_file:
         return Path(args.diff_file).read_text(encoding="utf-8")
-    if args.pr:
-        if not args.repo:
-            raise ValueError("--pr needs --repo owner/name")
-        result = subprocess.run(["gh", "pr", "diff", str(args.pr), "--repo", args.repo],
-                                text=True, capture_output=True, timeout=120)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "gh pr diff failed")
-        return result.stdout
     if args.git:
-        result = subprocess.run(["git", "-C", args.git, "diff", "--no-color", "-M",
-                                 f"{args.base}...{args.head}"],
-                                text=True, capture_output=True, timeout=120)
+        result = bounded_run(["git", "-C", args.git, "diff", "--no-color", "-M",
+                              f"{args.base}...{args.head}"],
+                             text=True, capture_output=True, timeout=120)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "git diff failed")
         return result.stdout
@@ -62,8 +116,8 @@ def main() -> int:
     parser.add_argument("--comment", action="store_true")
     args = parser.parse_args()
     try:
-        result = rv.assess(read_diff(args))
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        result = rv.assess_files(read_files(args))
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"reversibility-check: {exc}", file=sys.stderr)
         return 2
     if args.json:

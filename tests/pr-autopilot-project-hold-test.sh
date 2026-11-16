@@ -67,6 +67,7 @@ if [[ \$1 == api ]]; then
   for a in "\$@"; do
     if [[ "\$a" == repos/*/pulls/*/files ]]; then
       num=\$(echo "\$a" | sed -E 's#.*/pulls/([0-9]+)/files#\1#')
+      [ -e "$TMP/files-\$num.fail" ] && { echo 'HTTP 502: Bad Gateway' >&2; exit 1; }
       cat "$TMP/files-\$num.tsv" 2>/dev/null
       exit 0
     fi
@@ -178,5 +179,17 @@ grep -q "^api -X POST repos/example-corp/example-backend/issues/5/labels -f labe
 [ "$(grep -c '<!-- pr-autopilot:project-declaration-needs-benjamin -->' "$TMP/comments-5.md")" = 1 ] \
   || fail "PR 5 does not carry exactly one explanation"
 grep -q "^pr merge 5 .*--auto" "$TMP/gh.log" && fail "PR 5 was armed while its label was missing"
+
+# --- an unread file list is not an empty one (af-u0uuhr) ---------------------------
+# Before, a failed files call left the list empty: "no descriptor", and the PR armed.
+: > "$TMP/files-6.fail"
+cat > "$TMP/backend-open.json" <<'JSON'
+[{"number":6,"isCrossRepository":false,"author":{"login":"example-operator"},"isDraft":false,"autoMergeRequest":null,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"conclusion":"SUCCESS"}],"headRefOid":"fff1","labels":[]}]
+JSON
+: > "$TMP/gh.log"
+out=$(pilot)
+grep -q "PR #6: project descriptor files could not be read -> not arming this pass" <<<"$out" \
+  || { echo "$out" >&2; fail "an unreadable file list was not reported"; }
+grep -q "^pr merge 6 " "$TMP/gh.log" && { echo "$out" >&2; fail "PR 6 was armed on a file list that could not be read"; }
 
 echo "OK pr-autopilot never merges a project descriptor add/remove by itself"
