@@ -1,0 +1,20 @@
+# The Cockpit as a user service on factory-vm (docs/COCKPIT.md, « Sous systemd »).
+# Install: the commands in that section. `bin/cockpit start|stop|status` keep working:
+# systemd follows the process through the same pid file.
+[Unit]
+Description=Agent Factory Cockpit (bin/cockpit, port 8173)
+After=network-online.target
+
+[Service]
+Type=forking
+WorkingDirectory=%h/agent-factory
+PIDFile=%h/agent-factory/.gc/runtime/cockpit.pid
+# A login shell: gc and bd live in ~/.local/bin.
+ExecStart=/bin/bash -lc 'exec %h/agent-factory/bin/cockpit start'
+ExecStop=/bin/bash -lc 'exec %h/agent-factory/bin/cockpit stop'
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=30
+
+[Install]
+WantedBy=default.target

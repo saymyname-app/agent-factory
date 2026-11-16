@@ -71,6 +71,37 @@ the test doesn't wait real minutes), the "Tout est à jour" / "Périmé ou
 inconnu" headline, refusing to bind off `127.0.0.1`, surviving a simulated
 city stop, and `bin/factory-boot`'s idempotent cockpit launch.
 
+## Sous systemd, avec une sonde (16/11/2026)
+
+Intent (Benjamin, ses mots, 16/11/2026, décision 10 de af-q55qqx) : « Pilotage
+multi-projets », le Cockpit « tourne sous systemd avec une sonde externe ».
+Mechanism (interprétation de l'agent) : le Cockpit live s'est arrêté le 28/10
+à 18:55 Paris et personne ne l'a su pendant 19 jours.
+
+Sur factory-vm, le Cockpit est l'unité utilisateur `cockpit.service`
+(`config/systemd/`). Elle est en `Type=forking` sur `bin/cockpit start`, avec
+le même fichier pid, et en `Restart=on-failure` : un plantage la relance.
+`bin/cockpit start|stop|status` et `factory-boot` restent valables. Pour
+recharger le code : `systemctl --user restart cockpit`, plutôt que
+`bin/cockpit restart`, que systemd lit comme un arrêt voulu.
+
+`cockpit-probe.timer` lance `bin/cockpit-probe` toutes les 5 minutes. La sonde
+demande `/` au port local (8173) et à l'adresse tailnet (`public_url`). Elle
+notifie Benjamin par Pushover une fois à chaque changement d'état, à la chute
+comme au retour. Après deux échecs de suite sur le port local, elle relance
+l'unité, ce qui rattrape un processus vivant qui ne répond plus. Son état est
+dans `.gc/runtime/cockpit-probe-state.json`. Preuve :
+`tests/cockpit-probe-test.py`.
+
+Installation (une fois, depuis la racine live) :
+
+    install -m 644 config/systemd/cockpit.service config/systemd/cockpit-probe.* ~/.config/systemd/user/
+    systemctl --user daemon-reload
+    bin/cockpit stop; systemctl --user enable --now cockpit.service cockpit-probe.timer
+
+Retrait : `systemctl --user disable --now cockpit-probe.timer cockpit.service`,
+puis supprimer les trois fichiers ; `bin/cockpit start` reprend la main.
+
 ## Process lifecycle: start, stop, restart (2026-10-08)
 
 **To restart the Cockpit, run `bin/cockpit restart`** — never `stop` then
