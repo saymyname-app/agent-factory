@@ -585,6 +585,23 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   ouvert, sans assigné, qui garde `gc.work_branch` et sa session).
 - Ouvertes : aucune connue.
 
+## C — Confinement : un rôle confiné écrit ce qu'une session libre exécute
+
+- Invariant : Une session confinée (relecteur, Evaluator, tout rôle lancé par
+  `bin/delivery-role-sandbox`) n'écrit rien qu'une session non confinée
+  exécute ou lit comme consigne : réglages et hooks des fournisseurs, serveurs
+  MCP, mémoire, réglages et scripts de gc, répertoires de travail des autres
+  sessions, formules.
+- Contrôle : `python3 tests/delivery-role-sandbox-config-test.py`
+- Occurrences : af-q55qqx (F7 de l'analyse du 16/11/2026 : `~/.claude` monté
+  en écriture, un relecteur pouvait y poser un hook ; même voie par
+  `.claude.json`, `~/.codex/config.toml`, `.gc/settings.json`, `.gc/scripts`,
+  `.gc/agents`, `.gc/worktrees`, `.beads/formulas`), corrigé ici.
+- Ouvertes : `~/.cache` et `~/.local/state` restent en écriture (caches
+  d'outils et états exécutés ensuite par des sessions libres) ; les sessions
+  d'écriture tournent sans confinement avec le jeton propriétaire. Les deux
+  relèvent de J11 (configuration et identité par rôle), af-q55qqx.
+
 ## A — Autre
 
 - Invariant : Aucun invariant commun : une PR rangée ici dit pourquoi elle

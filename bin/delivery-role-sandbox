@@ -12,7 +12,10 @@
 # without -- its own work directory, the provider's state, the city runtime
 # directory and the tracker -- and where no push credential exists (the
 # GitHub CLI config that backs the git credential helper, and ~/.ssh, are
-# replaced by empty directories; token variables are dropped).
+# replaced by empty directories; token variables are dropped). Inside those
+# writable directories, what another, unconfined session executes or reads
+# as instructions (provider settings, hooks, MCP servers, memory, gc
+# settings, the other sessions' work directories) stays read-only.
 #
 # Proven on real sessions by bin/role-adoption-trial, which is what
 # bin/dispatch-door requires before a read-only role runs on a provider.
@@ -29,10 +32,30 @@ command -v bwrap >/dev/null 2>&1 || {
 
 args=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp)
 rw() { [ -e "$1" ] && args+=(--bind "$1" "$1"); return 0; }
+ro() { [ -e "$1" ] && args+=(--ro-bind "$1" "$1"); return 0; }
+# A file the session rewrites but no other session may read back: the
+# session gets a private copy (bwrap --bind-data), the real file is untouched.
+private() {
+  local fd
+  [ -f "$1" ] || return 0
+  exec {fd}<"$1"
+  args+=(--perms 0600 --bind-data "$fd" "$1")
+}
+# A path that must exist to be mounted read-only: created empty when missing,
+# with a content its reader takes as « nothing configured ».
+placeholder() {
+  [ -e "$1" ] && return 0
+  case "$2" in
+    dir) mkdir -p "$1" ;;
+    *) printf '%s' "$2" > "$1" ;;
+  esac
+}
+
+claude_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+codex_dir="${CODEX_HOME:-$HOME/.codex}"
 rw "$PWD"
-rw "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-rw "$HOME/.claude.json"
-rw "$HOME/.codex"
+rw "$claude_dir"
+rw "$codex_dir"
 rw "$HOME/.local/state"
 rw "$HOME/.cache"
 # The controller writes exact launch/commit/socket attestations here. The
@@ -46,6 +69,70 @@ if [ -n "${GC_CITY:-}" ]; then
   rw "$GC_CITY/.beads"
 fi
 [ -n "${XDG_RUNTIME_DIR:-}" ] && rw "$XDG_RUNTIME_DIR"
+
+# What an unconfined session (author, Mayor, PO, worker) later executes or
+# takes as its instructions stays read-only, even inside the directories
+# above (af-q55qqx, F7 of the 16/11/2026 analysis: a reviewer could drop a
+# hook in ~/.claude that an unconfined session ran). Class C of
+# docs/DEFECT_CLASSES.md; tests/delivery-role-sandbox-config-test.py holds it.
+# Child mounts: they come after their writable parents, or a later parent
+# bind hides them.
+for entry in hooks agents commands skills plugins output-styles rules; do
+  placeholder "$claude_dir/$entry" dir
+done
+placeholder "$claude_dir/CLAUDE.md" ''
+placeholder "$claude_dir/settings.json" '{}'
+placeholder "$claude_dir/settings.local.json" '{}'
+for entry in settings.json settings.local.json CLAUDE.md hooks agents commands skills plugins output-styles rules; do
+  ro "$claude_dir/$entry"
+done
+# Its MCP servers (a command each) and per-project state.
+private "$claude_dir/.claude.json"
+private "$HOME/.claude.json"
+# Auto memory goes to projects/<repository root>/memory, the one an
+# unconfined session of the same repository reads (the Mayor's, for the
+# Factory): the projects stay read-only but the session's own transcript
+# directory (projects/<work directory, every other character as '-'>).
+if [ -d "$claude_dir/projects" ]; then
+  own_project="$claude_dir/projects/$(printf '%s' "$PWD" | tr -c 'A-Za-z0-9' '-')"
+  mkdir -p "$own_project"
+  ro "$claude_dir/projects"
+  rw "$own_project"
+fi
+export CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
+
+for entry in rules skills plugins prompts; do
+  placeholder "$codex_dir/$entry" dir
+done
+placeholder "$codex_dir/hooks.json" '{"hooks":{}}'
+# Codex reads AGENTS.override.md instead of AGENTS.md: an empty override
+# would silence a real AGENTS.md, so with one and not the other, refuse.
+if [ -e "$codex_dir/AGENTS.md" ] && [ ! -e "$codex_dir/AGENTS.override.md" ]; then
+  printf 'delivery-role-sandbox: %s exists without AGENTS.override.md -- cannot keep the override read-only without silencing it; refusing to start a read-only role\n' "$codex_dir/AGENTS.md" >&2
+  exit 2
+fi
+placeholder "$codex_dir/AGENTS.md" ''
+placeholder "$codex_dir/AGENTS.override.md" ''
+for entry in config.toml hooks.json AGENTS.md AGENTS.override.md rules skills plugins prompts; do
+  ro "$codex_dir/$entry"
+done
+
+if [ -n "${GC_CITY:-}" ]; then
+  # The hooks of every gc-managed session, the bd wrapper, the city's rigs.
+  for entry in settings.json scripts site.toml system services; do
+    ro "$GC_CITY/.gc/$entry"
+  done
+  # The other sessions' work directories and worktrees (their own
+  # .claude/settings.json, .codex/hooks.json and code); the session's own
+  # work directory is bound again below.
+  ro "$GC_CITY/.gc/agents"
+  ro "$GC_CITY/.gc/worktrees"
+  ro "$GC_CITY/.beads/formulas"
+  ro "$GC_CITY/.beads/config.yaml"
+  case "$PWD/" in
+    "$GC_CITY/.gc/agents/"*|"$GC_CITY/.gc/worktrees/"*) rw "$PWD" ;;
+  esac
+fi
 # Every gc command takes this lock before it reads the city's imported packs
 # (`city import "bd": opening repo cache lock file`): without it a read-only
 # role cannot claim its routed work, read a bead or record a verdict (seen on
