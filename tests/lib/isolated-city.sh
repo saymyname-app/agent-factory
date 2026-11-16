@@ -169,3 +169,31 @@ isolated_city_preserve_latest_failure() {
   rm -f -- "$latest"
   ln -s -- "$trial" "$latest"
 }
+
+# isolated_city_keep_failure <trial-dir> <latest-link>
+#   What the cleanup of every trial does when it failed (af-dbe735): the
+#   nightly erased the trial, and an intermittent failure left nothing to
+#   diagnose. A trial whose directory name is fixed (the trusted
+#   af-role-trial folder, a name of its own pid) is first renamed
+#   <stem>.<date>.<pid> beside <latest-link>, so that the next run finds its
+#   path free; isolated_city_preserve_latest_failure then keeps it. Prints
+#   where the trial is kept.
+isolated_city_keep_failure() {
+  local trial=${1:-} latest=${2:-} stem kept
+  [ -d "$trial" ] && [ -n "$latest" ] || return 1
+  stem=$(basename -- "$latest")
+  case "$stem" in
+    *.last-failure) stem=${stem%.last-failure} ;;
+    *) return 1 ;;
+  esac
+  kept=$(realpath -m -- "$trial") || return 1
+  case "$(basename -- "$kept")" in
+    "$stem".*) ;;
+    *)
+      kept="$(realpath -m -- "$(dirname -- "$latest")")/$stem.$(date -u +%Y%m%dT%H%M%S%NZ).$$"
+      [ ! -e "$kept" ] && mv -T -- "$trial" "$kept" || return 1
+      ;;
+  esac
+  isolated_city_preserve_latest_failure "$kept" "$latest" || return 1
+  printf '%s\n' "$kept"
+}

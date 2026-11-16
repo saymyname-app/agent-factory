@@ -72,7 +72,7 @@ PASSES="$TRIAL/passes.jsonl"
 # never the host's, even if the script dies on its next line.
 export GC_HOME="$TRIAL/h" XDG_RUNTIME_DIR="$TRIAL/r" GC_DISABLE_USAGE_METRICS=1
 cleanup() {
-  status=$?
+  status=$? latest_failure="/tmp/af-kn83no-lifecycle.last-failure"
   trap - EXIT
   isolated_city_stop "$TRIAL" "$CITY" >/dev/null 2>&1 || true
   # The supervisor and the city's managed Dolt server carry the trial
@@ -95,6 +95,12 @@ cleanup() {
   done
   if [ "${KEEP_TEST_CITY:-0}" = 1 ]; then
     echo "trial preserved at $TRIAL" >&2
+  elif [ "$status" != 0 ]; then
+    if kept=$(isolated_city_keep_failure "$TRIAL" "$latest_failure"); then
+      echo "failed trial preserved at $kept (latest: $latest_failure)" >&2
+    else
+      echo "FAIL: could not rotate latest failure; trial left at $TRIAL" >&2
+    fi
   else
     isolated_city_remove "$TRIAL"
   fi

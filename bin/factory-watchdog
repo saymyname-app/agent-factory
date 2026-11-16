@@ -7,7 +7,10 @@
 #                        re-notification and no visible cockpit signal. af-oihx
 #                        sat 2h7m on 2026-09-16 before a human found it by hand.
 #                        A gate whose wait is already a request on the
-#                        operator's list is reported, never paged (af-brjmv6).
+#                        operator's list is reported, never paged (af-brjmv6):
+#                        a request on the gate itself, or one on the bead it
+#                        blocks or its convoy that names the gate; any other
+#                        request there leaves it paged (af-kz2eao).
 #   2. STUCK PR          a Factory-repo PR that is CONFLICTING, or has never
 #                        triggered any CI check, looks identical from the
 #                        outside to one quietly waiting its turn. PR #57 sat
@@ -162,25 +165,35 @@ should_nudge() {  # should_nudge <bead-id> <metadata-key> -> 0 if due, 1 if thro
 }
 
 # A human gate whose wait is already an open request on the operator's list is
-# a wanted, visible wait, not a silent one: the bead it blocks, or the convoy
-# tracking that bead, carries an active gc.needs_benjamin. Paging the Mayor
-# about it tells nobody anything -- gate af-fmeaj6 (D01's final verification,
-# request on convoy af-wtjo2x) was paged every 30 min for three days, each page
-# cleared by hand (af-brjmv6). Prints the bead holding the request. Any
-# unreadable link reads as "not on the list": the gate is paged as before.
+# a wanted, visible wait, not a silent one. Paging the Mayor about it tells
+# nobody anything -- gate af-fmeaj6 (D01's final verification, request on
+# convoy af-wtjo2x) was paged every 30 min for three days, each page cleared by
+# hand (af-brjmv6). The request must be the one that waits for this gate: an
+# active gc.needs_benjamin on the gate itself, or on the bead it blocks or the
+# convoy tracking that bead when the request (its words, why, options or link)
+# names the gate. Any other request there -- a convoy's Spec end or acceptance,
+# a variant to pick -- says nothing about the gate, which is paged as before
+# (af-kz2eao, same form as af-xgd1rd R19). Prints the bead holding the
+# request. Any unreadable link reads as "not on the list".
 ON_OPERATOR_LIST='[.[]? | select((.status // "open") != "closed")
   | select(((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | $n != "" and $n != "none")
+  | select($gate == "" or ([.metadata["gc.needs_benjamin", "gc.escalation_pourquoi",
+        "gc.escalation_que_faire", "gc.escalation_lien"] // empty | tostring]
+      | any(test("(^|[^A-Za-z0-9_-])" + $gate + "($|[^A-Za-z0-9_-])"))))
   | .id] | first // empty'
 gate_on_operator_list() {  # gate_on_operator_list <gate-id> -> 0 + holder id if listed
   local gate_id=$1 blocked holder ids
-  blocked=$(gc bd dep list "$gate_id" --direction=up -t blocks --json 2>/dev/null) || return 1
-  holder=$(jq -r "$ON_OPERATOR_LIST" <<<"$blocked" 2>/dev/null)
+  holder=$(gc bd show "$gate_id" --json 2>/dev/null | jq -r --arg gate "" "$ON_OPERATOR_LIST" 2>/dev/null)
+  if [ -z "$holder" ]; then
+    blocked=$(gc bd dep list "$gate_id" --direction=up -t blocks --json 2>/dev/null) || return 1
+    holder=$(jq -r --arg gate "$gate_id" "$ON_OPERATOR_LIST" <<<"$blocked" 2>/dev/null)
+  fi
   if [ -z "$holder" ]; then
     ids=$(jq -r '[.[]?.id // empty] | join(" ")' <<<"$blocked" 2>/dev/null)
     [ -n "$ids" ] || return 1
     # shellcheck disable=SC2086  # $ids: bead ids, one argument each
     holder=$(gc bd dep list $ids --direction=up -t tracks --json 2>/dev/null \
-      | jq -r "$ON_OPERATOR_LIST" 2>/dev/null)
+      | jq -r --arg gate "$gate_id" "$ON_OPERATOR_LIST" 2>/dev/null)
   fi
   [ -n "$holder" ] && printf '%s' "$holder"
 }
@@ -444,20 +457,23 @@ if [ -x "$CONVOY_STATE" ]; then
   stall_ok=1
   for convoy_id in $("$CONVOY_STATE" list 2>/dev/null | jq -r '.convoys[]?' 2>/dev/null); do
     "$CONVOY_STATE" show "$convoy_id" > "$stall_show" 2>/dev/null || { stall_ok=0; continue; }
-    open_ids=(); listed_ids=()
+    open_ids=(); listed_ids=(); blocked_ids=()
     mapfile -t lookup_ids < <(python3 "$LIB/factory_watchdog.py" ticket-lookups < "$stall_show" 2>/dev/null)
     if [ "${#lookup_ids[@]}" -gt 0 ]; then
       rows=$(gc bd show "${lookup_ids[@]}" --json 2>/dev/null) || { stall_ok=0; continue; }
+      # af-o3clwq: a ticket with a 'blocks' dep still open waits for its blockers.
       lookup_state=$(jq -r '.[]? | [(.id // ""), (.status // "open"),
-        (((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | ($n != "" and $n != "none"))] | @tsv' <<<"$rows") \
+        (((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | ($n != "" and $n != "none")),
+        any(.dependencies[]?; .dependency_type == "blocks" and .status != "closed")] | @tsv' <<<"$rows") \
         || { stall_ok=0; continue; }
-      while IFS=$'\t' read -r bead_id status listed; do
+      while IFS=$'\t' read -r bead_id status listed blocked; do
         [ -z "$bead_id" ] && continue
         [ "$status" != "closed" ] && open_ids+=("$bead_id")
         [ "$listed" = "true" ] && listed_ids+=("$bead_id")
+        [ "$blocked" = "true" ] && blocked_ids+=("$bead_id")
       done <<<"$lookup_state"
     fi
-    jq -c --argjson alive "$alive_json" --arg open "${open_ids[*]:-}" --arg listed "${listed_ids[*]:-}" '{show: ., alive: $alive, open: ($open | split(" ") | map(select(. != ""))), listed: ($listed | split(" ") | map(select(. != "")))}' "$stall_show" > "$stall_payload"
+    jq -c --argjson alive "$alive_json" --arg open "${open_ids[*]:-}" --arg listed "${listed_ids[*]:-}" --arg blocked "${blocked_ids[*]:-}" '{show: ., alive: $alive, open: ($open | split(" ") | map(select(. != ""))), listed: ($listed | split(" ") | map(select(. != ""))), blocked: ($blocked | split(" ") | map(select(. != "")))}' "$stall_show" > "$stall_payload"
     while IFS=$'\t' read -r ticket_id code msg; do
       [ -z "$ticket_id" ] && continue
       bad "ticket sans suite — $msg"
@@ -468,7 +484,7 @@ if [ -x "$CONVOY_STATE" ]; then
       [ -n "$existing" ] && continue
       created=$(gc bd create "$title" -p 1 -t bug -d "$msg
 
-Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is started and not closed, no live session works for its current state, no launch of it made since its last exit is open, no request of it, nor a grouped request of convoy $convoy_id covering it, is on Benjamin's list, it does not wait for the Planning Run his answer sent it to, and no Factory repair linked to its request is open. The repair is Factory maintenance: give code the rule that moves the ticket on (bin/convoy-state show $convoy_id). It never consists in advancing or closing the ticket by hand. Observe-and-page only (ADR-0016 section 7): the watchdog withdraws this request and closes this bead once the ticket moves again." --metadata "$(jq -cn --arg ticket "$ticket_id" '{"gc.source":"factory-watchdog","gc.ticket":$ticket}')" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
+Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is started and not closed, no live session works for its current state, no launch of it made since its last exit is open, no request of it, nor a grouped request of convoy $convoy_id covering it, is on Benjamin's list, it waits for no open blocker, nor for the Planning Run his answer sent it to, and no Factory repair linked to its request is open. The repair is Factory maintenance: give code the rule that moves the ticket on (bin/convoy-state show $convoy_id). It never consists in advancing or closing the ticket by hand. Observe-and-page only (ADR-0016 section 7): the watchdog withdraws this request and closes this bead once the ticket moves again." --metadata "$(jq -cn --arg ticket "$ticket_id" '{"gc.source":"factory-watchdog","gc.ticket":$ticket}')" --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
       if [ -n "$created" ] && "$ESCALATION_DOOR" benjamin "$created" "$(stall_request "$ticket_id" "$msg")" >/tmp/edoor-out.log 2>&1; then
         did "flagged ticket $ticket_id without a next step as $created on the operator's list"
       else

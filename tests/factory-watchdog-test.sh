@@ -248,26 +248,63 @@ grep -q "aged gate —" <<<"$out" || fail "the gate should still be reported whi
 printf '[]' > "$GATES"
 
 # 2b. an aged gate whose wait is already a request on the operator's list is
-# reported but never paged: on the bead it blocks, or on the convoy tracking
-# that bead (af-brjmv6: af-fmeaj6 paged every 30 min for three days) ----------
+# reported but never paged: on the gate itself, or on the bead it blocks or
+# the convoy tracking that bead when the request names the gate (af-brjmv6:
+# af-fmeaj6 paged every 30 min for three days). A request there that does not
+# name the gate is unrelated to it and the gate is paged (af-kz2eao) ---------
 jq -n --arg c "$(iso $((NOW - 3000)))" '[{"id":"af-gate1","status":"open","await_type":"human","created_at":$c,"description":"Ad-hoc gate blocking af-t32"}]' > "$GATES"
 printf '[{"id":"af-t32","status":"in_progress","metadata":{}}]' > "$DEPS_DIR/af-gate1.blocks.json"
-printf '[{"id":"af-convoy","status":"open","metadata":{"gc.needs_benjamin":"La barriere attend tes mots"}}]' > "$DEPS_DIR/af-t32.tracks.json"
+printf '[{"id":"af-convoy","status":"open","metadata":{"gc.needs_benjamin":"La fin de Spec attend ton acceptation"}}]' > "$DEPS_DIR/af-t32.tracks.json"
+reset_logs
+out=$(watchdog)
+grep -q "already on the operator's list" <<<"$out" \
+  && { echo "$out" >&2; fail "a convoy request unrelated to the gate silenced it"; }
+grep -q "^ATTENTION" <<<"$out" || { echo "$out" >&2; fail "a gate behind an unrelated convoy request must be a problem"; }
+[ "$(mails)" = "1" ] || fail "a gate behind an unrelated convoy request must page the Mayor"
+rm -f "$BEADS_DIR/af-gate1.json"
+
+printf '[{"id":"af-convoy","status":"open","metadata":{"gc.needs_benjamin":"La barriere attend tes mots","gc.escalation_que_faire":"[{\\"lettre\\":\\"a\\",\\"option\\":\\"Lever la porte af-gate1\\"}]"}}]' > "$DEPS_DIR/af-t32.tracks.json"
 reset_logs
 out=$(watchdog)
 grep -q "aged gate — already on the operator's list (af-convoy), not paged: gate af-gate1 open" <<<"$out" \
-  || { echo "$out" >&2; fail "a gate already on the operator's list (convoy) was not reported as such"; }
+  || { echo "$out" >&2; fail "a convoy request that waits for the gate was not reported as such"; }
 grep -q "^ATTENTION" <<<"$out" && fail "a wait already on the operator's list is not a problem"
 [ "$(mails)" = "0" ] || fail "a gate already on the operator's list must not page the Mayor"
 grep -q '^bd update af-gate1' "$CALLS" && fail "a gate that is not paged must not be stamped as nudged"
 
+# A request on the blocked bead counts only when it names the gate too.
 printf '[{"id":"af-t32","status":"blocked","metadata":{"gc.needs_benjamin":"Choisis une variante"}}]' > "$DEPS_DIR/af-gate1.blocks.json"
 rm -f "$DEPS_DIR/af-t32.tracks.json"
 reset_logs
 out=$(watchdog)
+grep -q "already on the operator's list" <<<"$out" \
+  && { echo "$out" >&2; fail "a request of the blocked bead unrelated to the gate silenced it"; }
+[ "$(mails)" = "1" ] || fail "a gate behind an unrelated request of its blocked bead must page the Mayor"
+rm -f "$BEADS_DIR/af-gate1.json"
+
+printf '[{"id":"af-t32","status":"blocked","metadata":{"gc.needs_benjamin":"La porte af-gate1 attend ta décision"}}]' > "$DEPS_DIR/af-gate1.blocks.json"
+reset_logs
+out=$(watchdog)
 grep -q "already on the operator's list (af-t32), not paged" <<<"$out" \
-  || { echo "$out" >&2; fail "a gate whose blocked bead holds the request was not recognised"; }
-[ "$(mails)" = "0" ] || fail "a gate whose blocked bead holds the request must not page the Mayor"
+  || { echo "$out" >&2; fail "a gate whose blocked bead holds its request was not recognised"; }
+[ "$(mails)" = "0" ] || fail "a gate whose blocked bead holds its request must not page the Mayor"
+
+# A gate id is matched whole: af-gate12 is not af-gate1.
+printf '[{"id":"af-t32","status":"blocked","metadata":{"gc.needs_benjamin":"La porte af-gate12 attend ta décision"}}]' > "$DEPS_DIR/af-gate1.blocks.json"
+reset_logs
+out=$(watchdog)
+[ "$(mails)" = "1" ] || { echo "$out" >&2; fail "a request naming another gate silenced this one"; }
+rm -f "$BEADS_DIR/af-gate1.json"
+
+# The request on the gate itself is the one that waits for it.
+printf '[{"id":"af-t32","status":"in_progress","metadata":{}}]' > "$DEPS_DIR/af-gate1.blocks.json"
+printf '[{"id":"af-gate1","status":"open","metadata":{"gc.needs_benjamin":"Lève cette porte quand D01 est vérifié"}}]' > "$BEADS_DIR/af-gate1.json"
+reset_logs
+out=$(watchdog)
+grep -q "already on the operator's list (af-gate1), not paged" <<<"$out" \
+  || { echo "$out" >&2; fail "a request on the gate itself was not recognised"; }
+[ "$(mails)" = "0" ] || fail "a gate holding its own request must not page the Mayor"
+rm -f "$BEADS_DIR/af-gate1.json"
 
 # An answered request ("none") or one on a closed bead is no longer on the
 # list: the gate is paged again.

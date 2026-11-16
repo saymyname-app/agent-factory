@@ -28,6 +28,10 @@
 #      wall-clock deadline of its own, and that wait counts host time: a
 #      second at twice the CPUs counts half, up to a stretch ceiling, and
 #      giving up names the load (af-2crkwu).
+#   7. every trial that erases its directory keeps it instead when it
+#      failed, through isolated_city_keep_failure; a trial of a fixed name
+#      is renamed beside its latest-failure link, so its path is free for
+#      the next run (af-dbe735).
 
 set -Eeuo pipefail
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
@@ -190,6 +194,35 @@ if isolated_city_preserve_latest_failure "$second" "$latest" 2>/dev/null; then
   fail "latest-failure retention replaced a regular file"
 fi
 [ "$(cat "$latest")" = occupied ] || fail "a refused rotation changed a regular file"
+
+# --- 7. every trial keeps its failure; a fixed name is renamed (af-dbe735) ---
+for f in "$REPO_ROOT"/tests/*.sh; do
+  grep -qE '^[[:space:]]+isolated_city_remove "\$TRIAL"$' "$f" || continue
+  grep -qE '^[[:space:]]+elif \[ "\$status" != 0 \]; then$' "$f" \
+    && grep -qE 'isolated_city_(keep_failure|preserve_latest_failure) "\$TRIAL" "\$latest_failure"' "$f" \
+    || fail "$(basename -- "$f") erases its trial without keeping it when it failed (isolated_city_keep_failure)"
+done
+fixed="$evidence/af-role-trial"
+kept_link="$evidence/af-some-trial.last-failure"
+mkdir -p "$fixed"; echo one > "$fixed/record"
+one=$(isolated_city_keep_failure "$fixed" "$kept_link") || fail "a failed trial of a fixed name was not kept"
+[ ! -e "$fixed" ] || fail "a kept trial of a fixed name still holds its path"
+case "$(basename -- "$one")" in af-some-trial.*) ;; *) fail "a fixed-name trial was kept under $one" ;; esac
+[ "$(readlink -- "$kept_link")" = "$one" ] && [ "$(cat "$one/record")" = one ] \
+  || fail "the latest-failure link does not name the renamed trial"
+mkdir -p "$fixed"; echo two > "$fixed/record"
+two=$(isolated_city_keep_failure "$fixed" "$kept_link") || fail "a second fixed-name failure was not kept"
+[ ! -e "$one" ] && [ "$(readlink -- "$kept_link")" = "$two" ] \
+  || fail "a second fixed-name failure did not replace the first"
+named="$evidence/af-some-trial.Ab12Cd"
+mkdir -p "$named"
+[ "$(isolated_city_keep_failure "$named" "$kept_link")" = "$named" ] \
+  || fail "a trial already named after its link was moved"
+mkdir -p "$fixed"
+if isolated_city_keep_failure "$fixed" "$evidence/no-suffix" >/dev/null 2>&1; then
+  fail "a latest-failure link without .last-failure was accepted"
+fi
+[ -d "$fixed" ] || fail "a refused keep moved the trial"
 
 # --- 6. a trial waits in host time, through the one helper (af-2crkwu) -------
 for f in "${trials[@]}"; do
