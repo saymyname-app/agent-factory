@@ -105,7 +105,7 @@ class LocalSettingsPathsTest(unittest.TestCase):
                 "pushover_secrets_file": "~/.config/agent-factory/pushover.json",
                 "heartbeat_url_file": "~/.config/agent-factory/heartbeat-url",
             }))
-            config = Config({"HOME": home, "COCKPIT_LOCAL_CONFIG": str(local)})
+            config = Config({"COCKPIT_HOME": home, "COCKPIT_LOCAL_CONFIG": str(local)})
             self.assertEqual(
                 (f"{home}/.config/agent-factory/pushover.json", f"{home}/.config/agent-factory/heartbeat-url"),
                 (config.pushover_secrets_file, config.heartbeat_url_file))

@@ -7,6 +7,7 @@ import json
 import os
 import urllib.parse
 
+from account_home import account_home
 from cockpit.core.beads_source import READ_TIMEOUT_SECONDS as BEADS_READ_TIMEOUT_SECONDS
 from cockpit.core.freshness import VALIDITY_WINDOWS_SECONDS
 from cockpit.core.gc_client import (
@@ -290,10 +291,11 @@ def _read_local_config(path):
 
 def _from_home(path, env):
     """``path`` with a leading ``~/`` read as the home of the account that
-    runs the cockpit (``HOME`` of ``env``): the procedure of the VM settings
-    proposes the secret files there, and a JSON file is expanded by no
-    shell (I, af-cp4fzd)."""
-    home = env.get("HOME") or os.path.expanduser("~")
+    runs the cockpit (lib/account_home.py, never ``$HOME``, which a Gas
+    City check sets to the city root; ``COCKPIT_HOME`` of ``env`` for a
+    test): the procedure of the VM settings proposes the secret files
+    there, and a JSON file is expanded by no shell (I, af-cp4fzd)."""
+    home = env.get("COCKPIT_HOME") or str(account_home())
     if path == "~" or path.startswith("~/"):
         return home + path[1:]
     return path

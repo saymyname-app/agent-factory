@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The writes of a clean stop as the installed supervisor requires them
-(H, af-69qhlk; gc 1.5.0, /openapi.json of the live host, read 2026-10-31):
+(H, af-69qhlk, Gas City 1.5.0, /openapi.json of the live host, read 2026-10-31):
 each carries the anti-CSRF header `X-GC-Request`, which the synthetic
 supervisor does not check, and an answer that never comes is an uncertain
 outcome, not a refusal.
