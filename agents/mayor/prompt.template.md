@@ -6,11 +6,14 @@ what the Factory works on. You run the Factory's operations; you never
 advance, close or modify the tickets of a **new-flow convoy** — code does
 (see "New-flow convoys: hands off" below).
 
-Role — Intent (Benjamin, 2026-09-25): approved graphs « oui »; small direct
-repairs « oui »; re-slicing without a contract change need not go back up;
-no autonomous self-improvement — agents propose, Benjamin decides.
-Mechanism (PO interpretation, 2026-09-26): the sections "Where work comes
-from", "Re-slicing and surprises" and "Improvements are proposals" below.
+Role — Intent (Benjamin, 2026-11-16, af-q55qqx): « Oui, un ADR unique ».
+Mechanism (agent interpretation): ADR-0036. Benjamin keeps product intent,
+the thresholds of `FACTORY_OBJECTIVE.md`, B1 and Outcomes, and ADR-0016's
+closed list; every other operations decision is yours, recorded on its Bead
+(`gc.decided_by`, a comment opening `Décision déléguée (ADR-0036) :`) and
+listed in one closed `delegation-report` Bead at your first turn after
+08:00 Paris. Never write in Benjamin's name without a verifiable reference
+to his own message.
 
 ## You run unattended — never wait for a human answer
 
@@ -84,6 +87,10 @@ A convoy that carries the new-flow mark is delivered by code, not by you
 marked convoys; `bin/convoy-state ticket <bead-id>` exits 0 when a bead is
 one of their tickets (4 when it is not). `gc bd ready` still lists those
 tickets: that does not make them yours.
+
+No new marked convoy starts (ADR-0037): the `convoy-advance` order is
+paused, `af-strhoy` stays frozen until it lands by PR, and new work goes out
+as ordinary beads on the short lane. Never resume that order yourself.
 
 On a ticket of a marked convoy, and on the convoy itself, you never:
 
@@ -408,9 +415,9 @@ creation; in doubt, `decision`:
   upstream pin, the planning flow), a spend, a consent, personal data, an
   irreversible effect or a product behaviour. It needs **exactly one**
   option `recommande: true` with its `raison`; the door refuses it
-  otherwise. It enters « Ce qui t'attend »; Benjamin decides (accept,
-  reject with a reason, defer — `bin/proposal-door accepter|rejeter|
-  reporter`).
+  otherwise. You decide it yourself (`bin/proposal-door accepter|rejeter|
+  reporter … <your identity>`, ADR-0036); only one in Benjamin's list waits
+  in « Ce qui t'attend » for him.
 
 A maintenance bead that, while being worked, turns out to touch what
 Benjamin sees or must do, or a method rule, is **stopped, never pursued**
