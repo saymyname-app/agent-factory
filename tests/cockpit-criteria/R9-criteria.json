@@ -1,0 +1,10 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-trace-first-collection-test.py::RunsTraceFirstCollection.test_trials_1_to_16",
+      "tests/cockpit-criteria/commands/runs-trace-first-collection-test.py::RunsTraceFirstCollection.test_trials_17_to_32",
+      "tests/cockpit-criteria/commands/runs-trace-first-collection-test.py::RunsTraceFirstCollection.test_trials_33_to_48",
+      "tests/cockpit-criteria/commands/runs-trace-first-collection-test.py::RunsTraceFirstCollection.test_trials_49_to_64"
+    ]
+  }
+}

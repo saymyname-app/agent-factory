@@ -58,6 +58,9 @@ class OperatorRequest:
     # The bare title of what the request is about, when its "quoi" is a
     # fixed phrase around it (a chantier's name for « Pas bon → agent »).
     titre: str = ""
+    # A signal of a type the cockpit does not know: what its source wrote,
+    # exactly as received, shown in the folded details only (spec .76).
+    texte_brut: str = ""
 
     def sort_key(self):
         # None (never timestamped) sorts after every real timestamp within

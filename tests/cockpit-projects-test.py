@@ -123,7 +123,7 @@ class ConvoyStageTest(unittest.TestCase):
         chantier = chantiers[0]
         self.assertEqual(LIVRAISON, chantier.stage)
         self.assertEqual("saymyname", chantier.projet)
-        self.assertEqual("1/4 tickets mergés · 1 en cours · 1 en PR", chantier.detail)
+        self.assertEqual("1/4 tickets fermés · 1 en cours · 1 en PR", chantier.detail)
 
     def test_convoy_closes_only_once_and_becomes_livre(self):
         beads = load_fixture("convoy-livraison.json")
@@ -138,14 +138,14 @@ class ConvoyStageTest(unittest.TestCase):
         chantiers = convoy_chantiers(beads)
         self.assertEqual(1, len(chantiers))
         self.assertEqual(LIVRE, chantiers[0].stage)
-        self.assertEqual("Livré : 4/4 tickets mergés", chantiers[0].detail)
+        self.assertEqual("Livré : 4/4 tickets fermés", chantiers[0].detail)
 
     def test_closed_convoy_fixture_is_livre(self):
         beads = load_fixture("convoy-livre.json")
         chantiers = convoy_chantiers(beads)
         self.assertEqual(1, len(chantiers))
         self.assertEqual(LIVRE, chantiers[0].stage)
-        self.assertEqual("Livré : 2/2 tickets mergés", chantiers[0].detail)
+        self.assertEqual("Livré : 2/2 tickets fermés", chantiers[0].detail)
 
     def test_closed_beads_outside_the_digest_are_never_counted(self):
         """A ticket that merely shares issue_type "task" but a different
@@ -162,7 +162,7 @@ class ConvoyStageTest(unittest.TestCase):
             }
         ]
         chantier = convoy_chantiers(beads)[0]
-        self.assertEqual("1/4 tickets mergés · 1 en cours · 1 en PR", chantier.detail)
+        self.assertEqual("1/4 tickets fermés · 1 en cours · 1 en PR", chantier.detail)
 
 
 class BuildChantiersTest(unittest.TestCase):
@@ -320,7 +320,7 @@ class RenderProjectsSectionTest(unittest.TestCase):
         projects, sans_projet = build_projects(descriptors, beads)
         html_out = render_projects_section(projects, sans_projet)
         self.assertIn("SayMyName", html_out)
-        self.assertIn("1/4 tickets mergés", html_out)
+        self.assertIn("1/4 tickets fermés", html_out)
         self.assertIn("cockpit-stepper", html_out)
         # Usine (agent-factory) is declared but has no active chantier here.
         self.assertIn("Aucun chantier actif.", html_out)

@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/launch-owned-by-a-launch-test.py::LaunchOwnedByALaunch.test_a_launch_owned_by_a_stopped_launch_stops_with_it"
+    ]
+  }
+}

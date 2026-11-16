@@ -12,12 +12,33 @@ synthetic sources only:
 
 - a synthetic supervisor that answers as the installed one does
   (`tests/fixtures/cockpit/core/fake_gc.py`, held to the real contract by
-  `tests/cockpit-fake-gc-contract-test.py`);
+  `tests/cockpit-fake-gc-contract-test.py`), and that keeps what the
+  installed one keeps of each session the dataset says -- the session, what
+  its provider recorded, when it woke and stopped
+  (`GET /v0/city/<city>/session/<id>`, `…/transcript?format=raw`,
+  `GET /v0/city/<city>/events?type=session.woke`, as gc 1.5.0 answers
+  them) -- and sends the sessions the dataset dispatches once the cockpit
+  has read the sessions, however long it took to come up;
+- what a dataset says of a clean stop (`stop_supervisor`, H, af-69qhlk;
+  `read_stop_supervisor`): the sessions at work on tickets, how each leaves a
+  suspended city, who comes back at the resume, a file of each write the
+  supervisor receives, and whether it answers them (`unanswered_writes`);
 - a synthetic tracker (`tests/fixtures/cockpit/requests/fake-bd`) and the
   projects declared for this launch alone;
+- the knowledge repositories of those projects (their roadmap and release
+  plan), Git repositories in the temporary HOME -- or links to ones on this
+  host a dataset names --, read in clones of the cockpit's own;
+- when the dataset gives what GitHub answers, a synthetic GitHub client
+  (`tests/fixtures/cockpit/github/fake-gh`) for the repository it names;
+  otherwise no repository is declared, and GitHub is not read;
+- when the dataset gives records of the flow or of GitHub, a clock that
+  starts at its fixed time (`generated_at`); otherwise the host's clock;
 - an empty environment: a temporary HOME, no local settings file, so no
-  secret, no notification, no heartbeat and no project clone. Only the mark
-  of the launch (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
+  secret, no notification, no heartbeat and no project clone -- but the
+  heartbeat a dataset declares (`heartbeat`: where it goes, at what pace;
+  I, af-cp4fzd), its address written as the secret it is in service, in a
+  private file of the temporary HOME. Only the mark of the launch
+  (`FACTORY_LAUNCH_ID`) is kept from the launcher's;
 - the doors that change the Factory (`bin/proposal-door`,
   `bin/escalation-door`, `bin/factory-session-loop-guard`, `gc order run`,
   `bin/order-pause`, and for the settings and the upkeep `bin/provider-failover`,
@@ -42,18 +63,23 @@ temporary directory.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +90,8 @@ import synthetic_city  # noqa: E402
 
 # The tracker, the `gc` and the doors of the launch.
 SYNTHETIC = FIXTURES / "synthetic-city"
+# The operator of a launch, as the identity proxies name him.
+BENJAMIN_LOGIN = "synthetic@example.ts.net"
 # The doors of the Factory the cockpit calls, by their name in a dataset:
 # what each one is, and the variable that tells the cockpit where it is.
 DOORS = {
@@ -77,6 +105,8 @@ DOORS = {
     "provider-failover": (ROOT / "bin" / "provider-failover", "COCKPIT_PROVIDER_FAILOVER_BIN"),
     "factory-maintain": (ROOT / "bin" / "factory-maintain", "COCKPIT_FACTORY_MAINTAIN_BIN"),
     "operator-config": (ROOT / "bin" / "operator-config", "COCKPIT_OPERATOR_CONFIG_BIN"),
+    # Essai (A2): the launcher of the profile on the commit of the result.
+    "acceptance-session": (SYNTHETIC / "acceptance-session", "COCKPIT_ACCEPTANCE_SESSION_BIN"),
     "gc": (SYNTHETIC / "gc", "COCKPIT_GC_BIN"),
 }
 # How a dataset may say a door answers (`doors`): it never does, or it
@@ -101,10 +131,21 @@ SILENT_VALIDITY_SECONDS = "2"
 # A read of a tracker that never answers is not given up while the cockpit
 # lives (a day is longer than any launch): the page says it is being read.
 UNANSWERED_READ_TIMEOUT_SECONDS = "86400"
+# The first page waits for the first reading of the sources, at most this
+# long: a source that never answers (a state under reading) is served as
+# such once it is over.
+FIRST_READ_SECONDS = "8"
+# The seal key of an evidence store (bin/evidence-capture): written with the
+# first piece, kept by a purge.
+SEAL_KEY_FILE = ".seal-key"
 # The mark bin/project-launch gives what it launches: the launcher stops
 # the processes that carry it, and the controller of an evaluation attests
 # that the process listening on the port carries it. The cockpit keeps it.
 LAUNCH_MARK = "FACTORY_LAUNCH_ID"
+# Where two launches of a commit share a synthetic projection and evidence
+# store (`retention`, C2b): under the temporary directory, in a folder of this
+# account alone, never a place a dataset names.
+RETENTION_ROOT = Path(tempfile.gettempdir()) / "cockpit-synthetic-retention"
 
 
 def read_city(path: Path) -> synthetic_city.SyntheticCity:
@@ -129,12 +170,14 @@ def read_doors(path: Path) -> dict[str, str]:
 
 
 def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
-    """Take `supervisor` down as soon as the cockpit shows a reading of it:
-    the last values are kept, and are no longer current."""
+    """Take `supervisor` down as soon as the cockpit shows a reading of it
+    -- its state and its sessions: the last values are kept, and are no
+    longer current."""
     while True:
         try:
             with urllib.request.urlopen(cockpit_url + "/api/status", timeout=2) as response:
-                if (json.load(response).get("gc") or {}).get("value"):
+                status = json.load(response)
+                if (status.get("gc") or {}).get("value") and (status.get("sessions") or {}).get("value"):
                     break
         except (urllib.error.URLError, ConnectionError, OSError, ValueError):
             pass
@@ -142,8 +185,273 @@ def fall_silent_once_read(supervisor, cockpit_url: str) -> None:
     supervisor.go_down()
 
 
+def serve_sessions(supervisor, city: synthetic_city.SyntheticCity) -> None:
+    """Make `supervisor` answer what the installed one keeps of each session
+    of `city` (gc 1.5.0): ``GET /v0/city/<city>/session/<id>``, the session
+    as it lists it; ``…/session/<id>/transcript?format=raw``, what its
+    provider recorded (``{"id", "format": "raw", "messages"}``); ``GET
+    /v0/city/<city>/events?type=session.woke|session.stopped``, when it
+    woke and stopped, and ``…?type=execution.step_started``, the bead it
+    took (the subject), the latest first and by pages, from its own journal
+    -- a 404 for a session it knows nothing of. Then send the sessions `city` dispatches once the cockpit
+    has read the sessions a first time, so that a slow start takes nothing
+    from them: each wakes, is listed at work for a while with only its first
+    records and the bead it works (``active_bead``), and stops once a
+    reading has listed it so -- then it is listed no more, as the installed
+    supervisor lists only the sessions it runs; a session it keeps once
+    stopped says no bead (gc 1.5.0 on the live host, 2026-10-28: no
+    ``active_bead``)."""
+    handler = supervisor._server.RequestHandlerClass
+    answer_other = handler.do_GET
+    prefix = "/v0/city/%s/" % city.name
+    sessions = {session["id"]: dict(session) for session in city.sessions}
+    lock = threading.Lock()
+    # The readings of the sessions answered so far.
+    reading = threading.Condition(lock)
+    readings = 0
+    # What the supervisor knows now: the sessions it sent, how many records
+    # of each it serves (None: all). Its events go to its own journal,
+    # which it serves by pages as gc 1.5.0 does.
+    known = {name: None for name in sessions if name not in city.dispatched}
+
+    def record(kind: str, name: str, at: str) -> None:
+        template = sessions[name].get("template") or ""
+        supervisor.emit(kind, template, {"session_id": name, "template": template},
+                        ts=at, actor="gc", session_id=name)
+
+    def took(name: str, started: list) -> None:
+        # As the installed supervisor logs a session taking a step: the
+        # bead it took is the subject, the session acts -- once for each
+        # step it takes.
+        for step in started or []:
+            supervisor.emit("execution.step_started", step["bead"], {}, ts=step["at"], actor=name,
+                            run_id=step["run"], session_id=name, step_id=step["step"], depends_on_step_ids=[])
+
+    for name, logged in sorted(city.session_log.items(), key=lambda pair: pair[1]["woke"] or ""):
+        if name in known and name in sessions:
+            if logged["woke"]:
+                record("session.woke", name, logged["woke"])
+            took(name, logged.get("started"))
+            if logged["stopped"]:
+                record("session.stopped", name, logged["stopped"])
+
+    def listed() -> list:
+        return [dict(sessions[name]) for name in known if sessions[name]["running"]]
+
+    def do_GET(self):  # noqa: N802
+        nonlocal readings
+        path = self.path.partition("?")[0]
+        rest = path[len(prefix):] if path.startswith(prefix) else None
+        if rest == "sessions" and not supervisor._down:
+            with reading:
+                answer_other(self)
+                readings += 1
+                reading.notify_all()
+            return
+        if supervisor._down or rest is None or not rest.startswith("session/"):
+            answer_other(self)
+            return
+        with lock:
+            name, _, part = urllib.parse.unquote(rest[len("session/"):]).partition("/")
+            if name not in known or part not in ("", "transcript") or (part and name not in city.transcripts):
+                self._send(404, "text/plain; charset=utf-8", b"404 page not found\n")
+                return
+            if not part:
+                self._send_json(dict(sessions[name]))
+                return
+            served = city.transcripts[name][:known[name]] if known[name] is not None else city.transcripts[name]
+            self._send_json({"id": name, "format": "raw", "messages": served})
+
+    handler.do_GET = do_GET
+
+    def dispatch(name: str, said: dict) -> None:
+        with reading:
+            reading.wait_for(lambda: readings > 0)
+        time.sleep(float(said.get("after_seconds") or 0))
+        running = float(said.get("running_seconds") or 0)
+        logged = city.session_log.get(name) or {}
+        with reading:
+            if logged.get("woke") or sessions[name].get("created_at"):
+                record("session.woke", name, logged.get("woke") or sessions[name]["created_at"])
+            took(name, logged.get("started"))
+            sessions[name]["running"] = running > 0
+            if running > 0 and logged.get("started"):
+                sessions[name]["active_bead"] = logged["started"][-1]["bead"]
+            known[name] = said.get("recorded_while_running") if running > 0 else None
+            supervisor.set_sessions(listed())
+            sent_at = readings
+        if running > 0:
+            time.sleep(running)
+        with reading:
+            if running > 0:
+                reading.wait_for(lambda: readings > sent_at)
+            sessions[name]["running"] = False
+            sessions[name].pop("active_bead", None)
+            known[name] = None
+            if logged.get("stopped"):
+                record("session.stopped", name, logged["stopped"])
+            supervisor.set_sessions(listed())
+
+    supervisor.set_sessions(listed())
+    for name, said in city.dispatched.items():
+        if name in sessions:
+            threading.Thread(target=dispatch, args=(name, said), daemon=True).start()
+
+
+def read_stop_supervisor(path: Path, city: synthetic_city.SyntheticCity) -> tuple[dict, synthetic_city.SyntheticCity]:
+    """What the dataset at `path` says of a clean stop (`stop_supervisor`,
+    {} when nothing), and `city` with its work: for each `work`
+    ({"session", "role", "ticket", "title"}) a session at work and its
+    ticket in progress, as the Factory records it (`gc.session_id`). The
+    other keys are read by `follow_stop` and `write_stop`."""
+    stop = json.loads(path.read_text(encoding="utf-8")).get("stop_supervisor") or {}
+    if not isinstance(stop, dict):
+        sys.exit(f"cockpit-isolated: {path}: stop_supervisor is an object")
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for item in stop.get("work") or []:
+        name = item["session"]
+        city.sessions.append({"id": name, "template": STOP_TEMPLATES[item["role"]], "session_name": name,
+                              "running": not stop.get("resuming"), "last_active": at})
+        city.beads.append({"id": item["ticket"], "title": item["title"], "status": "in_progress",
+                           "issue_type": "task", "assignee": name, "created_at": at, "updated_at": at,
+                           "metadata": {"gc.session_id": name, "gc.session_name": name}})
+    # Tickets no session at work holds (`idle`): their holder sleeps.
+    for item in stop.get("idle") or []:
+        holder = item.get("holder")
+        city.beads.append({"id": item["ticket"], "title": item["title"], "status": item.get("status", "open"),
+                           "issue_type": "task", "assignee": holder, "created_at": at, "updated_at": at,
+                           "metadata": {"gc.session_id": holder, "gc.session_name": holder} if holder else {}})
+    if stop.get("asked_minutes_ago") is not None:
+        city = dataclasses.replace(city, suspended=True)
+    elif stop.get("resuming"):
+        city = dataclasses.replace(city, suspended=False)
+    return stop, city
+
+
+class RecordedWrites(list):
+    """The writes the synthetic supervisor received, each also a line of a
+    file: what a test reads of it, from outside the launch."""
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+
+    def append(self, write: dict) -> None:
+        super().append(write)
+        with open(self.path, "a", encoding="utf-8") as recorded:
+            recorded.write(json.dumps(write, ensure_ascii=False) + "\n")
+
+
+def follow_stop(supervisor, stop: dict, home: str) -> None:
+    """The sessions of `stop` as the installed supervisor treats them: a
+    suspended city leaves a session the work it holds, then it stops by
+    itself (`drains_in_seconds`, by session; one not named never does, its
+    ticket lost once it stops when `vanishes_when_drained` says so, held by no
+    one when `released_when_drained` does); a session stopped by force leaves
+    its ticket held by no one when `released_on_force_stop` says so; a resumed
+    one sends them back, on what they held or as `reassigned_on_resume` says.
+    The tracker is copied, as it changes, where `tracker` says."""
+    tracker = Path(home, "tracker.json")
+    copied = {"at": None}
+
+    def copy() -> None:
+        # The tracker is written once this process is up.
+        if not stop.get("tracker") or not tracker.exists():
+            return
+        at = tracker.stat().st_mtime_ns
+        if at != copied["at"]:
+            Path(stop["tracker"] + ".next").write_bytes(tracker.read_bytes())
+            Path(stop["tracker"] + ".next").replace(stop["tracker"])
+            copied["at"] = at
+
+    def rewrite(change) -> None:
+        beads = json.loads(tracker.read_text(encoding="utf-8"))
+        written = Path(home, "tracker.next.json")
+        written.write_text(json.dumps(change(beads), ensure_ascii=False), encoding="utf-8")
+        written.replace(tracker)
+
+    def running(name: str, value: bool) -> None:
+        with supervisor._lock:
+            for session in supervisor._sessions:
+                if session["id"] == name:
+                    session["running"] = value
+
+    def held_by(bead: dict, name: str) -> dict:
+        return dict(bead, assignee=name, metadata=dict(bead["metadata"], **{"gc.session_id": name,
+                                                                            "gc.session_name": name}))
+
+    def release(ticket: str) -> None:
+        rewrite(lambda beads: [dict(bead, status="open", assignee=None, metadata={
+            key: value for key, value in (bead.get("metadata") or {}).items()
+            if key not in ("gc.session_id", "gc.session_name")}) if bead.get("id") == ticket else bead
+            for bead in beads])
+
+    def resumed() -> None:
+        moved = stop.get("reassigned_on_resume") or {}
+        for item in stop.get("work") or []:
+            successor = moved.get(item["ticket"])
+            if successor is None:
+                running(item["session"], True)
+                continue
+            rewrite(lambda beads: [held_by(bead, successor) if bead.get("id") == item["ticket"] else bead
+                                   for bead in beads])
+            with supervisor._lock:
+                supervisor._sessions.append({"id": successor, "template": STOP_TEMPLATES[item["role"]],
+                                             "session_name": successor, "running": True,
+                                             "last_active": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+
+    def of(key: str) -> dict:
+        return {item["session"]: item["ticket"] for item in stop.get("work") or []
+                if item["ticket"] in (stop.get(key) or [])}
+
+    vanishing, released, forced = of("vanishes_when_drained"), of("released_when_drained"), of("released_on_force_stop")
+    was, due, seen = False, {}, 0
+    while True:
+        copy()
+        with supervisor._lock:
+            writes = list(supervisor.writes[seen:])
+        seen += len(writes)
+        for write in writes:
+            name = re.fullmatch(r"/v0/city/[^/]+/session/([^/]+)/stop", write.get("path") or "")
+            if write.get("method") == "POST" and name and name.group(1) in forced:
+                release(forced[name.group(1)])
+        suspended = bool(supervisor._status["suspended"])
+        if suspended != was:
+            was = suspended
+            if suspended:
+                due = {name: time.monotonic() + seconds for name, seconds in (stop.get("drains_in_seconds") or {}).items()}
+            else:
+                resumed()
+        for name, at in list(due.items()):
+            if time.monotonic() >= at:
+                del due[name]
+                if name in vanishing:
+                    rewrite(lambda beads: [bead for bead in beads if bead.get("id") != vanishing[name]])
+                if name in released:
+                    release(released[name])
+                running(name, False)
+        time.sleep(0.1)
+
+
+def answer_no_write(supervisor) -> None:
+    """The supervisor records each write it receives, as before, then drops
+    it: applied to nothing, answered by nothing -- a supervisor that stops
+    answering between a reading and a command (`unanswered_writes`, R15,
+    af-0ilk7e). Its readings answer as before."""
+    answering = supervisor._server.RequestHandlerClass
+
+    class Unanswered(answering):
+        def _city_write(self, method):
+            if super()._city_write(method) is not None:
+                self.close_connection = True
+                self.connection.close()
+            return None
+
+    supervisor._server.RequestHandlerClass = Unanswered
+
+
 def serve_synthetic_supervisor(
-    city: synthetic_city.SyntheticCity, cockpit_url: str, home: str, announce: int, cockpit_alive: int
+    city: synthetic_city.SyntheticCity, stop: dict, cockpit_url: str, home: str, announce: int, cockpit_alive: int
 ) -> None:
     """The process beside the cockpit: the supervisor of `city`. It writes
     its address on `announce`, then lives until `cockpit_alive` closes --
@@ -157,9 +465,22 @@ def serve_synthetic_supervisor(
     supervisor.set_status(
         suspended=city.suspended, agents_running=sum(1 for session in city.sessions if session["running"])
     )
-    supervisor.set_sessions(city.sessions)
     supervisor.start()
-    if city.reading in (synthetic_city.UNANSWERED, synthetic_city.FAILING):
+    serve_sessions(supervisor, city)
+    if stop.get("writes"):
+        supervisor.writes = RecordedWrites(stop["writes"])
+    if stop.get("unanswered_writes"):
+        answer_no_write(supervisor)
+    if stop.get("work"):
+        with supervisor._lock:
+            for session in supervisor._sessions:
+                if session["id"] in (stop.get("missing_after_restart") or []):
+                    session["running"] = False
+        threading.Thread(target=follow_stop, args=(supervisor, stop, home), daemon=True).start()
+    # A stop on a supervisor that fell silent: the work in flight was never
+    # read, from the first page on.
+    if city.reading in (synthetic_city.UNANSWERED, synthetic_city.FAILING) or (
+            stop and city.reading == synthetic_city.READ_ONCE):
         supervisor.go_down()
     os.write(announce, supervisor.base_url.encode("ascii"))
     os.close(announce)
@@ -174,6 +495,10 @@ def serve_synthetic_supervisor(
 # A host restarted during a stop (af-npz9v1.21, for H af-69qhlk): the
 # stop was asked this long before the launch, which is the restart.
 STOP_ASKED_BEFORE_RESTART_SECONDS = 10 * 60
+# The sessions of a stop, by the role a dataset gives them.
+STOP_TEMPLATES = {"Auteur": "delivery-author", "Relecteur": "delivery-reviewer", "Évaluateur": "delivery-evaluator"}
+# How long a resume waits for its sessions in a launch: a few readings.
+STOP_RESUME_GRACE_SECONDS = 3
 
 
 def read_https(path: Path) -> bool:
@@ -193,7 +518,8 @@ def start_identity_proxy(cockpit_port: int, home: str, held: list[int]) -> dict[
     is in service. It lives until the cockpit ends; `held` are the ends of
     the other pipes it must not keep open. The environment says its address
     and the authority to trust (COCKPIT_TRIAL_HTTPS_URL, _CA), and makes its
-    origin the cockpit's own, as behind Serve."""
+    origin the cockpit's own and the address it gives (COCKPIT_PUBLIC_URL),
+    as behind Serve."""
     announce_read, announce_write = os.pipe()
     alive_read, alive_write = os.pipe()
     if os.fork() == 0:
@@ -218,8 +544,115 @@ def start_identity_proxy(cockpit_port: int, home: str, held: list[int]) -> dict[
         sys.exit("cockpit-isolated: the synthetic identity proxy did not start")
     # Kept open by the cockpit for as long as it lives, and by nothing else.
     os.set_inheritable(alive_write, True)
-    return {"COCKPIT_ALLOWED_ORIGIN": url, "COCKPIT_TRIAL_HTTPS_URL": url,
+    return {"COCKPIT_ALLOWED_ORIGIN": url, "COCKPIT_PUBLIC_URL": url, "COCKPIT_TRIAL_HTTPS_URL": url,
             "COCKPIT_TRIAL_HTTPS_CA": os.path.join(home, "https", "cert.pem")}
+
+
+def free_port() -> int:
+    """A port of the loopback no one listens on, now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def read_operator_front(path: Path, https: bool) -> bool:
+    """Whether the dataset at `path` puts the operator at the address of the
+    launch (`operator_front`, A2 af-ocz64w); exits when it is not true or
+    false, or when the cockpit is also behind the HTTPS identity proxy,
+    whose origin is the only one the cockpit takes."""
+    front = json.loads(path.read_text(encoding="utf-8")).get("operator_front", False)
+    if not isinstance(front, bool):
+        sys.exit(f"cockpit-isolated: {path}: operator_front is true or false")
+    if front and https:
+        sys.exit(f"cockpit-isolated: {path}: operator_front and https_identity_proxy are not taken together")
+    return front
+
+
+def start_operator_front(port: int, cockpit_port: int, held: list[int]) -> None:
+    """The operator at the address of the launch (A2, af-ocz64w;
+    `identity_proxy.operator_front`): on 127.0.0.1:`port`, a synthetic Serve
+    in plain HTTP that relays to the cockpit on `cockpit_port` and names
+    whoever connects the operator of the launch, as Tailscale Serve names
+    the operator's browser in service. The cockpit keeps every check of its
+    guard, its origin the address of the launch. It lives until the cockpit
+    ends; `held` are the ends of the other pipes it must not keep open."""
+    announce_read, announce_write = os.pipe()
+    alive_read, alive_write = os.pipe()
+    if os.fork() == 0:
+        os.close(announce_read)
+        os.close(alive_write)
+        for fd in held:
+            os.close(fd)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            sys.path.insert(0, str(SYNTHETIC))
+            import identity_proxy
+
+            front = identity_proxy.operator_front(cockpit_port, port, BENJAMIN_LOGIN)
+            threading.Thread(target=front.serve_forever, daemon=True).start()
+            os.write(announce_write, b"up")
+            os.close(announce_write)
+            while os.read(alive_read, 1):
+                pass
+            front.shutdown()
+        finally:
+            os._exit(0)
+    os.close(announce_write)
+    os.close(alive_read)
+    with os.fdopen(announce_read, "rb") as announced:
+        if not announced.read():
+            sys.exit("cockpit-isolated: the operator at the address of the launch did not start")
+    # Kept open by the cockpit for as long as it lives, and by nothing else.
+    os.set_inheritable(alive_write, True)
+
+
+def read_heartbeat(path: Path) -> dict | None:
+    """The heartbeat the dataset at `path` declares (`heartbeat`: its
+    `ping_url`, an http(s) address, and its `interval_seconds`, the pace
+    that stands for the five minutes of service), or None; exits when it is
+    not one."""
+    heartbeat = json.loads(path.read_text(encoding="utf-8")).get("heartbeat")
+    if heartbeat is None:
+        return None
+    url = heartbeat.get("ping_url") if isinstance(heartbeat, dict) else None
+    interval = heartbeat.get("interval_seconds") if isinstance(heartbeat, dict) else None
+    if (not isinstance(url, str) or not url.startswith(("http://", "https://"))
+            or isinstance(interval, bool) or not isinstance(interval, (int, float)) or interval <= 0):
+        sys.exit(f"cockpit-isolated: {path}: heartbeat is a ping_url (http or https) and an interval_seconds above 0")
+    return {"ping_url": url, "interval_seconds": float(interval)}
+
+
+def read_usine_validity(path: Path) -> dict[str, str]:
+    """How long a check of a section of the page Usine stays current, as the
+    dataset at `path` declares it (`usine_check_validity_seconds`, above 0:
+    a configuration read goes stale in seconds, not the five minutes of
+    service; G2, af-f8nlhr); nothing when it declares none. Exits when it is
+    not a number above 0."""
+    seconds = json.loads(path.read_text(encoding="utf-8")).get("usine_check_validity_seconds")
+    if seconds is None:
+        return {}
+    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
+        sys.exit(f"cockpit-isolated: {path}: usine_check_validity_seconds is a number of seconds above 0")
+    return {"COCKPIT_VALIDITY_USINE_SECONDS": str(float(seconds))}
+
+
+def write_heartbeat(heartbeat: dict | None, home: str) -> dict[str, str]:
+    """The environment of the heartbeat the dataset declares: its address in
+    a file of the temporary HOME that only this account reads, as the secret
+    file of the VM (the cockpit reads it and shows it nowhere), its pace,
+    and a tick four times as frequent. Nothing when it declares none."""
+    if heartbeat is None:
+        return {}
+    folder = Path(home, "secrets")
+    folder.mkdir(mode=0o700)
+    secret = folder / "heartbeat-url"
+    descriptor = os.open(secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as written:
+        written.write(heartbeat["ping_url"] + "\n")
+    interval = heartbeat["interval_seconds"]
+    return {"COCKPIT_HEARTBEAT_URL_FILE": str(secret), "COCKPIT_HEARTBEAT_INTERVAL_SECONDS": str(interval),
+            "COCKPIT_HEARTBEAT_TICK_SECONDS": str(interval / 4)}
 
 
 def read_restart(path: Path) -> bool:
@@ -231,9 +664,12 @@ def read_restart(path: Path) -> bool:
     return restarted
 
 
-def write_stop(restarted: bool, city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+def write_stop(restarted: bool, stop: dict, city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """The state of the clean stop the cockpit starts from, in `home`, and
-    the environment that makes it read it every second. A host restarted
+    the environment that makes it read it every second. A dataset may start
+    from a stop under way (`stop_supervisor`: `asked_minutes_ago`, the
+    sessions silent since) or from a resume (`resuming`, the sessions not
+    back, for `resume_grace_seconds`). A host restarted
     during a stop (`read_restart`) leaves it as it was: a stop asked ten
     minutes before, the tickets in flight then (the photo: the tracker of
     the launch), the cockpit restarted since. The stop driver then reads the
@@ -241,14 +677,22 @@ def write_stop(restarted: bool, city: synthetic_city.SyntheticCity, home: str) -
     with the tickets whose assignment changed; still suspended, the stop
     goes on."""
     state = Path(home, "cockpit-stop-state.json")
-    if restarted:
-        asked = time.time() - STOP_ASKED_BEFORE_RESTART_SECONDS
-        photo = {bead["id"]: {"status": bead.get("status"),
+    minutes = stop.get("asked_minutes_ago")
+    if restarted or minutes is not None or stop.get("resuming"):
+        asked = time.time() - (STOP_ASKED_BEFORE_RESTART_SECONDS if minutes is None else minutes * 60)
+        photo = {bead["id"]: {"status": bead.get("status"), "title": bead.get("title"),
                               "assignee": (bead.get("metadata") or {}).get("gc.session_name") or bead.get("assignee")}
                  for bead in city.beads if isinstance(bead, dict) and bead.get("id")}
-        state.write_text(json.dumps({"state": "arret_en_cours", "started_at": asked, "last_progress_at": asked,
-                                     "snapshot": {"beads": photo}}), encoding="utf-8")
-    return {"COCKPIT_STOP_STATE_FILE": str(state), "COCKPIT_STOP_TICK_SECONDS": POLL_SECONDS}
+        held = [{"session_id": item["session"], "bead_id": item["ticket"], "assignee": item["session"],
+                 "template": STOP_TEMPLATES[item["role"]]} for item in stop.get("work") or []]
+        said = {"state": "arret_en_cours", "started_at": asked, "last_progress_at": asked,
+                "snapshot": {"beads": photo}, "held": held, "suspended_seen": minutes is not None}
+        if stop.get("resuming"):
+            said.update(state="redemarrage", stopped_at=asked, redemarrage_started_at=time.time(), suspended_seen=True,
+                        points={item["session"]: "conserve" for item in stop["work"]})
+        state.write_text(json.dumps(said), encoding="utf-8")
+    return {"COCKPIT_STOP_STATE_FILE": str(state), "COCKPIT_STOP_TICK_SECONDS": POLL_SECONDS,
+            "COCKPIT_STOP_RESUME_GRACE_SECONDS": str(stop.get("resume_grace_seconds", STOP_RESUME_GRACE_SECONDS))}
 
 
 def write_doors(answers: dict[str, str], home: str) -> dict[str, str]:
@@ -410,11 +854,45 @@ def door_locks(home: str) -> dict[str, str]:
     return env
 
 
+def session_beads(city: synthetic_city.SyntheticCity) -> list[dict]:
+    """The bead the tracker keeps of each session of `city` that says its
+    agent, as gc 1.5.0 keeps one apart (ephemeral): open while the session
+    runs, closed once it stopped. The supervisor lists only the sessions it
+    runs (serve_sessions), so a stopped session's agent is read from this
+    bead, as in service (af-1o6ea6). A session the supervisor sends only
+    once the cockpit is up (`city.dispatched`) has none yet."""
+    held = {bead.get("id") for bead in city.beads if isinstance(bead, dict)}
+    beads = []
+    for session in city.sessions:
+        name = session.get("id")
+        if not name or name in held or name in city.dispatched or not session.get("agent_name"):
+            continue
+        logged = city.session_log.get(name) or {}
+        bead = {"id": name, "title": session["agent_name"], "issue_type": "session", "ephemeral": True,
+                "status": "open" if session.get("running") else "closed",
+                "labels": ["agent:%s" % session["agent_name"], "gc:session"],
+                "metadata": {key: session[key] for key in ("agent_name", "template", "provider", "command")
+                             if session.get(key)}}
+        bead["metadata"]["session_name"] = session.get("session_name") or name
+        if session.get("created_at") or logged.get("woke"):
+            bead["created_at"] = session.get("created_at") or logged["woke"]
+        if not session.get("running") and logged.get("stopped"):
+            bead["closed_at"] = logged["stopped"]
+        beads.append(bead)
+    return beads
+
+
 def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
     """Put what the tracker holds and the projects declared in `home`; the
     environment that makes the cockpit read them."""
+    # The files the sources point at, in the home of the launch: a value
+    # that names one says where it is.
+    for path, content in city.files.items():
+        Path(home, path).parent.mkdir(parents=True, exist_ok=True)
+        Path(home, path).write_text(content, encoding="utf-8")
     beads = Path(home, "tracker.json")
-    beads.write_text(json.dumps(city.beads, ensure_ascii=False), encoding="utf-8")
+    beads.write_text(json.dumps(city.beads + session_beads(city), ensure_ascii=False).replace(synthetic_city.HOME_MARK, home + "/"),
+                     encoding="utf-8")
     projects = Path(home, "projects")
     projects.mkdir()
     for descriptor in city.projects:
@@ -426,6 +904,11 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         "FAKE_BD_STATE_FILE": str(beads),
         "COCKPIT_DESCRIPTORS_DIR": str(projects),
     }
+    if city.github is not None:
+        github = Path(home, "github.json")
+        github.write_text(json.dumps(city.github, ensure_ascii=False), encoding="utf-8")
+        env.update({"COCKPIT_GH_BIN": str(FIXTURES / "github" / "fake-gh"), "FAKE_GH_STATE_FILE": str(github),
+                    "COCKPIT_GITHUB_REPO": city.github["repository"]})
     if city.reading == synthetic_city.FAILING:
         # The tracker fails for as long as this file exists: always.
         env["FAKE_BD_FAIL_FLAG_FILE"] = str(beads)
@@ -433,7 +916,89 @@ def write_tracker_and_projects(city: synthetic_city.SyntheticCity, home: str) ->
         # A tracker that answers no read, and a cockpit that waits for it.
         env["COCKPIT_BD_BIN"] = str(FIXTURES / "requests" / "silent-bd")
         env["COCKPIT_BEADS_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
+        env["COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS"] = UNANSWERED_READ_TIMEOUT_SECONDS
     return env
+
+
+def write_evidence(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+    """File the pieces of `city` in its evidence store -- the one the
+    dataset names, else one in `home` -- as bin/evidence-capture files them,
+    and its seal key with them; a store already sealed is left as it is,
+    so a purge done since (its key kept, the folder of a Spec removed)
+    stays done. The environment that makes the cockpit read that store, and
+    never the account's."""
+    store = Path(city.evidence_store or os.path.join(home, "evidence"))
+    if city.evidence and not (store / SEAL_KEY_FILE).exists():
+        for path, text in city.evidence.items():
+            Path(store, path).parent.mkdir(parents=True, exist_ok=True)
+            Path(store, path).write_text(text, encoding="utf-8")
+        descriptor = os.open(store / SEAL_KEY_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as key:
+            key.write(os.urandom(32))
+    return {"EVIDENCE_STORE_DIR": str(store)}
+
+
+def retained(city: synthetic_city.SyntheticCity) -> synthetic_city.SyntheticCity:
+    """`city` keeping its projection and its pieces in the disposable place
+    of its `retention`, one per commit, so a restart of the evaluated
+    product finds them: a launch that does not purge starts that place
+    over, a launch that purges takes what the one before left."""
+    if not city.retention:
+        return city
+    RETENTION_ROOT.mkdir(mode=0o700, exist_ok=True)
+    if RETENTION_ROOT.is_symlink() or RETENTION_ROOT.stat().st_uid != os.getuid():
+        sys.exit(f"cockpit-isolated: {RETENTION_ROOT} is not a folder of this account")
+    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], check=True, capture_output=True, text=True)
+    place = RETENTION_ROOT / f"{city.retention}-{commit.stdout.strip()}"
+    if not city.retention_purge:
+        shutil.rmtree(place, ignore_errors=True)
+    place.mkdir(exist_ok=True)
+    return replace(city, session_trace=str(place / "sessions.jsonl"), evidence_store=str(place / "evidence"))
+
+
+def purge_retained(city: synthetic_city.SyntheticCity, store: str) -> None:
+    """Purge the Specs of `city` from its synthetic `store` with the real
+    bin/evidence-capture, on no other store: the pieces the launch before
+    filed are gone, their fingerprints left in the tracker."""
+    for spec in sorted({path.split("/")[0] for path in city.evidence}):
+        subprocess.run([sys.executable, str(ROOT / "bin" / "evidence-capture"), "purge", "--spec", spec], check=True,
+                       stdout=subprocess.DEVNULL,
+                       env={"PATH": os.environ.get("PATH", os.defpath), "HOME": str(Path(store).parent),
+                            "EVIDENCE_STORE_DIR": store})
+
+
+def write_knowledge_repos(city: synthetic_city.SyntheticCity, home: str) -> dict[str, str]:
+    """Put the knowledge repositories of the projects under `home`: a Git
+    repository for each one the city writes, its files committed at the
+    date it says, or a link to one already on this host. The environment
+    that makes the cockpit read them, in clones of its own, as it reads the
+    repositories of the projects in service (cockpit.projects.depots)."""
+    if not city.repos:
+        return {}
+    for name, repo in city.repos.items():
+        path = Path(home, "repos", name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if "path" in repo:
+            path.symlink_to(repo["path"], target_is_directory=True)
+            continue
+        for file, text in repo["files"].items():
+            Path(path, file).parent.mkdir(parents=True, exist_ok=True)
+            Path(path, file).write_text(text, encoding="utf-8")
+        env = {"PATH": os.environ.get("PATH", os.defpath), "HOME": home, "GIT_AUTHOR_NAME": "synthetic",
+               "GIT_AUTHOR_EMAIL": "synthetic@example.invalid", "GIT_COMMITTER_NAME": "synthetic",
+               "GIT_COMMITTER_EMAIL": "synthetic@example.invalid", "GIT_AUTHOR_DATE": repo["at"],
+               "GIT_COMMITTER_DATE": repo["at"]}
+        for args in (["init", "--quiet", "--initial-branch", "main"], ["add", "--all"],
+                     ["-c", "commit.gpgsign=false", "commit", "--quiet", "--message", "the knowledge of the project"]):
+            subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, env=env)
+    Path(home, "rigs").mkdir()
+    return {
+        "COCKPIT_CLONES_DIR": os.path.join(home, "clones"),
+        "COCKPIT_REPO_URL_TEMPLATE": "file://" + os.path.join(home, "repos", "%s"),
+        # No rig of this launch has a repository: no promotion is read.
+        "COCKPIT_RIG_FILES_DIR": os.path.join(home, "rigs"),
+        "COCKPIT_DEPOTS_POLL_SECONDS": POLL_SECONDS,
+    }
 
 
 def main(argv: list[str]) -> int:
@@ -441,10 +1006,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--dataset", required=True)
     args = parser.parse_args(argv)
-    city = read_city(Path(args.dataset))
+    city = retained(read_city(Path(args.dataset)))
     doors = read_doors(Path(args.dataset))
     restarted = read_restart(Path(args.dataset))
+    stop, city = read_stop_supervisor(Path(args.dataset), city)
     https = read_https(Path(args.dataset))
+    front = read_operator_front(Path(args.dataset), https)
+    heartbeat = read_heartbeat(Path(args.dataset))
+    usine_validity = read_usine_validity(Path(args.dataset))
     cockpit_url = f"http://127.0.0.1:{args.port}"
 
     home = tempfile.mkdtemp(prefix="cockpit-isolated-")
@@ -454,7 +1023,7 @@ def main(argv: list[str]) -> int:
         os.close(announce_read)
         os.close(alive_write)
         try:
-            serve_synthetic_supervisor(city, cockpit_url, home, announce_write, alive_read)
+            serve_synthetic_supervisor(city, stop, cockpit_url, home, announce_write, alive_read)
         finally:
             os._exit(0)
     os.close(announce_write)
@@ -473,7 +1042,7 @@ def main(argv: list[str]) -> int:
         "COCKPIT_HOST": "127.0.0.1",
         "COCKPIT_PORT": str(args.port),
         "COCKPIT_ALLOWED_ORIGIN": cockpit_url,
-        "COCKPIT_BENJAMIN_LOGIN": "synthetic@example.ts.net",
+        "COCKPIT_BENJAMIN_LOGIN": BENJAMIN_LOGIN,
         "COCKPIT_PID_FILE": os.path.join(home, "cockpit.pid"),
         "COCKPIT_LOCAL_CONFIG": os.path.join(home, "absent.json"),
         "COCKPIT_GC_BASE_URL": supervisor_url,
@@ -483,17 +1052,42 @@ def main(argv: list[str]) -> int:
         "COCKPIT_PROJECTS_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_JOURNAL_POLL_SECONDS": POLL_SECONDS,
         "COCKPIT_SESSIONS_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_GITHUB_POLL_SECONDS": POLL_SECONDS,
+        "COCKPIT_FIRST_READ_SECONDS": FIRST_READ_SECONDS,
+        **write_knowledge_repos(city, home),
+        **write_evidence(city, home),
         **write_doors(doors, home),
         **write_tracker_and_projects(city, home),
         **door_locks(home),
     }
+    if city.retention_purge:
+        purge_retained(city, env["EVIDENCE_STORE_DIR"])
     if LAUNCH_MARK in os.environ:
         env[LAUNCH_MARK] = os.environ[LAUNCH_MARK]
-    env.update(write_stop(restarted, city, home))
+    env.update(write_stop(restarted, stop, city, home))
+    env.update(write_heartbeat(heartbeat, home))
+    env.update(usine_validity)
     if https:
         env.update(start_identity_proxy(args.port, home, [alive_write]))
+        # The relay of Essai, as in service behind Serve (F2.4), on a port of its own.
+        env["COCKPIT_ESSAI_PORT"] = str(free_port())
+    if front:
+        # The cockpit listens behind the operator, on a port of its own.
+        env["COCKPIT_PORT"] = str(free_port())
+        start_operator_front(args.port, int(env["COCKPIT_PORT"]), [alive_write])
     if city.reading == synthetic_city.READ_ONCE:
+        # Its state and its sessions alike: both are read from it.
         env["COCKPIT_VALIDITY_GC_SECONDS"] = SILENT_VALIDITY_SECONDS
+        env["COCKPIT_VALIDITY_SESSIONS_SECONDS"] = SILENT_VALIDITY_SECONDS
+    # The clock starts at the fixed time of the dataset -- for a Runs state,
+    # the moment the state shows --; a Runs state's selection is what a page
+    # opens when its address names none.
+    if city.clock_start:
+        env["COCKPIT_CLOCK_START"] = city.clock_start
+    if city.view:
+        env["COCKPIT_RUNS_VIEW"] = json.dumps(city.view)
+    if city.session_trace:
+        env["COCKPIT_TRACE_FILE"] = city.session_trace
     os.execve(sys.executable, [sys.executable, str(ROOT / "bin" / "cockpit"), "run"], env)
     return 1
 

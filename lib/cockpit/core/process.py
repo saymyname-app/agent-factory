@@ -11,11 +11,15 @@ import signal
 import sys
 import threading
 import time
+import urllib.parse
+from datetime import datetime
 
 from cockpit.access.guard import ActionGuard, new_session_token
+from cockpit.actions.essai_relay import RelayService, TrialTarget, make_relay
 from cockpit.actions.registry import build_action_handlers
+from cockpit.analyses.sources import read_github
 from cockpit.core.beads_source import read_operator_beads
-from cockpit.core.clock import SystemClock
+from cockpit.core.clock import ShiftedClock, SystemClock
 from cockpit.core.freshness import UNKNOWN
 from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
@@ -23,17 +27,22 @@ from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
 from cockpit.health.git_source import count_commits_behind
 from cockpit.access.tailscale import build_key_expiry_request, key_expiry_epoch, read_status
+from cockpit.heartbeat.emitter import read_url_from_file
+from cockpit.notify.secrets import read_secrets_from_file
 from cockpit.notify.service import HeartbeatService, NotifyService, Ticker
+from cockpit.requests.sources.silence import build_silence_request
 from cockpit.notify.state_store import JsonFileStateStore
-from cockpit.stop.driver import StopDriver
+from cockpit.stop.driver import StopDriver, tickets_photo
 from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.depots import read_depots, read_rig_repos
 from cockpit.projects.descriptors import load_descriptors
-from cockpit.projects.source import read_projects
+from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOUT_SECONDS, outcome_of, read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
-from cockpit.runs.derive import read_runs
+from cockpit.runs.evidence import EvidencePieces
+from cockpit.runs.trace import SessionTrace
+from cockpit.runs.workflows import read_workflow_beads
 
 # github/rituals sources are in the Validity window table (spec .3) for the
 # tickets that will wire up their producers; T11 builds the seam and wires
@@ -53,6 +62,8 @@ SHUTDOWN_BUDGET_SECONDS = 5.0
 
 def build(config, clock=None):
     """Returns (server, pollers) — nothing is started yet."""
+    if clock is None and config.clock_start:
+        clock = ShiftedClock(datetime.fromisoformat(config.clock_start).timestamp())
     clock = clock or SystemClock()
     read_model = ReadModel(clock, validity_seconds=config.validity_seconds)
     for name, display_name in SOURCE_DISPLAY_NAMES.items():
@@ -85,6 +96,7 @@ def build(config, clock=None):
                 lambda: read_projects(
                     config.descriptors_dir,
                     bd_bin=config.bd_bin,
+                    timeout=max(PROJECTS_READ_TIMEOUT_SECONDS, config.beads_read_timeout_seconds),
                     clones_dir=config.clones_dir,
                     rig_repos=read_rig_repos(config.rig_files_dir),
                     git_bin=config.git_bin,
@@ -97,12 +109,21 @@ def build(config, clock=None):
             PollingSource(
                 read_model,
                 "journal",
-                lambda: read_journal(bd_bin=config.bd_bin),
+                lambda: read_journal(bd_bin=config.bd_bin, timeout=config.journal_read_timeout_seconds),
                 config.journal_poll_seconds,
             )
         )
         read_model.register("runs", display_name="runs")
-        pollers.append(PollingSource(read_model, "runs", lambda: read_runs(bd_bin=config.bd_bin), config.journal_poll_seconds))
+        pollers.append(PollingSource(read_model, "runs", lambda: read_workflow_beads(bd_bin=config.bd_bin),
+                                     config.journal_poll_seconds))
+    if config.github_repo:
+        # The CI and the pull requests of the declared repository, over the
+        # last eight days: the period of the Analyses and the day before it.
+        read_model.register("github", display_name="CI GitHub")
+        pollers.append(PollingSource(
+            read_model, "github",
+            lambda: read_github(config.gh_bin, config.github_repo, read_model.now() - 8 * 86400),
+            config.github_poll_seconds))
     if config.repo_dir:
         read_model.register("git", display_name="version de l'usine")
         pollers.append(
@@ -127,15 +148,34 @@ def build(config, clock=None):
     # Out-of-scope touch (T14, af-peh3yy -- declared scope
     # lib/cockpit/actions/**, lib/cockpit/ui/actions/**): répondre,
     # accepter/rejeter/reporter une proposition, and relancer need the
-    # escalation-door/proposal-door/loop-guard/gc binaries wired through
+    # escalation-door/proposal-door/loop-guard/order-pause binaries wired through
     # from config, the same as bd_bin already is.
+    # The relay of Essai (F2.4): bound before the gestures are, so that Essai
+    # says an entry it does not serve as such. A port taken is said, the
+    # cockpit runs on without it.
+    trial_target = None
+    if config.essai_port:
+        try:
+            relayed = TrialTarget()
+            relay = make_relay(action_guard, relayed, port=config.essai_port)
+        except OSError as exc:
+            print("cockpit: relais de l’Essai non démarré sur 127.0.0.1:%d : %s" % (config.essai_port, exc),
+                  file=sys.stderr, flush=True)
+        else:
+            trial_target = relayed
+            pollers.append(RelayService(relay))
     action_handlers = build_action_handlers(
         config.bd_bin,
         clock,
         escalation_door_bin=config.escalation_door_bin,
         proposal_door_bin=config.proposal_door_bin,
         loop_guard_bin=config.loop_guard_bin,
-        gc_bin=config.gc_bin,
+        order_pause_bin=config.order_pause_bin,
+        door_timeout=config.action_timeout_seconds,
+        acceptance_session_bin=config.acceptance_session_bin,
+        outcome_of=lambda chantier: outcome_of((read_model.snapshot().get("projets") or {}).get("value"), chantier),
+        trial_target=trial_target,
+        trial_https_port=config.essai_https_port,
     )
     server = make_server(
         read_model,
@@ -148,11 +188,17 @@ def build(config, clock=None):
         supervisor_unreachable_after_seconds=config.supervisor_unreachable_after_seconds,
         factory_stalled_after_seconds=config.factory_stalled_after_seconds,
         illisible_after_seconds=config.illisible_after_seconds,
+        factory_root=config.factory_root,
+        factory_check_validity_seconds=config.factory_check_validity_seconds,
     )
+    server.runs_view = config.runs_view
+    server.provider_failover_bin = config.provider_failover_bin
+    server.factory_maintain_bin = config.factory_maintain_bin
+    server.proposal_door_bin = config.proposal_door_bin
+    server.door_timeout = config.action_timeout_seconds
+    server.descriptors_dir = config.descriptors_dir
 
-    # Clean stop (T23, T24) -- read side only (af-mjfvwx 7a): the driver keeps
-    # its state and its tick; the reader it is handed cannot suspend, resume
-    # or stop anything, and no stop action is registered.
+    # Clean stop (T23, T24; its gestures, H af-69qhlk).
     def held_work():
         """``{session_id: ticket id}`` as the tickets record it; ``None``
         while the tickets are not read."""
@@ -168,27 +214,21 @@ def build(config, clock=None):
                 held[session_id] = bead["id"]
         return held
 
-    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work)
+    # The trace of the sessions: collected at each reading of them, read by
+    # the pages of Runs.
+    session_trace = SessionTrace(config.trace_file)
+    server.session_trace = session_trace
+    server.evidence_pieces = EvidencePieces(config.evidence_store)
+    city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work,
+                               observer=session_trace.collect)
     read_model.register("sessions", display_name="agents au travail")
     pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
 
     def photo():
-        """The driver's « photo »: every non-closed ticket and who holds it."""
-        beads = (read_model.snapshot().get("beads") or {}).get("value") or []
-        return {
-            "beads": {
-                # Who holds a ticket is the session the factory recorded on it;
-                # a delivery ticket has no assignee field of its own.
-                b["id"]: {
-                    "status": b.get("status"),
-                    "assignee": (b.get("metadata") or {}).get("gc.session_name") or b.get("assignee"),
-                }
-                for b in beads
-                if isinstance(b, dict) and b.get("id")
-            }
-        }
+        return tickets_photo(read_model.snapshot().get("beads") or {})
 
-    stop_driver = StopDriver(city_reader, photo, clock, JsonFileStateStore(config.stop_state_file))
+    stop_driver = StopDriver(city_reader, photo, clock, JsonFileStateStore(config.stop_state_file),
+                             resume_grace_seconds=config.stop_resume_grace_seconds)
     pollers.append(Ticker(stop_driver.tick, config.stop_tick_seconds))
 
     # Project repositories (T19, T20): roadmap step and commits ahead, read in
@@ -224,8 +264,12 @@ def build(config, clock=None):
 
     def extra_requests(snapshot, now):
         """Requests the cockpit's own parts raise (spec: « l'arrêt n'avance
-        plus », « reprise avec écarts », clé Tailscale à J-14)."""
+        plus », « reprise avec écarts », clé Tailscale à J-14, « Usine
+        muette »)."""
         requests = list(stop_driver.pending_requests())
+        silence = build_silence_request(snapshot, now, config.silence_alert_seconds)
+        if silence is not None:
+            requests.append(silence)
         tailscale = snapshot.get("tailscale")
         if tailscale is not None and tailscale["value"] is not None and tailscale["freshness"] != UNKNOWN:
             request = build_key_expiry_request(tailscale["value"]["key_expiry"], now)
@@ -235,6 +279,24 @@ def build(config, clock=None):
 
     server.stop_driver = stop_driver
     server.benjamin_login = config.benjamin_login
+    server.public_url = config.public_url
+    # What the procedure of the VM settings says of this host, read each
+    # time it opens: paths, and whether the cockpit reads each secret file
+    # -- never what one holds (I, af-cp4fzd).
+    supervisor_port = urllib.parse.urlsplit(config.gc_base_url).port
+
+    def procedure_settings():
+        return {
+            "local_config": config.local_config_file,
+            "pushover_file": config.pushover_secrets_file,
+            "pushover_ready": read_secrets_from_file(config.pushover_secrets_file) is not None,
+            "heartbeat_file": config.heartbeat_url_file,
+            "heartbeat_ready": read_url_from_file(config.heartbeat_url_file) is not None,
+            "public_url": config.public_url, "port": config.port, "supervisor_port": supervisor_port,
+            "essai_port": config.essai_port, "essai_https_port": config.essai_https_port,
+        }
+
+    server.procedure_settings = procedure_settings
     server.rituals_file = config.rituals_file
     server.extra_requests = extra_requests
 
@@ -264,7 +326,7 @@ def build(config, clock=None):
     )
     heartbeat = HeartbeatService(
         read_model, clock, config.heartbeat_url_file, config.heartbeat_interval_seconds,
-        state_provider=stop_driver.state,
+        state_provider=stop_driver.heartbeat_state,
     )
     server.notify = notify
     server.heartbeat = heartbeat
@@ -302,12 +364,26 @@ def shut_down(server, pollers, budget_seconds=SHUTDOWN_BUDGET_SECONDS, log=None)
     )
 
 
+def _wait_first_readings(read_model, seconds):
+    """Until each source was read once, or failed, or ``seconds`` passed:
+    the isolated cockpit answers its first page with what its sources
+    hold, not with a reading under way (``seconds`` 0 in service: the
+    cockpit answers at once)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        rows = read_model.snapshot().values()
+        if all(row["read_at"] is not None or row["failed_at"] is not None for row in rows):
+            return
+        time.sleep(0.1)
+
+
 def run_foreground(config, clock=None, ready_callback=None):
     server, pollers = build(config, clock=clock)
     print("cockpit: pid %d listening since %s" % (os.getpid(), time.strftime("%Y-%m-%d %H:%M:%S%z")),
           file=sys.stderr, flush=True)
     for poller in pollers:
         poller.start()
+    _wait_first_readings(server.read_model, config.first_read_seconds)
 
     stop_requested = []
 

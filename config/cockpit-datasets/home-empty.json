@@ -7,5 +7,10 @@
     "state": "empty"
   },
   "visible_text": "Vue d’ensemble\nExemple · vérifié à 14:42 (Paris)\nRien à afficher ici\n\nAucun élément dans cette vue.",
-  "production_writes": 0
+  "production_writes": 0,
+  "github": {
+    "repository": "saymyname-app/agent-factory",
+    "pull_requests": [],
+    "workflow_runs": []
+  }
 }

@@ -6,7 +6,8 @@ af-npz9v1.22, for I af-cp4fzd):
   the launch (`<home>/https/cert.pem`, the authority a client trusts);
 - who connects is said by the client itself, in `X-Synthetic-Tailnet-Login`
   -- the member of the tailnet Serve would have recognised. A request
-  without it is not from the tailnet: 403, nothing reaches the cockpit;
+  without it is not from the tailnet: 403, nothing reaches the cockpit,
+  and the refusal says how a member is named;
 - it forwards the request to the cockpit alone, never to the supervisor,
   with `Tailscale-User-Login` and `Tailscale-User-Name` set from that login
   and every `Tailscale-User-*` header the client sent removed, as Serve
@@ -27,7 +28,15 @@ IDENTITY = "X-Synthetic-Tailnet-Login"
 SERVE_HEADERS = ("Tailscale-User-Login", "Tailscale-User-Name", "Tailscale-User-Profile-Pic")
 # Never forwarded as the client sent them.
 DROPPED = {name.lower() for name in (*SERVE_HEADERS, IDENTITY, "Host", "Connection", "Keep-Alive")}
-NOT_ON_THE_TAILNET = b"synthetic identity proxy: not a member of the tailnet\n"
+# What a client outside the tailnet reads: the refusal, and how a member is
+# named to this proxy -- a header of Serve the client sends is not one
+# (I, af-cp4fzd).
+NOT_ON_THE_TAILNET = (
+    b"synthetic identity proxy: not a member of the tailnet\n"
+    b"A member of the tailnet is named by the header X-Synthetic-Tailnet-Login: <login>, "
+    b"e.g. X-Synthetic-Tailnet-Login: synthetic@example.ts.net, the operator of this launch. "
+    b"Tailscale-User-* headers sent by a client are dropped, as Tailscale Serve drops them.\n"
+)
 
 
 def certificate(folder: Path) -> tuple[Path, Path]:
@@ -40,16 +49,19 @@ def certificate(folder: Path) -> tuple[Path, Path]:
     return cert, key
 
 
-def server(cockpit_port: int, home: str) -> ThreadingHTTPServer:
-    """The proxy, bound and wrapped in TLS, not yet serving."""
-    cert, key = certificate(Path(home, "https"))
+def relay_to(cockpit_port: int, login_of):
+    """The handler that relays a request to the cockpit alone, as Serve does:
+    `login_of(headers)` is the member of the tailnet who connects, or None
+    when the request is not from the tailnet (403, nothing reaches the
+    cockpit); `Tailscale-User-Login` and `Tailscale-User-Name` are set from
+    that login, every `Tailscale-User-*` the client sent removed."""
 
     class Relay(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
             pass
 
         def relay(self):
-            login = self.headers.get(IDENTITY)
+            login = login_of(self.headers)
             if not login:
                 self.send_response(403)
                 self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -82,17 +94,31 @@ def server(cockpit_port: int, home: str) -> ThreadingHTTPServer:
 
         do_GET = do_HEAD = do_POST = do_PUT = do_PATCH = do_DELETE = relay
 
-    class Quiet(ThreadingHTTPServer):
-        daemon_threads = True
+    return Relay
 
-        def handle_error(self, request, client_address):
-            pass  # a client that refuses the certificate, or leaves
 
-    proxy = Quiet(("127.0.0.1", 0), Relay)
+class Quiet(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        pass  # a client that refuses the certificate, or leaves
+
+
+def server(cockpit_port: int, home: str) -> ThreadingHTTPServer:
+    """The proxy, bound and wrapped in TLS, not yet serving."""
+    cert, key = certificate(Path(home, "https"))
+    proxy = Quiet(("127.0.0.1", 0), relay_to(cockpit_port, lambda headers: headers.get(IDENTITY)))
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     proxy.socket = context.wrap_socket(proxy.socket, server_side=True)
     return proxy
+
+
+def operator_front(cockpit_port: int, port: int, login: str) -> ThreadingHTTPServer:
+    """The operator at the address of a launch (A2, af-ocz64w): plain HTTP
+    on 127.0.0.1:`port`, which names whoever connects `login`, as Serve
+    names the operator's browser in service. Bound, not yet serving."""
+    return Quiet(("127.0.0.1", port), relay_to(cockpit_port, lambda headers: login))
 
 
 def serve(cockpit_port: int, home: str, announce: int, alive: int) -> None:

@@ -1,0 +1,13 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/runs-destination-tracker-test.py::RunsDestinationTracker.test_the_successive_sessions_of_an_agent_are_one_lane_with_the_context_of_the_last",
+      "tests/cockpit-criteria/commands/runs-destination-tracker-test.py::RunsDestinationTracker.test_two_authors_at_work_at_the_same_time_keep_a_lane_each"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/runs-destination-tracker-test.py::RunsDestinationTracker.test_a_stop_a_refusal_and_a_question_waiting_say_their_state_and_only_a_success_is_ticked",
+      "tests/cockpit-criteria/commands/runs-destination-tracker-test.py::RunsDestinationTracker.test_each_job_of_the_frise_names_the_ticket_it_serves",
+      "tests/cockpit-criteria/commands/runs-destination-tracker-test.py::RunsDestinationTracker.test_each_job_of_a_run_of_the_old_flow_names_its_ticket"
+    ]
+  }
+}

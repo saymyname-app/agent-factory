@@ -16,10 +16,22 @@ from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
 from cockpit.projects.model import Chantier, Project, RoadmapStep
 from cockpit.projects.promu import read_promotion_results
-from cockpit.projects.stage import MAP_LABEL
+from cockpit.projects.outcome import pack_folder, read_pack_sections
+from cockpit.projects.stage import CONVOY_ISSUE_TYPE, MAP_LABEL, PROJECT_KEY, _accepted
+from convoy_state import outcome_records_of
+
+TARGET_KEY = "planning_run_target"
+SPEC_KEY = "gc.spec_id"
 
 
-def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_repos=None, git_bin="git"):
+# How long one read of the tracker for the projects may take: at least as
+# long as any read of the tracker may (config.beads_read_timeout_seconds) --
+# a tracker still being read is not a tracker that failed (E, af-8rbceu).
+READ_TIMEOUT_SECONDS = 20
+
+
+def read_projects(descriptors_dir, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, clones_dir="", rig_repos=None,
+                  git_bin="git"):
     """One complete read. Raises on any failed ``bd`` call: a partial view
     would show a project with chantiers missing as if it were whole.
     ``clones_dir`` / ``rig_repos``: where the promotion of an accepted
@@ -39,19 +51,90 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=20, clones_dir="", rig_r
         if MAP_LABEL in (bead.get("labels") or []) and bead.get("status") != "closed"
     }
     promotion_results = read_promotion_results(descriptors, beads, rig_repos, clones_dir, git_bin=git_bin)
+    pack_reads = read_dossier_pages(beads)
     projects, sans_projet = build_projects(
-        descriptors, beads, children_by_map_id, promotion_results=promotion_results
+        descriptors, beads, children_by_map_id, promotion_results=promotion_results, pack_reads=pack_reads
     )
-    historique_projects, _ = build_historique_par_projet(descriptors, beads, promotion_results)
+    targeting = read_targeting_beads(bd_bin=bd_bin, timeout=timeout)
+    # A Spec closed without successor is read only here: the active
+    # chantiers are built from what is open.
+    closed = [bead for bead in targeting if bead.get("status") == "closed" and bead["id"] not in by_id]
+    historique_projects, _ = build_historique_par_projet(descriptors, beads + closed, promotion_results,
+                                                         pack_reads=pack_reads)
     value = to_value(
         projects,
         sans_projet,
         historique={p.project_id: p.chantiers for p in historique_projects},
         hors_chantier=hors_chantier_par_projet(beads),
     )
+    value["roadmap_chantiers"] = roadmap_chantiers(targeting, beads)
     # spec .47: a closed chantier with a ticket not merged, for the health zone.
     value["anomalies"] = convoy_closed_with_unmerged_child(beads)
     return value
+
+
+def read_targeting_beads(bd_bin="bd", timeout=20):
+    """Every bead -- open or closed -- that targets a Roadmap Step: the
+    Specs, which carry it as ``planning_run_target``."""
+    return [bead for bead in read_beads_json(["list", "--all", "--limit", "0", "--has-metadata-key", TARGET_KEY],
+                                             bd_bin=bd_bin, timeout=timeout)
+            if isinstance(bead, dict) and bead.get("id")]
+
+
+def roadmap_chantiers(targeting, beads):
+    """``{project_id: {step id: [{"id", "closed", "merged", "accepted"}]}}``: for each
+    Spec that targets a Roadmap Step, its chantier -- the Spec and the
+    convoys published from it (``gc.spec_id``). It is closed when the Spec
+    and every such convoy are closed; merged when one of those convoys
+    records the proof of its merge (the promotion of the D01 flow, read
+    by :func:`convoy_state.outcome_records_of`), never because the PRs of
+    its tickets merged into the integration branch (R18, af-gnplfy:
+    « Ticket fermé/intégré ne signifie pas fusion du résultat dans la
+    branche protégée. »);
+    accepted when Benjamin accepted one of those convoys (his recorded
+    answer in the D01 flow, the trace of his click before it:
+    :func:`cockpit.projects.stage._accepted`; R3, af-plu8kn). The
+    project is the Spec's, else its convoy's. E, af-8rbceu: what the
+    roadmap of a project is held to
+    (:func:`cockpit.projects.roadmap.roadmap_rows`)."""
+    convoys_by_spec = {}
+    for bead in beads:
+        metadata = bead.get("metadata") or {}
+        spec_id = metadata.get(SPEC_KEY)
+        if bead.get("issue_type") == CONVOY_ISSUE_TYPE and spec_id:
+            convoys_by_spec.setdefault(spec_id, []).append(bead)
+    out = {}
+    for spec in targeting:
+        metadata = spec.get("metadata") or {}
+        target = metadata.get(TARGET_KEY)
+        convoys = convoys_by_spec.get(spec["id"], [])
+        project = metadata.get(PROJECT_KEY) or next(
+            ((c.get("metadata") or {}).get(PROJECT_KEY) for c in convoys if (c.get("metadata") or {}).get(PROJECT_KEY)),
+            None)
+        if not isinstance(target, str) or not target or not project:
+            continue
+        merged = accepted = False
+        for convoy in convoys:
+            accepted = accepted or _accepted(convoy.get("metadata") or {})
+            promotion = (outcome_records_of(convoy) or {}).get("promotion")
+            merged = merged or (isinstance(promotion, dict) and "unruled" not in promotion)
+        closed = spec.get("status") == "closed" and all(c.get("status") == "closed" for c in convoys)
+        out.setdefault(project, {}).setdefault(target, []).append(
+            {"id": spec["id"], "closed": closed, "merged": merged, "accepted": accepted})
+    return out
+
+
+def read_dossier_pages(beads):
+    """The rubrics of the dossier page of each convoy that records an
+    Evidence Pack (its folder, :func:`cockpit.projects.outcome.pack_folder`):
+    ``{convoy_id: rubrics, or None when the page cannot be read}`` (A1,
+    :func:`cockpit.projects.outcome.read_pack_sections`)."""
+    pages = {}
+    for bead in beads:
+        folder = pack_folder(bead)
+        if folder is not None:
+            pages[bead["id"]] = read_pack_sections(folder)
+    return pages
 
 
 def to_value(projects, sans_projet, historique=None, hors_chantier=None):
@@ -76,6 +159,14 @@ def from_value(value):
         projects.append(Project(**raw))
     sans_projet = [Chantier(**chantier) for chantier in (value or {}).get("sans_projet") or []]
     return projects, sans_projet
+
+
+def outcome_of(value, chantier_id):
+    """The Outcome of the chantier ``chantier_id`` in the stored view
+    ``value``, or None: not a chantier the cockpit knows, or it has none."""
+    projects, _ = from_value(value) if value else ([], None)
+    return next((chantier.outcome for project in projects for chantier in project.chantiers
+                 if chantier.id == chantier_id), None)
 
 
 def project_page_data(value, project_id):

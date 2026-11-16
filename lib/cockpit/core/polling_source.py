@@ -7,6 +7,7 @@ so one failing source never takes down the cockpit process or the other
 sources (af-0b6ffa AC4).
 """
 import threading
+import time
 
 # A source whose read just failed is asked again after at most this long:
 # with a 30 s or 60 s rhythm, one bad first read would otherwise leave the
@@ -59,10 +60,11 @@ class PollingSource:
         return self._poll_once()
 
     def _poll_once(self):
+        started = time.monotonic()
         try:
             value = self._read_fn()
         except Exception:
             self._read_model.fail(self._source)
             return False
-        self._read_model.ingest(self._source, value)
+        self._read_model.ingest(self._source, value, latency=time.monotonic() - started)
         return True

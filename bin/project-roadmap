@@ -3,7 +3,8 @@
 
 A Roadmap (GLOSSARY.md: Roadmap Step) is a TOML file of `[[step]]` tables,
 each with an id, a title, a "done when" condition, an order, and a status
-(to-do / in-progress / done), so the Cockpit and any tool can read the
+(to-do / in-progress / done), and optionally `done_requires`, the ids of the
+steps its "done when" condition requires, so the Cockpit and any tool can read the
 current step without interpreting prose. `roadmap.md` in the same project
 keeps the human-readable intent and cites the same ids; this tool only
 reads the structured file.
@@ -82,6 +83,22 @@ def load_steps(path: Path) -> list[dict[str, Any]]:
                 f"duplicate order {order!r} shared by step {seen_orders[order]!r} and {label}"
             )
         seen_orders[order] = step_id
+
+    # `done_requires` (optional): the steps this step's end condition
+    # requires, by id -- the cockpit flags a step done one of whose
+    # required steps is not (R5, af-3r1tmr).
+    for step in steps:
+        label = f"step {step['id']!r}"
+        requires = step.get("done_requires")
+        if requires is None:
+            continue
+        if not isinstance(requires, list) or not all(isinstance(r, str) and r.strip() for r in requires):
+            raise RoadmapError(f"{label} field 'done_requires' must be a list of step ids")
+        for required in requires:
+            if required == step["id"]:
+                raise RoadmapError(f"{label} field 'done_requires' names the step itself")
+            if required not in seen_ids:
+                raise RoadmapError(f"{label} field 'done_requires' names {required!r}, which is no step of this roadmap")
 
     return steps
 

@@ -2938,7 +2938,9 @@ def acceptance_request(convoy: Convoy, page: str) -> dict[str, Any]:
              "consequence": "Le produit est lancé au commit du dossier ; rien n'est accepté ni fusionné sans votre réponse."},
         ],
         "langue": operator_language(),
-        "bloquant": True,
+        # A result ready to judge blocks no chantier: « Quand tu veux »
+        # (Spec af-fgcw0d user story 8; the cockpit reads it so, F2.7).
+        "bloquant": False,
         "lien": page,
     }
 

@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/projects-roadmap-unlinked-test.py::ProjectsRoadmapUnlinked.test_a_step_in_progress_no_chantier_targets_says_so_and_the_roadmap_heads_with_the_step_whose_chantier_is_open"
+    ]
+  }
+}

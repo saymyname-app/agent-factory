@@ -13,3 +13,17 @@ class SystemClock:
 
     def now(self):
         return time.time()
+
+
+class ShiftedClock:
+    """A clock that starts at ``start`` (epoch seconds) when it is made,
+    then runs at the pace of the wall clock: the isolated cockpit shows a
+    frozen state at the moment it was frozen, and what is open in it goes
+    on lasting (C1, af-lzti7w; Spec af-fgcw0d, « Fixtures et horloge sont
+    synthétiques »)."""
+
+    def __init__(self, start):
+        self._offset = start - time.time()
+
+    def now(self):
+        return time.time() + self._offset

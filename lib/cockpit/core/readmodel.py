@@ -18,7 +18,7 @@ _STATE_LABELS = {STALE: "périmé", UNKNOWN: "inconnu"}
 
 
 class _Source:
-    __slots__ = ("display_name", "value", "read_at", "last_attempt_at", "registered_at", "failed_at")
+    __slots__ = ("display_name", "value", "read_at", "last_attempt_at", "registered_at", "failed_at", "latency")
 
     def __init__(self, display_name, registered_at=None):
         self.display_name = display_name
@@ -27,6 +27,7 @@ class _Source:
         self.read_at = None
         self.last_attempt_at = None
         self.failed_at = None
+        self.latency = None
 
 
 class ReadModel:
@@ -51,8 +52,9 @@ class ReadModel:
             if name not in self._sources:
                 self._sources[name] = _Source(display_name or name, registered_at=self._clock.now())
 
-    def ingest(self, name, value, at=None, complete=True):
-        """Record a read. ``complete=False`` marks a gc ``partial: true``."""
+    def ingest(self, name, value, at=None, complete=True, latency=None):
+        """Record a read. ``complete=False`` marks a gc ``partial: true``.
+        ``latency``: how many seconds the read took, when it was timed."""
         now = self._clock.now() if at is None else at
         with self._lock:
             source = self._sources.setdefault(name, _Source(name, registered_at=now))
@@ -60,6 +62,7 @@ class ReadModel:
             if complete:
                 source.value = value
                 source.read_at = now
+                source.latency = latency
             source.failed_at = None
 
     def fail(self, name, at=None):
@@ -96,6 +99,9 @@ class ReadModel:
                 # source never read whose read failed is unreadable, one
                 # whose read has not ended yet is still being read.
                 "failed_at": source.failed_at,
+                # Seconds the last complete read took (the latency of the
+                # connection), None when it was not timed.
+                "latency": source.latency,
                 "freshness": classify(source.read_at, now, validity_seconds),
             }
         return out

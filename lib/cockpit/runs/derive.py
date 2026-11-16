@@ -30,6 +30,12 @@ READ_TIMEOUT_SECONDS = 20
 HUMAN, CODE, AGENT = "human", "code", "agent"
 ROLES = (("author", "Auteur"), ("reviewer", "Relecteur"), ("evaluator", "Évaluateur"))
 LIVE, WAIT, DONE, STOPPED = "live", "wait", "done", "stopped"
+# What a fact of a run observed, when it says it: a success, a refusal, a
+# stop (STOPPED), a question still waiting for Benjamin. A fact without one
+# (a launch, an answer, a resume) is only what happened.
+PASSED, REFUSED, WAITING = "passed", "refused", "waiting"
+FACT_STATES = (PASSED, REFUSED, STOPPED, WAITING)
+VERDICT_STATES = {"favorable": PASSED, "unfavorable": REFUSED}
 
 
 def read_runs(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, limit=RUNS_LIMIT):
@@ -91,7 +97,7 @@ def paris(epoch, with_day=False):
 
 def run_from_bead(bead, now):
     """One run: ``id``, ``ticket``, ``type``, ``title``, ``step``, ``status``,
-    ``tone``, ``state`` (live / wait / done / stopped), ``start``, ``end``,
+    ``tone`` (:func:`tone`), ``state`` (live / wait / done / stopped), ``start``, ``end``,
     ``elapsed``, ``started``, ``lanes`` (``name``, ``kind``, ``jobs``: spans
     in seconds from the start, ``labels``), ``events`` (``at``, ``lane``,
     ``text``), ``models``, ``branch``; None for a bead no agent ran on."""
@@ -104,9 +110,11 @@ def run_from_bead(bead, now):
         return None
     events = []
 
-    def event(at, lane, text):
+    def event(at, lane, text, state=None):
+        """A fact of the run; ``state``, what it observed when it says one
+        (:data:`FACT_STATES`)."""
         if at:
-            events.append({"at": at, "lane": lane, "text": text})
+            events.append({"at": at, "lane": lane, "text": text, **({"state": state} if state else {})})
 
     closed = _ts(bead.get("closed_at")) if bead.get("status") == "closed" else None
     stop = m.get("gc.flow.stop") if isinstance(m.get("gc.flow.stop"), dict) else None
@@ -120,13 +128,14 @@ def run_from_bead(bead, now):
     event(dispatch, "Code", "Ticket lancé")
     for key, text in (("gc.flow.tdd.red", "Tests rouges prouvés"), ("gc.flow.tdd.freeze", "Tests gelés"),
                       ("gc.flow.tdd.green", "Tests verts")):
-        event(_at(m.get(key)), "Code", text)
+        event(_at(m.get(key)), "Code", text, PASSED)
     amendment = m.get("gc.flow.tdd.amendment")
     if isinstance(amendment, dict):
         event(_at(amendment), "Code", "Tests amendés : %s" % amendment.get("reason", ""))
     fidelity = m.get("gc.flow.verdict.fidelity")
     if isinstance(fidelity, dict):
-        event(_at(fidelity), "Code", "Fidélité au prototype : %s" % _verdict(fidelity.get("state")))
+        event(_at(fidelity), "Code", "Fidélité au prototype : %s" % _verdict(fidelity.get("state")),
+              VERDICT_STATES.get(fidelity.get("state")))
     agent_lanes = []
     for role, label in ROLES:
         record = models.get(role)
@@ -158,12 +167,13 @@ def run_from_bead(bead, now):
         end = max(ends) if ends else (now if live else begin)
         agent_lanes.append({"name": label, "title": name, "kind": AGENT, "spans": [(begin, max(end, begin))]})
     if stop:
-        event(_at(stop), "Code", "Arrêt : %s" % (stop.get("detail") or stop.get("reason") or "?"))
+        event(_at(stop), "Code", "Arrêt : %s" % (stop.get("detail") or stop.get("reason") or "?"), STOPPED)
     for entry in (m.get("gc.flow.resume") or {}).get("entries", []) if isinstance(m.get("gc.flow.resume"), dict) else []:
         if isinstance(entry, dict):
             event(_at(entry), "Code", "Reprise : %s" % entry.get("cause", "?"))
     if asked:
-        event(asked, "Humain", "Question à Benjamin : %s" % (m.get("gc.escalation_pourquoi") or "décision attendue"))
+        event(asked, "Humain", "Question à Benjamin : %s" % (m.get("gc.escalation_pourquoi") or "décision attendue"),
+              WAITING if waiting else None)
     if answered and asked and answered >= asked:
         event(answered, "Humain", "Réponse de Benjamin : option %s" % (m.get("gc.escalation_response_option") or "?"))
     for entry in (m.get("gc.flow.overrides") or {}).get("entries", []) if isinstance(m.get("gc.flow.overrides"), dict) else []:
@@ -174,7 +184,8 @@ def run_from_bead(bead, now):
         merge = None
     withdrawn = m.get("gc.flow.gate.withdrawn") if isinstance(m.get("gc.flow.gate.withdrawn"), dict) else None
     if merge:
-        event(_at(merge) or closed, "Code", "Fusionné dans %s" % (merge.get("into") or merge.get("target") or "l’intégration"))
+        event(_at(merge) or closed, "Code", "Fusionné dans %s" % (merge.get("into") or merge.get("target") or "l’intégration"),
+              PASSED)
     if withdrawn:
         event(_at(withdrawn) or closed, "Humain", "Retiré du graphe%s" % (
             " : %s" % withdrawn.get("reason") if withdrawn.get("reason") else ""))
@@ -210,12 +221,30 @@ def run_from_bead(bead, now):
     return {
         "id": bead.get("id"), "ticket": ticket, "spec": m.get("gc.spec_id"),
         "type": "Livraison · %s" % ticket, "title": title, "step": step, "status": status,
-        "tone": {LIVE: "live", WAIT: "wait"}.get(state), "state": state,
+        "tone": tone(state, status), "state": state,
         "start": start, "end": end, "elapsed": int(end - start),
         "started": paris(start, with_day=True), "lanes": lanes,
         "events": sorted(events, key=lambda e: e["at"]), "models": models,
         "branch": m.get("gc.flow.branch"), "rig": m.get("gc.dispatch_rig"), "href": "/runs/run?id=%s" % bead.get("id"),
     }
+
+
+# The status of a ticket merged into the integration branch: never
+# « Fusionné », which only a merge into the protected branch is.
+INTEGRATED = "Intégré"
+# A run ended that is not a success: abandoned, closed without a merge, or
+# a D01 delivery closed on a result its records contradict or do not let
+# read (cockpit.projects.outcome).
+UNSUCCESSFUL = ("Abandonné", "Fermé", "Incohérence", "Inconnu")
+
+
+def tone(state, status):
+    """How the status of a run is drawn: « live » or « wait » while it is
+    open, « ended » when it ended without success, else None (a success,
+    or stopped)."""
+    if state == DONE:
+        return "ended" if status in UNSUCCESSFUL else None
+    return {LIVE: "live", WAIT: "wait"}.get(state)
 
 
 def _verdict(state):
@@ -226,7 +255,12 @@ def _state(bead, closed, stop, exit_, waiting, agent_lanes, now, merge=None, wit
     """(state, status, step) of a run."""
     if closed or withdrawn:
         if merge:
-            return DONE, "Fusionné", "Livré · historique disponible"
+            # A ticket merged into the integration branch: no merge of the
+            # result into the protected branch, which only the promotion
+            # of a D01 delivery records (F2.11; Spec af-fgcw0d: « Ticket
+            # fermé/intégré ne signifie pas fusion du résultat dans la
+            # branche protégée. »).
+            return DONE, INTEGRATED, "Intégré dans la branche d’intégration · historique disponible"
         if withdrawn:
             return DONE, "Abandonné", "Retiré ou remplacé · historique disponible"
         return DONE, "Fermé", bead.get("close_reason") or "Fermé sans fusion · historique disponible"

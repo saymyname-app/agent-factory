@@ -3,11 +3,14 @@
 T19/T20 built the projects and chantiers modules and tested their pure
 functions; nothing served them. This test starts the real ``bin/cockpit``
 on faked sources (fake gc, the controllable fake bd of the actions seam
-test) and reads only what a browser gets: ``GET /``, ``GET /api/projects``,
+test) and reads only what a browser gets: ``GET /``, ``GET /projets``,
+``GET /projet/<id>``, ``GET /api/projects``,
 ``POST /api/actions/*``, and what the fake bd recorded.
 """
+import html
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -15,6 +18,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -158,7 +162,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
         with open(self.state_file) as fh:
             return {bead["id"]: bead for bead in json.load(fh)}
 
-    def start_cockpit(self):
+    def start_cockpit(self, descriptors=DESCRIPTORS):
         env = dict(os.environ)
         env.update(
             {
@@ -171,7 +175,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
                 "COCKPIT_PID_FILE": os.path.join(self.tmp.name, "cockpit.pid"),
                 "COCKPIT_BEADS_POLL_SECONDS": "0.2",
                 "COCKPIT_PROJECTS_POLL_SECONDS": "0.2",
-                "COCKPIT_DESCRIPTORS_DIR": str(DESCRIPTORS),
+                "COCKPIT_DESCRIPTORS_DIR": str(descriptors),
                 "COCKPIT_BENJAMIN_LOGIN": BENJAMIN_LOGIN,
                 "COCKPIT_ALLOWED_ORIGIN": self.origin,
                 "FAKE_BD_STATE_FILE": self.state_file,
@@ -233,7 +237,7 @@ class HomeProjectsZoneTest(unittest.TestCase):
         saymyname = self.chantiers(payload, "saymyname")
         self.assertEqual(["af-conv-a"], list(saymyname))
         self.assertEqual("Livraison", saymyname["af-conv-a"]["stage"])
-        self.assertEqual("1/4 tickets mergés · 1 en cours · 1 en PR", saymyname["af-conv-a"]["detail"])
+        self.assertEqual("1/4 tickets fermés · 1 en cours · 1 en PR", saymyname["af-conv-a"]["detail"])
         self.assertEqual("probleme_remonte", saymyname["af-conv-a"]["etat"])
         self.assertEqual("af-tk-a4", saymyname["af-conv-a"]["etat_cible"])
 
@@ -250,13 +254,13 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertIn('<section class="zone cockpit-projects" data-state="filled">', body)
         self.assertIn("<h3>SayMyName</h3>", body)
         self.assertIn("<h3>Usine</h3>", body)
-        self.assertIn("Livraison · 1/4 tickets mergés · 1 en cours · 1 en PR", body)
-        self.assertIn("Livré : 2/2 tickets mergés", body)
+        self.assertIn("Livraison · 1/4 tickets fermés · 1 en cours · 1 en PR", body)
+        self.assertIn("Livré : 2/2 tickets fermés", body)
         self.assertIn('class="stepper cockpit-stepper"', body)
         # "Problème remonté" leads in one click to the request that carries the question.
         self.assertIn('href="#d-af-tk-a4" data-goto="af-tk-a4"', body)
         self.assertIn("Problème remonté</a>", body)
-        self.assertIn('<a class="li" href="#d-af-tk-a4" data-id="af-tk-a4"', body)
+        self.assertIn('data-request="af-tk-a4"', body)
         # "À toi de jouer" on a delivered chantier opens its acceptance panel in place.
         self.assertIn('data-acc-open="af-conv-b"', body)
         self.assertIn('<div class="accpanel cockpit-chantier-actions" id="acc-af-conv-b" hidden>', body)
@@ -316,7 +320,10 @@ class HomeProjectsZoneTest(unittest.TestCase):
         status, page = self.get_status("/projet/saymyname")
         self.assertEqual(200, status)
         self.assertIn("Atkinson+Hyperlegible+Next", page)
-        self.assertIn('<a class="back cockpit-pp-back" href="/">← Accueil</a><h1>SayMyName</h1>', page)
+        # The head of the page is the reference's (E, af-8rbceu): the way
+        # back to « Projets », then the name of the project.
+        self.assertRegex(page, r'<div class="pf-crumb" data-anchor="crumb-1">.*?← Projets</button>')
+        self.assertRegex(page, r'<h1 data-anchor="h1-1">SayMyName</h1>')
         self.assertIn("<b>1</b> chantier actif</span>", page)
         self.assertIn('<span class="chip probleme">1 problème remonté</span>', page)
         self.assertIn('href="#cockpit-pp-historique">Historique du projet →</a>', page)
@@ -348,6 +355,190 @@ class HomeProjectsZoneTest(unittest.TestCase):
         self.assertIn("Aucun chantier terminé ou abandonné.", usine)
         self.assertNotIn("af-conv-a", usine, "another project's chantier never shows here")
 
+
+    # ------------------------------------------------------------------
+    # The destination Projets of Panorama (E, af-8rbceu): a card per
+    # project, the whole card the link to its page, its counts.
+    # ------------------------------------------------------------------
+    def test_a_project_card_is_one_link_counting_what_waits_what_is_open_and_its_runs(self):
+        now = time.time()
+
+        def at(seconds_ago):
+            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - seconds_ago))
+
+        def run(bead_id, rig, seconds_ago, merged=False):
+            """A ticket a delivery author was launched on `seconds_ago`, at
+            work still, or closed and merged then."""
+            metadata = {"gc.ticket_id": bead_id.upper(), "gc.dispatch_rig": rig,
+                        "gc.flow.gate.dispatch": json.dumps({"at": at(seconds_ago)}),
+                        "gc.flow.models": json.dumps({"author": {"agent": "delivery-author", "at": at(seconds_ago),
+                                                                 "model": "claude-opus-5-5"}})}
+            bead = {"id": bead_id, "title": "%s — Une page" % bead_id.upper(), "status": "in_progress",
+                    "issue_type": "task", "labels": [], "notes": "", "metadata": metadata,
+                    "updated_at": at(seconds_ago)}
+            if merged:
+                metadata["gc.flow.merge"] = json.dumps({"at": at(seconds_ago - 60), "outcome": "merged"})
+                bead.update(status="closed", closed_at=at(seconds_ago - 60))
+            return bead
+
+        self.write_beads(beads() + [
+            run("af-run-live", "agent-factory", 600),
+            run("af-run-merged", "agent-factory", 3600, merged=True),
+            run("af-run-old", "agent-factory", 8 * 86400, merged=True),
+            # A run of a rig named as another project: that project's.
+            run("af-run-other", "saymyname", 300, merged=True),
+        ])
+        self.start_cockpit()
+        wait_until(self.projects)
+        # The runs and the open decisions are read apart: until the decisions
+        # are known the card says « En cours ». Wait for both (af-1o6ea6), on
+        # the badge of the card: the script of every page names « À toi de
+        # jouer » too (af-qniv4b).
+        page = wait_until(lambda: (lambda body: body if "Runs ouverts" in body and "Dernier run" in body
+                                   and '<span class="pj-badge wait">À toi de jouer' in body
+                                   else None)(self.get("/projets")))
+        cards = re.findall(r'<a class="pj-card".*?</a>', page, re.S)
+        self.assertEqual(2, len(cards), "not one card per declared project")
+        usine = next(card for card in cards if 'href="/projet/agent-factory"' in card)
+        # The whole card is the one link to the page of the project, named
+        # by what it says.
+        self.assertRegex(usine, r'^<a class="pj-card" href="/projet/agent-factory" aria-label="Page projet Usine · '
+                                r'À toi de jouer · 1 · ')
+        self.assertEqual(1, usine.count("<a "), "a link inside the card")
+        self.assertIn("<dt>Chantiers ouverts</dt><dd>1</dd>", usine)
+        # Its runs only: merged within 7 days, and at work. A ticket merged
+        # into the integration branch is no merge of the result (F2.11).
+        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>0</dd>", usine)
+        self.assertIn("<dt>Runs ouverts</dt><dd>1</dd>", usine)
+        self.assertIn("Dernier run : AF-RUN-LIVE · En cours", usine)
+        saymyname = next(card for card in cards if 'href="/projet/saymyname"' in card)
+        self.assertIn("<dt>Runs fusionnés · 7 j</dt><dd>0</dd>", saymyname)
+        self.assertIn("<dt>Runs ouverts</dt><dd>0</dd>", saymyname)
+
+    def test_a_project_whose_only_chantier_is_to_judge_names_it_on_its_card(self):
+        # F2.12: the Factory's one chantier is delivered, its result waits
+        # for Benjamin; its card names it as its page does.
+        self.start_cockpit()
+        wait_until(self.projects)
+        page = wait_until(lambda: (lambda body: body if "À toi de jouer" in body else None)(self.get("/projets")))
+        usine = next(card for card in re.findall(r'<a class="pj-card".*?</a>', page, re.S)
+                     if 'href="/projet/agent-factory"' in card)
+        self.assertNotIn("Aucun chantier en cours", usine)
+        self.assertIn("Chantier actuel : Page d&#x27;accueil publique", usine)
+
+    def test_the_run_a_project_page_links_to_opens(self):
+        # F2.10: a delivery of the D01 flow -- its convoy carries the mark
+        # and its ticket the same graph -- is one run of the page Runs, the
+        # convoy's; « Voir le run » of the page of its project opens it.
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
+        self.write_beads(beads() + [
+            {"id": "af-conv-e", "title": "Recherche dans les notes", "status": "open", "issue_type": "convoy",
+             "labels": [], "notes": "", "created_at": at,
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e", "gc.project_id": "saymyname"}},
+            {"id": "af-tk-e1", "title": "AF-TK-E1 — Une page", "status": "in_progress", "issue_type": "task",
+             "labels": [], "notes": "", "created_at": at, "updated_at": at,
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e", "gc.ticket_id": "AF-TK-E1",
+                          "gc.dispatch_rig": "saymyname", "gc.flow.gate.dispatch": json.dumps({"at": at}),
+                          "gc.flow.models": json.dumps({"author": {"agent": "delivery-author", "at": at,
+                                                                   "model": "claude-opus-5-5"}})}},
+        ])
+        self.start_cockpit()
+        wait_until(self.projects)
+        page = wait_until(lambda: (lambda body: body if "Voir le run" in body else None)(self.get("/projet/saymyname")))
+        form = re.search(r'<form class="pn-open" method="get" action="([^"]*)">((?:(?!</form>).)*?)<button[^>]*>Voir le run</button>',
+                         page, re.S)
+        self.assertTrue(form, "no « Voir le run » on the page of the project")
+        # What a browser opens: the address of the form, its query replaced
+        # by the fields of the form.
+        fields = dict(re.findall(r'<input type="hidden" name="([^"]*)" value="([^"]*)">', form.group(2)))
+        address = html.unescape(form.group(1)).split("?", 1)[0] + "?" + urllib.parse.urlencode(fields)
+        status, run = self.get_status(address)
+        self.assertEqual(200, status, "« Voir le run » opens %s: « Run introuvable »" % address)
+        self.assertIn("Recherche dans les notes", run)
+
+    def test_the_home_line_of_a_project_says_the_figures_of_its_page(self):
+        # F2.8: no gc.project_card in the tracker; the line of each project
+        # on the home page says the figures its page says.
+        self.start_cockpit()
+        wait_until(self.projects)
+        for project_id in ("agent-factory", "saymyname"):
+            page = wait_until(lambda: (lambda body: body if "Décisions attendues · inconnu" not in body
+                                       else None)(self.get("/projet/%s" % project_id)))
+            kpis = re.search(r'class="pf-kpis"[^>]*>(.*?)</div></div>', page, re.S).group(1)
+            figures = [(html.unescape(value), html.unescape(caption)) for value, caption in
+                       re.findall(r"<strong[^>]*>(.*?)</strong><small[^>]*>(.*?)</small>", kpis)]
+            self.assertEqual(3, len(figures), kpis)
+            home = re.search(r'<section class="pn-panel pn-projects".*?</section>', self.get("/"), re.S).group(0)
+            line = re.search(r'<a href="/projet/%s">(.*?)</a>' % project_id, home, re.S)
+            self.assertTrue(line, "no line of %s on the home page" % project_id)
+            said = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", line.group(1))).split())
+            self.assertNotIn("Volumes non collectés", said)
+            # The two figures of a line, as its page says them.
+            shown = [(value, caption) for value, caption in figures
+                     if caption in ("Chantiers ouverts", "Runs fusionnés · 7 jours")]
+            self.assertEqual(2, len(shown), figures)
+            for value, caption in shown:
+                self.assertIn("%s : %s" % (caption, value), said, "the home line does not say the figure of the page")
+
+    def test_the_dossier_of_a_result_to_judge_opens_from_its_panel(self):
+        # F2.6: « Ce qui a été livré » and « Vérifications et preuves » open
+        # the page of the dossier the convoy records, and what it shows
+        # beside it; nothing outside its folder.
+        folder = os.path.join(self.tmp.name, "pack")
+        os.mkdir(folder)
+        Path(folder, "index.html").write_text('<html><body><h1>Dossier du résultat</h1><img src="capture.png">'
+                                              "</body></html>", encoding="utf-8")
+        Path(folder, "capture.png").write_bytes(b"capture")
+        commit, digest, at = "a" * 40, "sha256:" + "b" * 64, "2026-10-06T10:00:00Z"
+        result = convoy("af-conv-r", "Recherche dans les notes", "open", "sha256:r", project="agent-factory")
+        result["metadata"].pop("gc.cockpit_acceptance_note")
+        result["metadata"].update({
+            "gc.flow.mark": "new-flow/v1",
+            "gc.flow.delivered": json.dumps({"commit": commit, "protected": "c" * 40, "pack": digest,
+                                             "version": "spec-end/v4", "at": at}),
+            "gc.flow.evidence_pack": json.dumps({"commit": commit, "digest": digest, "path": folder, "conforming": True,
+                                                 "inadmissible": 0, "version": "evidence-pack/v1", "at": at}),
+        })
+        self.write_beads(beads() + [result])
+        self.start_cockpit()
+        home = wait_until(lambda: (lambda body: body if 'data-issue="to_judge"' in body else None)(self.get("/")))
+        panel = home[home.index('id="pn-result"'):]
+        for label in ("Ce qui a été livré", "Vérifications et preuves"):
+            form = re.search(r'<form class="pn-open" method="get" action="([^"]*)"[^>]*>((?:(?!</form>).)*?)%s' % label,
+                             panel, re.S)
+            self.assertTrue(form, "« %s » opens nothing" % label)
+            self.assertNotIn("disabled", form.group(2))
+            status, page = self.get_status(html.unescape(form.group(1)))
+            self.assertEqual(200, status, "« %s » opens no dossier" % label)
+            self.assertIn("Dossier du résultat", page)
+        self.assertEqual(200, self.get_status("/dossier/af-conv-r/capture.png")[0])
+        self.assertEqual(404, self.get_status("/dossier/af-conv-r/..%2Fbeads.json")[0])
+        self.assertEqual(404, self.get_status("/dossier/af-conv-a/")[0], "a convoy without dossier opens one")
+
+    def test_a_project_without_run_says_so(self):
+        self.start_cockpit()
+        wait_until(self.projects)
+        page = wait_until(lambda: (lambda body: body if '<a class="pj-card"' in body else None)(self.get("/projets")))
+        self.assertIn("Aucun run lu pour ce projet", page)
+
+    def test_no_project_declared_is_said(self):
+        empty = os.path.join(self.tmp.name, "descriptors")
+        os.mkdir(empty)
+        self.start_cockpit(descriptors=empty)
+        page = wait_until(lambda: (lambda body: body if "Aucun projet déclaré" in body else None)(self.get("/projets")))
+        self.assertNotIn('<a class="pj-card"', page)
+
+    def test_each_section_of_the_project_page_is_reached_by_its_heading(self):
+        # E, af-8rbceu: the label of each section, written small as the
+        # reference draws it, is a heading -- a navigation by headings
+        # reaches the current chantier and the roadmap.
+        self.start_cockpit()
+        wait_until(self.projects)
+        _, page = self.get_status("/projet/saymyname")
+        headings = [" ".join(re.sub(r"<[^>]+>", " ", inner).split())
+                    for _, inner in re.findall(r"<h([1-6])\b[^>]*>(.*?)</h\1>", page, re.S)]
+        for label in ("CHANTIER ACTUEL", "ROADMAP"):
+            self.assertIn(label, headings, "a section of the page of the project is not a heading")
     def test_accepted_chantier_moves_to_its_project_history(self):
         self.start_cockpit()
         wait_until(self.projects)
@@ -381,7 +572,8 @@ class HomeProjectsZoneTest(unittest.TestCase):
         opener = urllib.request.build_opener(NoRedirect)
         req = urllib.request.Request(
             "http://127.0.0.1:%d/api/health/recheck" % self.port, data=b"", method="POST",
-            headers={"Referer": self.origin + "/projet/saymyname"},
+            # The page's own Origin: a POST without it is refused (I, af-cp4fzd).
+            headers={"Referer": self.origin + "/projet/saymyname", "Origin": self.origin},
         )
         try:
             opener.open(req, timeout=20)

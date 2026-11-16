@@ -5,7 +5,9 @@ at fake sources and shrunk Validity windows without writing a temp file.
 """
 import json
 import os
+import urllib.parse
 
+from account_home import account_home
 from cockpit.core.beads_source import READ_TIMEOUT_SECONDS as BEADS_READ_TIMEOUT_SECONDS
 from cockpit.core.freshness import VALIDITY_WINDOWS_SECONDS
 from cockpit.core.gc_client import (
@@ -13,7 +15,12 @@ from cockpit.core.gc_client import (
     STATUS_POLL_SECONDS,
     STREAM_SILENCE_SECONDS,
 )
+from cockpit.requests.journal import READ_TIMEOUT_SECONDS as JOURNAL_READ_TIMEOUT_SECONDS
 from cockpit.requests.sources.readability import ILLISIBLE_THRESHOLD_SECONDS
+from cockpit.requests.sources.silence import SILENCE_ALERT_SECONDS
+from cockpit.runs.evidence import store_dir
+from cockpit.actions.registry import DOOR_TIMEOUT_SECONDS
+from cockpit.actions.essai_relay import DEFAULT_HTTPS_PORT as ESSAI_HTTPS_PORT, DEFAULT_PORT as ESSAI_PORT
 from cockpit.notify.pushover import PUSHOVER_URL
 from cockpit.projects.depots import REPO_URL_TEMPLATE
 from cockpit.health.engine import (
@@ -64,10 +71,23 @@ class Config:
         # view of the page (bin/rituals-status reads the same file).
         self.rituals_file = env.get("COCKPIT_RITUALS_FILE", os.path.join(_REPO_ROOT, "docs", "rituals.toml"))
         self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "60"))
+        # How long one read of the journal may take before it counts as
+        # failed: « Lecture en cours… » until then, unavailable after.
+        self.journal_read_timeout_seconds = float(
+            env.get("COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS", str(JOURNAL_READ_TIMEOUT_SECONDS))
+        )
         # spec .17: a source unreadable for longer than this is itself a request.
         self.illisible_after_seconds = float(
             env.get("COCKPIT_ILLISIBLE_SECONDS", str(ILLISIBLE_THRESHOLD_SECONDS))
         )
+        # « Usine muette » (B, af-4uzgzm): how long the supervisor or the
+        # tracker may stay silent before the cockpit says so, Urgent.
+        self.silence_alert_seconds = float(
+            env.get("COCKPIT_SILENCE_ALERT_SECONDS", str(SILENCE_ALERT_SECONDS))
+        )
+        # How long a door of an Operator Action is waited for before its
+        # command counts as expired, its outcome uncertain (af-fksj2c).
+        self.action_timeout_seconds = float(env.get("COCKPIT_ACTION_TIMEOUT_SECONDS", str(DOOR_TIMEOUT_SECONDS)))
         # How long one read of the tracker may take before it counts as
         # failed (T02, af-0gonc9: « Vue d’ensemble » says it is reading until
         # a read ends, and unavailable when the read failed).
@@ -79,9 +99,9 @@ class Config:
         # address the cockpit is reached at, Benjamin's Tailscale login --
         # lives in one local, unversioned file beside the pid file. An
         # environment variable still wins over it.
-        local = _read_local_config(
-            env.get("COCKPIT_LOCAL_CONFIG") or os.path.join(os.path.dirname(self.pid_file), LOCAL_CONFIG_NAME)
-        )
+        self.local_config_file = env.get("COCKPIT_LOCAL_CONFIG") or os.path.join(
+            os.path.dirname(self.pid_file), LOCAL_CONFIG_NAME)
+        local = _read_local_config(self.local_config_file)
         # Out-of-scope touch (T13, af-cx20q9 -- declared scope
         # lib/cockpit/access/**, lib/cockpit/actions/**): the access
         # guard needs Benjamin's Tailscale login and the origin the
@@ -107,12 +127,32 @@ class Config:
         self.loop_guard_bin = env.get(
             "COCKPIT_LOOP_GUARD_BIN", os.path.join(_REPO_ROOT, "bin", "factory-session-loop-guard")
         )
+        # The door of pause and resume of an order (af-npz9v1.15), which
+        # relancer resumes an order through (BR, af-eyc5ah).
+        self.order_pause_bin = env.get(
+            "COCKPIT_ORDER_PAUSE_BIN", os.path.join(_REPO_ROOT, "bin", "order-pause")
+        )
+        # The Acceptance Session, which launches the product Essai opens (A2).
+        self.acceptance_session_bin = env.get(
+            "COCKPIT_ACCEPTANCE_SESSION_BIN", os.path.join(_REPO_ROOT, "bin", "acceptance-session")
+        )
+        # The doors of the settings and the upkeep of the page Usine (G2,
+        # af-f8nlhr): the provider order of a role, and the cleaning of the
+        # unused work spaces.
+        self.provider_failover_bin = env.get(
+            "COCKPIT_PROVIDER_FAILOVER_BIN", os.path.join(_REPO_ROOT, "bin", "provider-failover")
+        )
+        self.factory_maintain_bin = env.get(
+            "COCKPIT_FACTORY_MAINTAIN_BIN", os.path.join(_REPO_ROOT, "bin", "factory-maintain")
+        )
         self.gc_bin = env.get("COCKPIT_GC_BIN", "gc")
         # Notifications and heartbeat (spec §"Notifications", §"Heartbeat et
-        # usine muette"). Both secret files live outside the repository, on
-        # the Windows side; unset or unreadable, nothing is sent or pinged
-        # and the health zone says so (spec .98).
-        self.pushover_secrets_file = env.get("COCKPIT_PUSHOVER_SECRETS_FILE") or local.get("pushover_secrets_file", "")
+        # usine muette"). Both secret files live outside the repository, in
+        # private files of the VM (I, af-cp4fzd: the procedure linked from
+        # « Accès » says where); unset or unreadable, nothing is sent or
+        # pinged and the health zone says so (spec .98).
+        self.pushover_secrets_file = _from_home(
+            env.get("COCKPIT_PUSHOVER_SECRETS_FILE") or local.get("pushover_secrets_file", ""), env)
         self.pushover_url = env.get("COCKPIT_PUSHOVER_URL", PUSHOVER_URL)
         self.notify_state_file = env.get("COCKPIT_NOTIFY_STATE_FILE") or os.path.join(
             os.path.dirname(self.pid_file), "cockpit-notify-state.json"
@@ -121,7 +161,16 @@ class Config:
         # The address a push links back to: the ts.net URL once Tailscale
         # Serve exposes the cockpit; the local origin until then.
         self.public_url = env.get("COCKPIT_PUBLIC_URL") or local.get("public_url") or self.allowed_origin
-        self.heartbeat_url_file = env.get("COCKPIT_HEARTBEAT_URL_FILE") or local.get("heartbeat_url_file", "")
+        # The relay of Essai (F2.4, cockpit.actions.essai_relay): on loopback,
+        # where the cockpit is opened by an HTTPS address of the tailnet --
+        # the entry Tailscale Serve gives it is on that host, port
+        # `essai_https_port`. 0: no relay (a cockpit opened on its host only).
+        public = urllib.parse.urlsplit(self.public_url)
+        served = public.scheme == "https" and public.hostname not in ("127.0.0.1", "localhost", "::1")
+        self.essai_port = int(env.get("COCKPIT_ESSAI_PORT") or (ESSAI_PORT if served else 0))
+        self.essai_https_port = int(env.get("COCKPIT_ESSAI_HTTPS_PORT") or ESSAI_HTTPS_PORT)
+        self.heartbeat_url_file = _from_home(
+            env.get("COCKPIT_HEARTBEAT_URL_FILE") or local.get("heartbeat_url_file", ""), env)
         self.heartbeat_tick_seconds = float(env.get("COCKPIT_HEARTBEAT_TICK_SECONDS", "30"))
         self.heartbeat_interval_seconds = float(env.get("COCKPIT_HEARTBEAT_INTERVAL_SECONDS", "300"))
         # Clean stop (spec §"Arrêt propre et redémarrage"): the driver's state
@@ -130,7 +179,16 @@ class Config:
             os.path.dirname(self.pid_file), "cockpit-stop-state.json"
         )
         self.stop_tick_seconds = float(env.get("COCKPIT_STOP_TICK_SECONDS", "15"))
+        self.stop_resume_grace_seconds = float(env.get("COCKPIT_STOP_RESUME_GRACE_SECONDS", "300"))
         self.sessions_poll_seconds = float(env.get("COCKPIT_SESSIONS_POLL_SECONDS", "15"))
+        # The trace of the sessions (cockpit.runs.trace): what each session
+        # ran with and was sent, kept once the supervisor no longer lists it.
+        self.trace_file = env.get("COCKPIT_TRACE_FILE") or os.path.join(
+            os.path.dirname(self.pid_file), "cockpit-session-trace.jsonl"
+        )
+        # The evidence store of the flow (bin/evidence-capture): where the
+        # pages of Runs check that a piece a control captured is still there.
+        self.evidence_store = store_dir(env)
         # Access (spec .71): the `tailscale` client to ask for the key's
         # expiry -- on this host a Windows binary reached from WSL, so it is
         # named in the local settings file; unset, Tailscale is not read.
@@ -146,6 +204,34 @@ class Config:
             "COCKPIT_RIG_FILES_DIR", os.path.join(_REPO_ROOT, "config", "projects")
         )
         self.depots_poll_seconds = float(env.get("COCKPIT_DEPOTS_POLL_SECONDS", "600"))
+        # The CI and the pull requests of the Analyses (D, af-ten1sp): the
+        # GitHub repository whose CI they read, « owner/name », through the
+        # GitHub client. Opt-in, as the version of the factory below: no
+        # repository declared, no read of GitHub, and the indicator of the
+        # CI says it is unavailable for that reason.
+        self.github_repo = env.get("COCKPIT_GITHUB_REPO") or local.get("github_repo", "")
+        self.gh_bin = env.get("COCKPIT_GH_BIN") or local.get("gh_bin", "") or "gh"
+        self.github_poll_seconds = float(env.get("COCKPIT_GITHUB_POLL_SECONDS", "300"))
+        # Where the page Usine reads the Factory's configuration of its roles
+        # and what the provider failover observed (.gc/provider-state.json,
+        # city.provider.toml): the tree the cockpit runs from.
+        self.factory_root = env.get("COCKPIT_FACTORY_ROOT", _REPO_ROOT)
+        # How long a check of a section of the page Usine stays current
+        # (cockpit.factory.checks): older, it is greyed with its age.
+        self.factory_check_validity_seconds = float(env.get("COCKPIT_VALIDITY_USINE_SECONDS", "300"))
+        # The isolated cockpit of a Runs state (bin/cockpit-isolated): the
+        # moment its clock starts at, and what the state selects -- the
+        # filter, the run, the job, the event a page opens when its address
+        # names none. Unset in service: the wall clock, nothing selected.
+        self.clock_start = env.get("COCKPIT_CLOCK_START") or None
+        # How long the isolated cockpit waits for the first reading of its
+        # sources before it answers; 0 in service.
+        self.first_read_seconds = float(env.get("COCKPIT_FIRST_READ_SECONDS", "0"))
+        try:
+            view = json.loads(env.get("COCKPIT_RUNS_VIEW") or "{}")
+        except ValueError:
+            view = {}
+        self.runs_view = view if isinstance(view, dict) else {}
         self.validity_seconds = dict(VALIDITY_WINDOWS_SECONDS)
         for source in list(self.validity_seconds):
             override = env.get("COCKPIT_VALIDITY_%s_SECONDS" % source.upper())
@@ -182,7 +268,7 @@ class Config:
 LOCAL_CONFIG_NAME = "cockpit-local.json"
 LOCAL_CONFIG_KEYS = (
     "pushover_secrets_file", "heartbeat_url_file", "public_url", "benjamin_login", "allowed_origin",
-    "tailscale_bin", "clones_dir",
+    "tailscale_bin", "clones_dir", "github_repo", "gh_bin",
 )
 
 
@@ -201,6 +287,18 @@ def _read_local_config(path):
     return {
         key: data[key] for key in LOCAL_CONFIG_KEYS if isinstance(data.get(key), str) and data[key]
     }
+
+
+def _from_home(path, env):
+    """``path`` with a leading ``~/`` read as the home of the account that
+    runs the cockpit (lib/account_home.py, never ``$HOME``, which a Gas
+    City check sets to the city root; ``COCKPIT_HOME`` of ``env`` for a
+    test): the procedure of the VM settings proposes the secret files
+    there, and a JSON file is expanded by no shell (I, af-cp4fzd)."""
+    home = env.get("COCKPIT_HOME") or str(account_home())
+    if path == "~" or path.startswith("~/"):
+        return home + path[1:]
+    return path
 
 
 def _default_pid_file(env):

@@ -57,6 +57,7 @@ def _place(chantier, descriptors, projects_by_id):
 
 def build_projects(
     descriptors, beads, children_by_map_id=None, roadmap_reads=None, promotion_results=None, defects=None,
+    pack_reads=None,
 ):
     """``descriptors``: :func:`cockpit.projects.descriptors.load_descriptors`
     output. ``beads``: the merged open + gc.graph_digest bead list. ``roadmap_reads``:
@@ -65,7 +66,8 @@ def build_projects(
     attempted -- a missing entry means "never attempted", rendered the same
     as unknown with no age. ``promotion_results`` (T20): ``{convoy_id:
     {"masque": bool, "promu": True|False|None}}``, threaded straight into
-    :func:`cockpit.projects.stage.build_chantiers`. ``defects``: an
+    :func:`cockpit.projects.stage.build_chantiers`, as ``pack_reads`` (A1:
+    ``{convoy_id: rubrics of its dossier page, or None}``). ``defects``: an
     optional :class:`cockpit.requests.defects.DefectCounter` for
     §"Sans projet"'s counted producer defect.
 
@@ -76,7 +78,7 @@ def build_projects(
     projects, projects_by_id = _new_projects(descriptors, roadmap_reads)
 
     sans_projet = []
-    for chantier in build_chantiers(beads, children_by_map_id, promotion_results):
+    for chantier in build_chantiers(beads, children_by_map_id, promotion_results, pack_reads):
         project = _place(chantier, descriptors, projects_by_id)
         if project is None:
             sans_projet.append(chantier)
@@ -88,7 +90,7 @@ def build_projects(
     return projects, sans_projet
 
 
-def build_historique_par_projet(descriptors, beads, promotion_results=None, defects=None):
+def build_historique_par_projet(descriptors, beads, promotion_results=None, defects=None, pack_reads=None):
     """The historique counterpart of :func:`build_projects` (spec .46):
     terminé convoy chantiers plus abandonné cadrage/spec/graphe ones,
     grouped the same way. Returns ``(projects, sans_projet)`` with each
@@ -98,7 +100,7 @@ def build_historique_par_projet(descriptors, beads, promotion_results=None, defe
     projects, projects_by_id = _new_projects(descriptors)
 
     sans_projet = []
-    for chantier in build_historique(beads, promotion_results):
+    for chantier in build_historique(beads, promotion_results, pack_reads):
         project = _place(chantier, descriptors, projects_by_id)
         if project is None:
             sans_projet.append(chantier)

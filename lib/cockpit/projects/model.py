@@ -65,6 +65,22 @@ class Chantier:
     # they agree on one: places a convoy that carries no project key
     # (spec "Données de projet": "projet déduit du rig").
     rig: str = None
+    # The Outcome of a convoy of the new flow (« résultat » on the screens),
+    # as its D01 records give it
+    # (:func:`cockpit.projects.outcome.read_outcome`, plain data), or None;
+    # ``issue`` is the stage every screen says of it (« À juger »,
+    # « Fusionné »…), in place of ``stage``.
+    outcome: dict = None
+    issue: str = None
+    # The tickets of its graph, by id: a request on one of them is a
+    # decision of this chantier (:mod:`cockpit.projects.decisions`).
+    tickets: tuple = ()
+
+    @property
+    def libelle(self):
+        """The stage a screen says of this chantier: its Outcome's when it
+        has one, else its stage."""
+        return self.issue or self.stage
 
     @property
     def stage_index(self):
@@ -76,6 +92,9 @@ class RoadmapStep:
     id: str
     title: str
     status: str
+    # What the tracker says against presenting it as current (R3,
+    # af-plu8kn: cockpit.projects.roadmap.presented_step), else None.
+    reserve: str = None
 
 
 @dataclass

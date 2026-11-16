@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/factory-stop-heartbeat-test.py::FactoryStopHeartbeat.test_a_suspension_to_verify_keeps_the_heartbeat_going"
+    ]
+  }
+}

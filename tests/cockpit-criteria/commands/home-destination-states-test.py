@@ -99,27 +99,18 @@ class HomeDestinationStates(unittest.TestCase):
         assert_says(self, page, "metric-label-4", "Vérifications CI réussies")
         assert_says(self, page, "bilan-1", "Activité sur 7 jours")
         assert_says(self, page, "panel-1", "Derniers runs", "Tout voir")
-        # « Derniers runs » shows, in its frame, the three cards the
-        # reference freezes there, in its order: each its workflow, its
-        # status, its title, its step, a lane per participant with the bar
-        # of each of its jobs, its axis, its start and its duration -- read
-        # in the document the frame shows, not in the page around it.
-        self.assertEqual(
-            [
-                ("Livraison D01 Ta décision Reprise du cockpit Juger le résultat Humain Code Alex Léa Noé "
-                 "0s 6m 12m Début 15:00 (Paris) 12 min 0 s", 11),
-                ("Livraison D01 En cours Recherche dans les notes · nouvelle version "
-                 "Préparer les tests · Relire les tests Humain Code Alex Léa 0s 4m06s 8m12s "
-                 "Début 14:34 (Paris) 8 min 12 s", 4),
-                ("Livraison D01 ✓ Fusionné Recherche dans les notes Exécution terminée · historique disponible "
-                 "Humain Code Alex Léa Noé 0s 6m 12m Début 14:10 (Paris) 12 min 0 s", 12),
-            ],
-            self.run_cards(page),
-            "« Derniers runs » does not show the cards of the reference",
-        )
+        # « Derniers runs » shows, in its frame, the cards of the page Runs
+        # for the runs the tracker holds (K, af-jr8bsh: no card of example;
+        # home-recent-runs-test.py holds each to its card on the page Runs):
+        # the run of « Reprise du cockpit », waiting for Benjamin, first.
+        cards = self.run_cards(page)
+        self.assertTrue(cards and all(part in cards[0][0] for part in ("Livraison D01", "Ta décision",
+                                                                       "Reprise du cockpit")),
+                        f"« Derniers runs » does not show first the run of « Reprise du cockpit »: {cards}")
         assert_says(self, page, "panel-2", "Ce qui t’attend")
-        assert_says(self, page, "request-1", "Le cockpit attend ton avis", "Usine")
-        assert_says(self, page, "request-2", "Choisir le format d’export", "Notes")
+        # F2.7: a result to judge is « Quand tu veux », after the decision « À faire ».
+        assert_says(self, page, "request-1", "Choisir le format d’export", "Notes")
+        assert_says(self, page, "request-2", "Le cockpit attend ton avis", "Usine")
         assert_inbox_follows_requests(self, address, page)
         assert_says(self, page, "panel-3", "Usine · Reprise du cockpit", "Le cockpit attend ton avis",
                     "Les nouveaux parcours du cockpit sont prêts.")
@@ -135,20 +126,18 @@ class HomeDestinationStates(unittest.TestCase):
              sum(c["name"] == "Avis" for c in page["controls"])),
             "the page has not exactly one Essai and one Avis",
         )
-        # No door records Essai or Avis from this destination: both are
-        # drawn unavailable, and the result says they are not wired.
+        # Both can be used on a result to judge (A2 holds what they do).
         self.assertEqual(
-            [True, True],
+            [False, False],
             [c["disabled"] for c in page["controls"] if c["name"].startswith("Essai") or c["name"] == "Avis"],
-            "Essai or Avis is offered on this destination as if a door recorded it",
+            "Essai or Avis cannot be used on a result to judge",
         )
-        assert_says(self, page, "actions-possibles-1", "pas encore raccordés")
         # The request whose result is open is said to be the one open -- a
         # state a screen reader reads, and a mark the other line has not,
         # not only another colour.
         lines = {c["anchor"]: c for c in page["controls"] if c["anchor"] in ("request-1", "request-2")}
         self.assertEqual(
-            [True, False],
+            [False, True],
             [any(value not in (None, "false") for value in lines[line]["state"].values())
              for line in ("request-1", "request-2")],
             "the request open is not marked as the one open",
@@ -156,11 +145,12 @@ class HomeDestinationStates(unittest.TestCase):
         self.assertNotEqual(lines["request-1"]["shape"], lines["request-2"]["shape"],
                             "the request open is told from the other one by its colour alone")
         assert_says(self, page, "panel-4", "Projets")
-        assert_says(self, page, "row-1", "Usine", "Reprise du cockpit · À juger")
-        assert_says(self, page, "small-stats-1", "6 résultats fusionnés", "12 PR · 7 jours")
+        # F2.7: the project of the decision « À faire » (Notes) comes before the one of the result to judge.
+        assert_says(self, page, "row-2", "Usine", "Reprise du cockpit · À juger")
+        assert_says(self, page, "small-stats-2", "6 résultats fusionnés", "12 PR · 7 jours")
         assert_says(self, page, "release-info-1", "Cible révisable · 2 acquis · 2 critères restants · 1 décision ouverte")
-        assert_says(self, page, "row-2", "Notes", "Recherche dans les notes · En cours")
-        assert_says(self, page, "small-stats-2", "3 résultats fusionnés", "7 PR · 7 jours")
+        assert_says(self, page, "row-1", "Notes", "Recherche dans les notes · En cours")
+        assert_says(self, page, "small-stats-1", "3 résultats fusionnés", "7 PR · 7 jours")
         assert_says(self, page, "row-3", "Portfolio", "Présentation du projet · Fusionné")
         assert_says(self, page, "small-stats-3", "2 résultats fusionnés", "4 PR · 7 jours")
 
@@ -170,7 +160,7 @@ class HomeDestinationStates(unittest.TestCase):
         job its lanes draw."""
         inside = page["inside"].get("overview-runs-1")
         self.assertIsNotNone(inside, "the frame « Derniers runs » shows no document the page can read")
-        cards = [anchor for anchor in inside["anchors"] if re.fullmatch(r"card-\d+", anchor["name"])]
+        cards = [anchor for anchor in inside["anchors"] if re.fullmatch(r"card(?:-\d+)?", anchor["name"])]
         return [(card["text"], sum(1 for anchor in inside["anchors"]
                                    if anchor["name"].startswith("mini-bar-") and card["name"] in anchor["chain"]))
                 for card in cards]
@@ -183,11 +173,11 @@ class HomeDestinationStates(unittest.TestCase):
         assert_destination(self, page, CONTENT_PARTS)
         self.assert_content(address, page)
         self.assert_theme(page, "dark")
-        # Pressed, Avis does nothing: the page stays where it is, and the
-        # result says what it said -- no command shown done.
+        # Pressed, Avis opens in the result: the page stays where it is, and
+        # the result still says what it said (A2 holds the rest).
         after = measure(address, click="Avis")[0]["after"]
-        self.assertEqual((True, True, "/"), (after["found"], after["disabled"], after["path"]))
-        self.assertEqual(says(page, "panel-3"), says(after, "panel-3"), "pressing Avis changed the result")
+        self.assertEqual((True, False, "/"), (after["found"], after["disabled"], after["path"]))
+        assert_says(self, after, "panel-3", "Usine · Reprise du cockpit", "Ta réponse")
 
     def test_home_content_full_is_the_destination_with_its_whole_content(self):
         # The reference draws home-content-full dark, at 1440 px.
@@ -280,7 +270,7 @@ class HomeDestinationStates(unittest.TestCase):
         assert_says(self, page, "notice-1", "Lecture périmée · état actuel inconnu.",
                     "Dernières valeurs conservées ; actions indisponibles.")
         assert_says(self, page, "live-1", "État actuel inconnu")
-        assert_says(self, page, "request-1", "Le cockpit attend ton avis")
+        assert_says(self, page, "request-2", "Le cockpit attend ton avis")
         assert_says(self, page, "panel-3", "Le cockpit attend ton avis")
         actions = [c for c in page["controls"] if c["anchor"] and c["name"].startswith(("Essai", "Avis"))]
         self.assertEqual([], [c["name"] for c in actions if not c["disabled"]],
@@ -328,7 +318,7 @@ class HomeDestinationStates(unittest.TestCase):
         address, page = self.served("home-content", commit=reworded)
         assert_destination(self, page, CONTENT_PARTS)
         assert_inbox_follows_requests(self, address, page)
-        self.assertIn("Choisir la langue des notes", says(page, "request-2"))
+        self.assertIn("Choisir la langue des notes", says(page, "request-1"))
         self.assertNotIn("Choisir le format d’export", page["text"])
 
 

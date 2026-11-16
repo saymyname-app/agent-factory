@@ -7,5 +7,19 @@
     "selected": "Portfolio"
   },
   "visible_text": "← Projets\nPortfolio\n\nPrésenter les projets et les résultats de leur réalisation.\n\nFusionné\n2\nRésultats fusionnés · 7 jours\n4\nPR fusionnées · 7 jours\nNon collecté\nVérifications CI réussies · 7 jours\nProchaine release\nCible révisable · proposition\n\nPermettre à un visiteur de comprendre mon travail et de me contacter.\n\n✓ Acquis vérifiés 2\nConsulter les projets sur mobile\nVoir la preuve\nLire une étude de cas\nVoir la preuve\nReste connu 2\n\n○ Envoyer une demande de contact\n\n○ Vérifier accessibilité et liens\n\nDécision ouverte\n\nUne version anglaise est-elle nécessaire dès cette release ?\n\nPROCHAIN JALON\nVérifier le parcours découverte → prise de contact\n\nUne demande reçue et un parcours clavier vérifié.\n\nÀ préparer · réalisation non lancée\nFourchette indicative · 1 à 3 semaines\n\nPour les deux critères restants uniquement, si la capacité et les dépendances restent comparables. La décision ouverte est exclue de cette estimation.\n\nHypothèses et données de cet exemple\nÉvolution de la cible\nPréparer la prochaine release\nCHANTIER ACTUEL\nPrésentation du projet\n\nAucune décision attendue\n\nVoir le run\nROADMAP\nPrésentation publique\nTableau des métriques\nTerminé\nPrésentation du projet\nFusionné\n\nProchain jalon proposé : Vérifier le parcours découverte → prise de contact.\n\nDerniers changements\n\n● Tableau des métriques\n\nDernier résultat fusionné · exemple\nVoir le journal\nRessources du projet\nObjectif et périmètre\nSources et mesures\nPréparer une revue",
-  "production_writes": 0
+  "production_writes": 0,
+  "release": {
+    "proofs": {
+      "Consulter les projets sur mobile": "Preuve illustrative : parcours essayé, résultat conforme au critère et avis favorable. Aucune validation réelle représentée par cette donnée fictive.",
+      "Lire une étude de cas": "Preuve illustrative : parcours essayé, résultat conforme au critère et avis favorable. Aucune validation réelle représentée par cette donnée fictive."
+    },
+    "history": [
+      "Cible initiale proposée · présentation en français"
+    ],
+    "estimate": {
+      "comparables": 12,
+      "hypotheses": "Exemple fictif : capacité stable, aucun blocage externe connu. Fourchette à recalculer dès que ces conditions changent ; pas une date promise pour toute la release.",
+      "computed_at": "2026-10-12T12:00:00+02:00"
+    }
+  }
 }

@@ -33,7 +33,6 @@ from cockpit.requests.sources.specs_and_graphs import (  # noqa: E402
     TYPE_SPEC_A_APPROUVER,
     build_specs_and_graphs_requests,
 )
-from cockpit.requests.sources.unknown_signal import build_unknown_signal_requests  # noqa: E402
 from cockpit.ui.actions.render import render_actions  # noqa: E402
 from cockpit.ui.journal.entries import JournalEntry, build_journal, parse_trace_note  # noqa: E402
 from cockpit.ui.journal.render import render_journal_section  # noqa: E402
@@ -150,21 +149,6 @@ class ReadabilityTest(unittest.TestCase):
         self.assertEqual(1, len(build_readability_requests(sources, now)))
         sources[0]["last_good_read_at"] = now - 1
         self.assertEqual([], build_readability_requests(sources, now))
-
-
-class UnknownSignalTest(unittest.TestCase):
-    def test_unknown_signal_is_quand_tu_veux_and_names_its_source(self):
-        signals = [{"id": "sig-1", "source": "loop-guard", "texte_brut": "wat=42"}]
-        requests = build_unknown_signal_requests(signals, verifie_a=1000.0)
-        self.assertEqual(1, len(requests))
-        self.assertEqual(QUAND_TU_VEUX, requests[0].niveau)
-        self.assertIn("loop-guard", requests[0].quoi)
-        self.assertIn("Signal non reconnu venant de", requests[0].quoi)
-
-    def test_unknown_signal_exits_when_the_source_stops_reporting_it(self):
-        signals = [{"id": "sig-1", "source": "loop-guard", "texte_brut": "wat=42"}]
-        self.assertEqual(1, len(build_unknown_signal_requests(signals, verifie_a=1000.0)))
-        self.assertEqual([], build_unknown_signal_requests([], verifie_a=1000.0))
 
 
 class JournalTest(unittest.TestCase):

@@ -56,8 +56,10 @@ def http_get(port, path, timeout=3):
 
 
 def http_post(port, path, timeout=3):
+    # The page's own Origin: a POST without it is refused (I, af-cp4fzd).
     req = urllib.request.Request(
-        "http://127.0.0.1:%d%s" % (port, path), data=b"", method="POST"
+        "http://127.0.0.1:%d%s" % (port, path), data=b"", method="POST",
+        headers={"Origin": "http://127.0.0.1:%d" % port},
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.status

@@ -3,7 +3,7 @@ result (T02 Prototype Fold, af-0gonc9; Spec af-2zseit, user stories 111,
 124, 147 and 175; Validated Prototype prototype/cockpit-b-zones-20261012 at
 632deea, prototypes/c01-complete/frozen-panorama-home).
 
-    view = overview_view(snapshot, requests)
+    view = overview_view(snapshot, requests, analysis=analyses(snapshot, now, requests), runs=runs)
     main_html = render_overview(view, anchors, details_html)
 
 :func:`overview_view` reads, from the read model's snapshot and the
@@ -16,20 +16,33 @@ The states:
 - ``loading``: the tracker has not answered yet; ``error``: it was never
   read and its last read failed -- the page says the real state is unknown
   and offers to read again;
-- ``empty``: nothing waits, no project, no result, no indicator;
+- ``empty``: nothing waits, no project, no result, and no indicator lacks
+  its source (one that does says why it is unavailable);
 - ``content``: four indicators, the activity, the last runs, what waits
   (« Ce qui t’attend ») beside the result open under it, the projects. A
   reading of the supervisor or the tracker that is no longer current keeps
   the last values under a notice that says so.
 
-The result open is the record of a result to judge a bead carries under
-``gc.result_dossier``; without one, the first request. The panels of a
-result in its other states (its dossier, its follow-up, a decision) are
-T02S's. A part of it that unfolds says, open, the lines its record gives it
-(a report, « Compte rendu long », its findings), or that the source gave
-none. Its commands are not wired to a door here: Essai, Avis and the
-resources that open are drawn unavailable, and the panel says so -- nothing
-on the page shows a command done that no door recorded.
+The result open is the result of a chantier, as the records of the D01 flow
+give it (A1, af-c662qx; :mod:`cockpit.projects.outcome`, read with the
+projects): the one to judge first, else the latest of the others; without
+one, the first request. A result to judge shows what it is, its dossier --
+the rubrics of its dossier page, each a part that unfolds, « Ce qui n'a PAS
+été vérifié » as « Ce qui reste à vérifier » with the recette of the cockpit
+for the Factory's own project, its reports (« Compte rendu … ») -- above its
+bar; a result judged shows its follow-up: what was answered, the proof of
+the merge or that there is none, the reason of an abandon.
+
+Essai and Avis are in the bar of every result, once each (A2, af-ocz64w).
+Essai opens, in another tab, the product the Acceptance Session launches at
+the revision of the dossier (``POST /api/actions/essai``). Avis opens its
+panel in the result, its actions in the same bar: the answer, the verdict on
+each proposition, the reason of an abandon, then a neutral message for the
+session of the operator, which records the answer with ``bin/owner-answer``.
+The page writes nothing: copying the message records nothing, and changing
+the draft withdraws it. Where they cannot be used, they stay drawn and the
+bar says why; nothing on the page shows a command done that no door recorded.
+No record a demonstration dataset writes (``gc.result_dossier``) is read.
 
 Every part carries the anchor of the reference (``data-anchor``), numbered
 by the :class:`~cockpit.ui.panorama.shell.Anchors` of the page as the frozen
@@ -40,25 +53,35 @@ import html
 import json
 from datetime import datetime
 
-from cockpit.core.freshness import FRESH
+from cockpit.core.freshness import FRESH, UNKNOWN
 from cockpit.core.readmodel import PARIS
+from cockpit.projects import outcome as outcome_mod
+from cockpit.projects.model import Chantier
 from cockpit.projects.source import from_value as projects_from_value
-from cockpit.runs.derive import runs_from_beads
-from cockpit.ui.runs.page import duration
+from cockpit.requests.model import URGENT
+from cockpit.requests.sources.unknown_signal import unknown_signals_of
+from cockpit.text.validate import speaks_plainly
+from cockpit.analyses.indicators import CI, DECISIONS as OPEN_DECISIONS, DELAY, RESULTS
+from cockpit.ui.runs.page import recent_cards_document
+from cockpit.ui.home.page import UNKNOWN_TEXT, UNKNOWN_TEXT_NO_TIME
+from cockpit.ui.home.pour_moi import CSS as POUR_MOI_CSS, links_of, render_details, render_request, render_signals
 from cockpit.ui.panorama.shell import Anchors, anchor_slug, open_button
+from cockpit.ui.projects.fold import project_metrics, release_line
+from cockpit.ui.projects.panorama import project_runs
+from cockpit.ui.projects.page import RESULT_PANEL_ID
 from cockpit.ui.projects.project_page import project_page_url
 
 LOADING, ERROR, EMPTY, CONTENT = "loading", "error", "empty", "content"
-RESULT_DOSSIER = "gc.result_dossier"
 PROJECT_CARD = "gc.project_card"
-RUN_CARD = "gc.run_card"
 SAID = "said"
 
 DECISIONS = "Décisions à prendre"
-# The indicators the cockpit has no source for yet: what the tracker keeps
-# as said of them (one bead under each title: its value, then its period),
-# or « non collecté ».
-SAID_INDICATORS = ("Résultats fusionnés", "Délai de livraison", "Vérifications CI réussies")
+# The four indicators, as the Analyses compute them (ticket K, af-jr8bsh;
+# cockpit.analyses.indicators): the key of each, its label here and the
+# view of the Analyses it opens.
+INDICATORS = ((OPEN_DECISIONS, DECISIONS, "activite"), (RESULTS, "Résultats fusionnés", "resultats"),
+              (DELAY, "Délai de livraison", "delais"), (CI, "Vérifications CI réussies", "verifications"))
+UNAVAILABLE = "indisponible"
 CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : PR fusionnées, tickets livrés, "
                "exécutions CI réussies")
 # Each series its colour (a token of the page, 3:1 at least on the surface
@@ -67,49 +90,167 @@ CHART_LABEL = ("Volumes quotidiens comparés sur sept jours : PR fusionnées, ti
 CHART_SERIES = (("PR fusionnées", "var(--pn-series-1)", ""), ("Tickets livrés", "var(--pn-series-2)", "8 5"),
                 ("CI réussies", "var(--pn-series-3)", "1 5"))
 ACTIVITY = "Activité sur 7 jours"
-UNWIRED_RESULT = "Essai et Avis ne sont pas encore raccordés à cette vue : rien n’est lancé ni préparé d’ici."
+OUTDATED_RESULT = "Dossier périmé : Essai et Avis de cette version ne servent plus, un nouveau dossier doit être préparé."
+OUTAGE_RESULT = "Essai reviendra quand le produit démarrera. Avis reste disponible : une panne n’est pas un jugement."
+RENEWED_RESULT = "Essai et Avis reviendront avec le nouveau dossier : rien n’est lancé ni préparé d’ici."
+STALE_RESULT = "Lecture périmée : Essai et Avis reviendront avec une lecture à jour."
+JUDGED_RESULT = "Résultat déjà jugé : Essai et Avis ne servent qu’à un résultat à juger, rien n’est lancé ni préparé d’ici."
+UNSURE_RESULT = ("État du résultat incertain : Essai et Avis restent indisponibles tant que ses enregistrements "
+                 "ne sont ni lisibles ni cohérents.")
 NOT_GIVEN = "Contenu non fourni par la source."
+# The parts of a result to judge the cockpit draws whatever its dossier: the
+# two that open the page of the dossier, the one that says what is left to
+# verify, the one that gives its version and its sources.
+OPENING = (("Ce qui a été livré", "Changements et version à essayer"),
+           ("Vérifications et preuves", "Parcours, tests et relecture"))
+TO_VERIFY = "Ce qui reste à vérifier"
+VERSION = "Version et sources"
+DOSSIER_UNREAD = "Dossier non lu : sa page est introuvable ou illisible."
+# Where the cockpit serves the page of the dossier of a convoy
+# (cockpit.core.server, GET /dossier/<convoy>/).
+DOSSIER_PAGE = "/dossier/%s/"
+FOLLOW_UP = "Suivi du résultat"
+HISTORY = "Historique et preuves"
+SINCE = "Depuis ton dernier jugement"
+# The title of a result whose request of acceptance gives none, or none the
+# operator reads (a request of the flow, written for the door).
+TO_JUDGE_TITLE = "Le cockpit attend ton avis"
+# Avis: the answers of D01 and the verdicts on a proposition, as the page
+# says them and as bin/owner-answer takes them.
+ANSWERS = (("accepted", "Accepté"), ("findings", "Constats rendus"), ("abandoned", "Abandonné"))
+VERDICTS = (("avant", "Avant d’accepter"), ("plus_tard", "Plus tard"), ("sans_suite", "Sans suite"))
+AGENT_COST = "Continuer avec un agent utilise un agent (consomme des tokens)."
+# The project whose results carry the recette of the cockpit (Spec
+# af-fgcw0d, Testing Decisions 6): the Factory itself.
+FACTORY_PROJECT = "Usine"
+# The proofs of the recette, each said with what the cockpit holds of it.
+RECETTE_STOP_DONE = "Arrêt et reprise : une reprise vérifiée est enregistrée après un essai réel."
+RECETTE_STOP_MISSING = "Arrêt et reprise vérifiés : preuve manquante, aucun essai réel réussi n’est enregistré."
+RECETTE_ALERT_MISSING = ("Alerte d’une usine muette : preuve manquante, aucune alerte d’essai n’est enregistrée "
+                         "par le cockpit.")
+RECETTE_DAYS_MISSING = ("Sept jours consécutifs d’usage réel : preuve manquante, le cockpit ne compte pas encore "
+                        "les jours d’usage.")
+
+
+def recette(stop_trial_passed):
+    """The lines of the recette of the cockpit: each proof it needs, said
+    present when the cockpit holds it, missing otherwise -- never said
+    acquired without a record."""
+    return [RECETTE_STOP_DONE if stop_trial_passed else RECETTE_STOP_MISSING, RECETTE_ALERT_MISSING,
+            RECETTE_DAYS_MISSING]
 LEGACY_SUMMARY = "Détails techniques et actions"
 
 
-def overview_view(snapshot, requests):
+def overview_view(snapshot, requests, stop_trial_passed=False, now=None, undelivered=(), uncertain=None,
+                  analysis=None, runs=None, runs_failed=False, descriptors=(), decisions=None):
     """What the destination shows: ``state`` (see the module), ``stale``,
-    ``checked`` (HH:MM of the reading shown), ``requests``, ``indicators``,
-    ``activity``, ``runs`` (the cards of the last runs), ``dossier``,
-    ``projects``."""
+    ``checked`` (HH:MM of the reading shown), ``requests`` (« Pour moi »,
+    each opened with its gestures, :mod:`cockpit.ui.home.pour_moi`),
+    ``indicators`` (those of ``analysis``, what
+    :func:`cockpit.analyses.indicators.analyses` gives: the Analyses
+    compute them once for both pages), ``activity``, ``runs`` (the document
+    of the frame « Derniers runs »: the cards of the page Runs for ``runs``,
+    the workflow runs it lists, None while unread or with ``runs_failed``),
+    ``dossier`` (the result open), ``projects`` (each with the release the
+    page of the project reads from ``descriptors``, the projects as
+    declared, and the depots source, and its figures as that page counts
+    them from ``runs`` and ``decisions``, the open decisions of each
+    chantier, :func:`cockpit.projects.decisions.chantier_decisions`, or
+    None while unknown). ``stop_trial_passed``:
+    whether a real stop and restart reached a verified restart (the
+    recette). ``requests`` are those the cockpit knows even while the
+    tracker is not read: what it raises itself (« Usine muette »); the
+    list then says it is not whole (``unknown``). ``undelivered``: the ids
+    of the requests whose push could not be delivered yet. ``uncertain``:
+    why a gesture on a request may not go yet, by its id, after a command
+    whose outcome is uncertain."""
     beads_row = snapshot.get("beads")
     view = {"state": CONTENT, "stale": False, "checked": None, "requests": [], "indicators": [],
-            "activity": {}, "runs": [], "dossier": None, "projects": []}
+            "activity": {}, "runs": None, "dossier": None, "projects": [], "projects_unread": False, "now": now,
+            "unknown": _unknown(beads_row), "signals": []}
+    urls = _project_urls(snapshot.get("projets"))
+    view["requests"] = [
+        {"id": r.id, "quoi": r.quoi, "projet": r.projet, "pourquoi": r.pourquoi, "request": r,
+         # A title its producer wrote outside the contract of the text (too
+         # long, on two lines) is said whole after the cockpit's label;
+         # one that holds an identifier or an internal term only in the
+         # folded details (spec .73, .75).
+         "origine": _plain((r.texte_origine or {}).get("quoi")),
+         "links": links_of(r, urls.get(r.projet) or urls.get((r.projet or "").lower())),
+         "undelivered": r.id in undelivered, "uncertain": (uncertain or {}).get(r.id)}
+        for r in requests
+    ]
     if beads_row is None or beads_row["value"] is None:
         view["state"] = ERROR if (beads_row or {}).get("failed_at") is not None else LOADING
         return view
     beads = [bead for bead in beads_row["value"] if isinstance(bead, dict)]
+    # Information, beside the requests: not counted among the decisions.
+    view["signals"] = unknown_signals_of(beads)
     rows = [snapshot[name] for name in ("gc", "beads") if snapshot.get(name)]
     view["stale"] = any(row["freshness"] != FRESH for row in rows)
     read_ats = [row["read_at"] for row in rows if row["read_at"] is not None]
     view["checked"] = _hhmm(min(read_ats) if view["stale"] else max(read_ats))
-    view["requests"] = [
-        {"id": r.id, "quoi": r.quoi, "projet": r.projet, "pourquoi": r.pourquoi,
-         "origine": (r.texte_origine or {}).get("quoi")}
-        for r in requests
-    ]
-    view["dossier"] = next(filter(None, (_record(bead, RESULT_DOSSIER) for bead in beads)), None)
+    view["dossier"] = _result_open(snapshot.get("projets"), recette(stop_trial_passed))
     said = {bead.get("title"): _lines(bead) for bead in beads if SAID in (bead.get("labels") or [])}
-    view["indicators"] = [(DECISIONS, str(len(requests)), "Maintenant · demandes ouvertes", "#pn-inbox")] + [
-        (label, *(said[label] + ["", ""])[:2], "/analyses") if said.get(label)
-        else (label, "—", "Non collecté", "/analyses")
-        for label in SAID_INDICATORS
-    ]
+    view["indicators"] = _indicators(analysis) if analysis else []
     view["activity"] = _activity(said.get(ACTIVITY) or [])
-    view["runs"] = [card for card in (_record(bead, RUN_CARD) for bead in beads) if card]
-    runs_row = snapshot.get("runs")
-    if not view["runs"] and runs_row and runs_row["value"]:
-        view["runs"] = runs_from_beads(runs_row["value"], max(r["read_at"] or 0 for r in rows + [runs_row]))[:3]
-    view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"])
-    if not (view["requests"] or view["dossier"] or view["projects"] or view["activity"] or view["runs"]
-            or any(said.get(label) for label in SAID_INDICATORS)):
+    view["runs"] = recent_cards_document(runs, now, runs_failed)
+    view["projects"] = _projects(snapshot.get("projets"), beads, view["requests"], snapshot.get("depots"), descriptors,
+                                 runs, now, decisions)
+    projets = snapshot.get("projets")
+    view["projects_unread"] = projets is not None and projets["value"] is None
+    # An indicator without its source says why: the home is not empty of
+    # it (K2, code review F1.3).
+    unsourced = analysis and any(indicator["unsourced"] for indicator in analysis["indicators"].values())
+    if not (view["requests"] or view["signals"] or view["dossier"] or view["projects"] or view["activity"] or runs
+            or unsourced):
         view["state"] = EMPTY
     return view
+
+
+def _indicators(analysis):
+    """The four indicators of ``analysis``, each (label, value, what it
+    counts, the view of the Analyses it opens): its value as the Analyses
+    give it, or « indisponible » and the reason they give -- never a value
+    they do not compute."""
+    found = []
+    for key, label, view in INDICATORS:
+        indicator = analysis["indicators"][key]
+        value, caption = indicator["value"], indicator["reason"]
+        if value is not None:
+            caption = {
+                OPEN_DECISIONS: "Maintenant · demandes ouvertes",
+                RESULTS: "%d derniers jours · preuves de fusion" % len(analysis["days"]),
+                DELAY: "Médiane · %d résultats fusionnés" % len(analysis["results"]),
+                CI: "%d derniers jours · %s" % (len(analysis["days"]), indicator["calculation"]),
+            }[key]
+        found.append((label, UNAVAILABLE if value is None else value, caption, "/analyses?vue=%s" % view))
+    return found
+
+
+def _unknown(beads_row):
+    """What « Ce qui t’attend » says when the tracker is not known (spec
+    .16): since when it is unreadable; ``None`` while it reads."""
+    if beads_row is not None and beads_row["freshness"] != UNKNOWN:
+        return None
+    read_at = (beads_row or {}).get("read_at")
+    since = _hhmm(read_at) if read_at is not None else None
+    return UNKNOWN_TEXT % since if since else UNKNOWN_TEXT_NO_TIME
+
+
+def _plain(text):
+    return text if text and speaks_plainly(text) else None
+
+
+def _project_urls(row):
+    """The page of each declared project, by its name and by its key."""
+    if row is None or row["value"] is None:
+        return {}
+    projects, _ = projects_from_value(row["value"])
+    urls = {}
+    for project in projects:
+        urls[project.display_name] = urls[project.project_id] = project_page_url(project.project_id)
+    return urls
 
 
 def _activity(lines):
@@ -149,27 +290,115 @@ def _record(bead, key):
     return raw if isinstance(raw, dict) else None
 
 
-def _projects(row, beads, requests):
+def _historique(value, project_id):
+    """The chantiers of the historique of a project, the last one first."""
+    rows = ((value or {}).get("historique") or {}).get(project_id) or []
+    return [Chantier(**raw) for raw in reversed(rows)]
+
+
+def _result_open(row, lines_of_recette):
+    """The result the destination opens: of the chantiers whose D01
+    records give a result, the first to judge, else the first active one,
+    else the last one ended; as the panel draws it, or None."""
+    if row is None or row["value"] is None:
+        return None
+    projects, _ = projects_from_value(row["value"])
+    found = [(project, chantier) for project in projects
+             for chantier in project.chantiers + _historique(row["value"], project.project_id) if chantier.outcome]
+    ranked = sorted(found, key=lambda pair: (pair[1].outcome["issue"] not in outcome_mod.JUDGED_NOW,
+                                             pair[1].termine))
+    if not ranked:
+        return None
+    project, chantier = ranked[0]
+    return _result_view(project, chantier,
+                        lines_of_recette if project.display_name == FACTORY_PROJECT else [])
+
+
+def _result_view(project, chantier, lines_of_recette):
+    """What the panel of the result says: what it is about, its issue, its
+    title and summary, its dossier (its parts above the bar) or its
+    follow-up."""
+    outcome = chantier.outcome
+    issue = outcome["issue"]
+    view = {"about": "%s · %s" % (project.display_name, chantier.titre), "issue": issue, "chantier": chantier.id,
+            "project_url": project_page_url(project.project_id),
+            "label": outcome["label"], "sentence": outcome["sentence"], "history": outcome["history"],
+            "judged_now": issue in outcome_mod.JUDGED_NOW,
+            "essai": issue in outcome_mod.TRIAL_ISSUES, "avis": issue in outcome_mod.ANSWER_ISSUES,
+            "judgement": {"convoy": outcome.get("convoy"), "commit": outcome["commit"], "pack": outcome["pack"],
+                          "propositions": outcome.get("propositions") or []}}
+    if not view["judged_now"]:
+        view.update(title=FOLLOW_UP, summary=outcome["sentence"], resources=[], reports=[])
+        return view
+    title = outcome["title"]
+    view["title"] = title if title and speaks_plainly(title) else TO_JUDGE_TITLE
+    view["summary"] = outcome["summary"] or ""
+    to_verify = outcome["unverified"] if outcome["pack_read"] else [DOSSIER_UNREAD]
+    # The page of the dossier the convoy records, served by the cockpit
+    # (F2.6); unread, the part says so and opens nothing.
+    page = DOSSIER_PAGE % outcome["convoy"] if outcome.get("convoy") and outcome["pack_read"] else None
+    resources = [{"label": label, "detail": detail if page else DOSSIER_UNREAD, "opens": True, "href": page}
+                 for label, detail in OPENING]
+    resources.append({"label": TO_VERIFY, "opens": False, "said": to_verify, "recette": list(lines_of_recette)})
+    # « Version et sources » the dossier leaves empty, or does not have, is
+    # given by the records: the version delivered and its dossier.
+    rubrics = [part for part in outcome.get("rubrics") or [] if part["label"] != VERSION or part["said"]]
+    resources += [{"label": part["label"], "opens": False, "said": part["said"]} for part in rubrics]
+    if not any(part["label"] == VERSION for part in rubrics):
+        resources.append({"label": VERSION, "opens": False, "said": _version(outcome)})
+    if outcome.get("since"):
+        resources.insert(0, {"label": SINCE, "opens": False, "said": outcome["since"]})
+    view["resources"] = resources
+    view["reports"] = [{"label": part["label"], "opens": False, "said": part["said"]} for part in outcome["reports"]]
+    return view
+
+
+def _version(outcome):
+    """« Version et sources » of a result its dossier does not give: the
+    version delivered, the fingerprint of its dossier, its Spec."""
+    lines = []
+    if outcome["commit"]:
+        lines.append("Version livrée : commit %s." % str(outcome["commit"])[:7])
+    if outcome["pack"]:
+        lines.append("Empreinte du dossier : %s." % outcome["pack"])
+    if outcome["spec"]:
+        lines.append("Spec : %s." % outcome["spec"])
+    return lines
+
+
+def _projects(row, beads, requests, depots=None, descriptors=(), runs=None, now=None, decisions=None):
     """One card per declared project, those something waits for first, in
-    the order of what waits: its name, its current chantier and its stage,
-    its figures and the line of its release when the tracker holds them."""
+    the order of what waits: its name, its current chantier and its stage
+    -- the issue of its result when the D01 records give one --, two of the
+    figures of its page, counted as it counts them (its chantiers open and
+    its runs merged in seven days, F2.8), and the line of its release: the
+    one the page of the project reads from its knowledge repository
+    (``depots``, ``descriptors``), unavailable with its reason when there
+    is none (R19, af-dmsp3y) -- a card a synthetic set writes gives its
+    own figures and release, those of its reference. A project with no
+    active chantier shows its last one ended."""
     if row is None or row["value"] is None:
         return []
     projects, _ = projects_from_value(row["value"])
     cards = {bead.get("id"): _record(bead, PROJECT_CARD) for bead in beads}
+    declared = {descriptor["project_id"]: descriptor for descriptor in descriptors}
     waiting = [request["projet"] for request in requests]
     order = {name: waiting.index(name) if name in waiting else len(waiting) for name in waiting}
     out = []
     for project in sorted(projects, key=lambda p: order.get(p.display_name, len(waiting))):
-        current = next((c for c in project.chantiers if not c.termine), None)
+        current = next((c for c in project.chantiers if not c.termine), None) or next(
+            iter(_historique(row["value"], project.project_id)), None)
         card = (cards.get(current.id) if current else None) or {}
         out.append({
             "id": project.project_id,
             "name": project.display_name,
-            "chantier": "%s · %s" % (current.titre, card.get("stage") or current.stage) if current
+            "chantier": "%s · %s" % (current.titre, current.issue or card.get("stage") or current.stage) if current
             else "Aucun chantier en cours",
-            "figures": [str(figure) for figure in card.get("figures") or []],
-            "release": card.get("release"),
+            "figures": [str(figure) for figure in card.get("figures") or []] or [
+                "%s : %s" % (caption, value) for value, caption in
+                project_metrics(project, project_runs(runs, project.project_id), now, decisions)[1:]],
+            "release": card.get("release") or release_line(depots, declared.get(project.project_id) or {
+                "project_id": project.project_id, "display_name": project.display_name}),
         })
     return out
 
@@ -200,12 +429,14 @@ def render_overview(view, anchors, details_html=""):
             '<section class="pn-panel" role="status" %s><h2 %s>Lecture en cours…</h2>%s</section>'
             % (anchors("panel"), anchors("h2"), "".join('<div class="pn-skeleton" %s></div>' % anchors("skeleton")
                                                          for _ in range(3))))
+        parts.append(_render_alone(view))
     elif state == ERROR:
         parts.append(
             '<section class="pn-error" role="alert" %s><h2 %s>Cette vue est indisponible</h2>'
             "<p %s>L’état réel est inconnu. Les sources de l’usine n’ont pas répondu.</p>"
             '<form method="post" action="/api/health/recheck"><button type="submit" %s>Réessayer</button></form>'
             "</section>" % (anchors("error"), anchors("h2"), anchors("p"), anchors("button")))
+        parts.append(_render_alone(view))
     elif state == EMPTY:
         parts.append('<section class="pn-panel pn-empty" %s><h2 %s>Rien à afficher ici</h2>'
                      "<p %s>Aucun élément dans cette vue.</p></section>"
@@ -239,23 +470,17 @@ def _render_content(view, anchors):
         '<section class="pn-panel" %s><div class="pn-section-heading" %s><h2 %s>Derniers runs</h2>%s</div>'
         '<iframe class="pn-runs" title="Cartes des derniers runs" srcdoc="%s" %s></iframe></section>'
         % (panel, heading, anchors("h2"), open_button("/runs", "Tout voir", anchors("link"), "pn-link"),
-           _e(_runs_document(view["runs"])), anchors("overview-runs")))
+           _e(view["runs"]), anchors("overview-runs")))
     inbox, requests_panel = anchors("inbox"), anchors("panel")
     title = '<h2 %s>Ce qui t’attend</h2>' % anchors("h2")
-    lines = "".join(
-        '<button type="button" class="pn-request"%s data-request="%s" %s><strong %s>%s</strong>%s<small %s>%s</small>'
-        "</button>"
-        % (' aria-current="true"' if number == 0 else "", _e(request["id"]), anchors("request"), anchors("strong"),
-           _e(request["quoi"]),
-           # A title its producer wrote outside the contract of the text:
-           # the cockpit's label, then what was written, whole.
-           '<span class="pn-origin">Texte écrit : « %s »</span>' % _e(request["origine"]) if request["origine"] else "",
-           anchors("small"), _e(" · ".join(filter(None, (request["projet"], request["pourquoi"])))))
-        for number, request in enumerate(view["requests"])
-    ) or "<p>Rien ne t’attend.</p>"
-    parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s>%s%s</div>%s</div>'
-                 % (inbox, requests_panel, title, lines, _render_result(view, anchors)))
-    parts.append(_render_projects(view["projects"], anchors))
+    result = view["dossier"]
+    opened = result["chantier"] if result else (view["requests"][0]["id"] if view["requests"] else None)
+    lines = _render_lines(view["requests"], opened, anchors)
+    opened_html = _render_result(view, anchors)
+    parts.append('<div class="pn-inbox" id="pn-inbox" %s><div class="pn-panel pn-requests" %s>%s%s%s%s</div>%s</div>'
+                 % (inbox, requests_panel, title, _unknown_notice(view), lines,
+                    render_signals(view["signals"], view["now"]), opened_html))
+    parts.append(_render_projects(view["projects"], anchors, view["projects_unread"]))
     return "".join(parts)
 
 
@@ -334,168 +559,212 @@ def _n(number):
     return ("%.2f" % number).rstrip("0").rstrip(".")
 
 
+def _render_lines(requests, opened, anchors=None):
+    """The lines of « Ce qui t’attend »: each request said in the words of
+    the cockpit, the one open marked; each line opens its request."""
+    def anchor(name):
+        return anchors(name) if anchors else ""
+
+    return "".join(
+        '<button type="button" class="pn-request" aria-current="%s" data-request="%s" %s><strong %s>%s</strong>'
+        "%s<small %s>%s</small></button>"
+        % ("true" if request["id"] == opened else "false", _e(request["id"]), anchor("request"), anchor("strong"),
+           _e(request["quoi"]),
+           '<span class="pn-origin">Texte écrit : « %s »</span>' % _e(request["origine"]) if request["origine"] else "",
+           anchor("small"),
+           _e(" · ".join(filter(None, (request["request"].niveau if request["request"].niveau == URGENT else "",
+                                        request["projet"], request["pourquoi"])))))
+        for request in requests
+    ) or "<p>Rien ne t’attend.</p>"
+
+
+def _render_requests(view, opened, anchors=None):
+    """Every request of « Pour moi » opened in its article, beside the
+    lines; the one ``opened`` shown, the first carrying the anchor of the
+    panel of the reference when no result holds it. The request of the
+    result is the result's panel."""
+    result = view["dossier"]
+    out = []
+    for request in view["requests"]:
+        if result and request["id"] == result["chantier"]:
+            continue
+        shown = request["id"] == opened
+        out.append(render_request(request["request"], view["now"], request["links"], stale=view["stale"],
+                                  shown=shown, anchor=anchors("panel") if shown and anchors else "",
+                                  undelivered=request["undelivered"], uncertain=request["uncertain"]))
+    return "".join(out)
+
+
+def _render_alone(view):
+    """« Ce qui t’attend » while the tracker is not read: what the cockpit
+    raised itself, outside the parts the reference numbers."""
+    if not view["requests"]:
+        return ""
+    opened = view["requests"][0]["id"]
+    return ('<div class="pn-inbox" id="pn-inbox"><div class="pn-panel pn-requests"><h2>Ce qui t’attend</h2>%s%s</div>'
+            "%s</div>" % (_unknown_notice(view), _render_lines(view["requests"], opened), _render_requests(view, opened)))
+
+
+def _unknown_notice(view):
+    """The list is not whole: what comes from the tracker is unknown."""
+    return '<p class="pn-unknown" role="status">%s</p>' % _e(view["unknown"]) if view["unknown"] else ""
+
+
 def _render_result(view, anchors):
-    """The panel of the result open under « Ce qui t’attend »."""
-    record = view["dossier"]
-    if record is None:
-        return _render_request_panel(view["requests"], anchors)
+    """The panel of the result open under « Ce qui t’attend »: a result to
+    judge, with its dossier above its bar; a result judged, with its
+    follow-up; without one, the first request open with its gestures. The
+    other requests are opened beside, hidden until their line is chosen."""
+    result = view["dossier"]
+    if result is None:
+        if not view["requests"]:
+            return ('<article class="pn-panel pn-result" %s><h2>Rien ne t’attend</h2>'
+                    "<p>Aucune demande ouverte.</p></article>" % anchors("panel"))
+        return _render_requests(view, view["requests"][0]["id"], anchors)
     panel = anchors("panel")
-    parts = ['<small %s>%s</small><h2 %s>%s</h2><p %s>%s</p>'
-             % (anchors("small"), _e(record.get("about") or ""), anchors("h2"), _e(record.get("title") or ""),
-                anchors("p"), _e(record.get("summary") or ""))]
-    resource_list = anchors("resource-list")
-    parts.append('<div class="pn-resources" %s>%s</div>'
-                 % (resource_list, "".join(_render_resource(r, anchors) for r in record.get("resources") or [])))
-    parts.append("".join(_render_folded(report, anchors) for report in record.get("reports") or []))
+    parts = ['<small %s>%s</small><h2 %s>%s</h2>'
+             % (anchors("small"), _e(result["about"]), anchors("h2"), _e(result["title"]))]
+    if result["summary"]:
+        parts.append("<p %s>%s</p>" % (anchors("p"), _e(result["summary"])))
+    if not result["judged_now"]:
+        # Judged: its follow-up, then the bar, Essai and Avis unavailable.
+        parts.append(_render_folded({"label": HISTORY, "said": result["history"]}, anchors))
+    else:
+        if result["issue"] != outcome_mod.TO_JUDGE:
+            # Outdated, or its trial down: said before anything of the dossier.
+            parts.append('<p class="pn-result-issue" role="status">%s</p>' % _e(result["sentence"]))
+        resource_list = anchors("resource-list")
+        parts.append('<div class="pn-resources" %s>%s</div>'
+                     % (resource_list, "".join(_render_resource(r, anchors) for r in result["resources"])))
+        parts.append("".join(_render_folded(report, anchors) for report in result["reports"]))
+    request = next((r["request"] for r in view["requests"] if r["id"] == result["chantier"]), None)
+    if request is not None:
+        # The request of the result: its identifiers and links, folded.
+        parts.append(render_details(request, links_of(request, result["project_url"])))
+    usable = {"essai": result["essai"] and not view["stale"], "avis": result["avis"] and not view["stale"]}
+    if usable["avis"]:
+        parts.append(_render_avis(result))
+    parts.append(_render_bar(result, usable, _bar_reason(result, view["stale"]), anchors))
+    return '<article class="pn-panel pn-result" id="%s" data-open="%s" data-issue="%s" %s>%s</article>%s' % (
+        RESULT_PANEL_ID, _e(result["chantier"]), _e(result["issue"]), panel, "".join(parts),
+        _render_requests(view, result["chantier"]))
+
+
+def _bar_reason(result, stale):
+    """Why Essai or Avis cannot be used, or None when both can."""
+    issue = result["issue"]
+    if result["essai"] and result["avis"] and not stale:
+        return None
+    if stale:
+        return STALE_RESULT
+    if issue == outcome_mod.OUTDATED:
+        return OUTDATED_RESULT
+    if issue == outcome_mod.OUTAGE:
+        return OUTAGE_RESULT
+    if issue in outcome_mod.RENEWED:
+        return RENEWED_RESULT
+    return UNSURE_RESULT if issue in (outcome_mod.UNKNOWN, outcome_mod.INCONSISTENT) else JUDGED_RESULT
+
+
+def _render_bar(result, usable, reason, anchors):
+    """The bar of the result: Essai and Avis, once each, usable or drawn
+    unavailable; while Avis is open, its actions, in that same bar."""
     dock = anchors("actions-possibles")
-    parts.append(
-        '<div class="pn-dock" role="group" aria-label="Actions possibles" %s>'
-        '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a><button type="button" disabled %s>Avis</button>'
-        '<p class="pn-unwired">%s</p></div>' % (dock, anchors("button"), anchors("button"), UNWIRED_RESULT))
-    return '<article class="pn-panel pn-result" %s>%s</article>' % (panel, "".join(parts))
+    essai_anchor, avis_anchor = anchors("button"), anchors("button")
+    essai = ('<a class="pn-button" role="link" href="#essai" data-essai="%s" data-commit="%s" %s>Essai ↗</a>'
+             % (_e(result["chantier"]), _e(result["judgement"]["commit"]), essai_anchor) if usable["essai"] else
+             '<a class="pn-button" role="link" aria-disabled="true" tabindex="-1" %s>Essai ↗</a>' % essai_anchor)
+    avis = ('<button type="button" data-avis="open" %s>Avis</button>' % avis_anchor if usable["avis"]
+            else '<button type="button" disabled %s>Avis</button>' % avis_anchor)
+    actions = ""
+    if usable["avis"]:
+        actions = ('<button type="button" data-avis="close" hidden>Fermer l’avis</button>'
+                   '<button type="button" data-avis="prepare" hidden disabled>Continuer avec un agent</button>'
+                   '<button type="button" data-avis="copy" hidden disabled>Copier pour ma session</button>'
+                   '<p class="pn-unwired" data-avis="cost" hidden>%s</p>' % _e(AGENT_COST))
+    return ('<div class="pn-dock" role="group" aria-label="Actions possibles" %s>%s%s%s'
+            '<p class="pn-unwired" data-essai-status role="status"%s>%s</p></div>'
+            % (dock, essai, avis, actions, "" if reason else " hidden", _e(reason or "")))
+
+
+def _render_avis(result):
+    """The panel of Avis, closed: the answer, the verdict on each
+    proposition, the words of the operator, the reason of an abandon, and
+    the message prepared for his session. It only prepares: nothing here
+    records an answer."""
+    judgement = result["judgement"]
+    answers = "".join('<label><input type="radio" name="pn-avis-answer" value="%s"> %s</label>' % (value, _e(label))
+                      for value, label in ANSWERS)
+    propositions = "".join(_render_proposition(number, proposition)
+                           for number, proposition in enumerate(judgement["propositions"], start=1))
+    return ('<section class="pn-avis" id="pn-avis" aria-label="Ton jugement" data-judgement="%s" hidden>'
+            '<fieldset><legend>Ta réponse</legend>%s</fieldset>%s'
+            '<label for="pn-avis-words">Ton avis</label><textarea id="pn-avis-words" rows="4"></textarea>'
+            '<div data-avis="reason" hidden><label for="pn-avis-reason">Raison de l’abandon</label>'
+            '<input type="text" id="pn-avis-reason"></div>'
+            '<details data-avis="message" hidden><summary>Message pour ma session</summary><pre></pre></details>'
+            '<p class="pn-unwired" data-avis="status" role="status" hidden></p></section>'
+            % (_e(json.dumps(judgement, ensure_ascii=False)), answers, propositions))
+
+
+def _render_proposition(number, proposition):
+    options = "".join('<option value="%s"%s>%s</option>'
+                      % (value, " selected" if value == proposition["verdict"] else "", _e(label))
+                      for value, label in VERDICTS)
+    return ('<div class="pn-avis-proposition"><label for="pn-avis-verdict-%d">Verdict sur la proposition : %s</label>'
+            '<select id="pn-avis-verdict-%d" data-proposition="%s"><option value="">À choisir</option>%s</select></div>'
+            % (number, _e(proposition["text"]), number, _e(proposition["id"]), options))
 
 
 def _render_resource(resource, anchors):
-    """A resource of the dossier: one that opens -- not from this view yet,
-    so drawn unavailable --, or one that unfolds."""
+    """A resource of the dossier: one that opens the page of the dossier in
+    another tab -- drawn unavailable, saying why, while that page is not
+    read --, or one that unfolds."""
     if not resource.get("opens"):
         return _render_folded(resource, anchors)
     button, label = anchors("button"), anchors("span")
-    return ('<button type="button" class="pn-resource" disabled %s><span %s><strong %s>%s</strong><small %s>%s</small>'
-            '</span><span aria-hidden="true" %s>↗</span></button>'
-            % (button, label, anchors("strong"), _e(resource.get("label")), anchors("small"),
-               _e(resource.get("detail") or ""), anchors("span")))
+    inner = ('<span %s><strong %s>%s</strong><small %s>%s</small></span><span aria-hidden="true" %s>↗</span>'
+             % (label, anchors("strong"), _e(resource.get("label")), anchors("small"),
+                _e(resource.get("detail") or ""), anchors("span")))
+    if resource.get("href"):
+        return ('<form class="pn-open" method="get" action="%s" target="_blank">'
+                '<button type="submit" class="pn-resource" %s>%s</button></form>' % (_e(resource["href"]), button, inner))
+    return '<button type="button" class="pn-resource" disabled %s>%s</button>' % (button, inner)
 
 
 def _render_folded(part, anchors):
     """A part of the dossier that unfolds: open, the lines its record gives
-    it, or that the source gave none."""
+    it, or that the source gave none; then, for « Ce qui reste à
+    vérifier », the recette of the cockpit -- a list of its own, outside
+    the numbering of the parts the reference draws."""
     said = [line for line in part.get("said") or [] if isinstance(line, str)] or [NOT_GIVEN]
     details, summary = anchors("details"), anchors("summary")
-    return "<details %s><summary %s>%s</summary>%s</details>" % (
-        details, summary, _e(part.get("label")), "".join("<p %s>%s</p>" % (anchors("p"), _e(line)) for line in said))
+    lines = "".join("<p %s>%s</p>" % (anchors("p"), _e(line)) for line in said)
+    if part.get("recette"):
+        lines += ('<ul class="pn-recette" aria-label="Recette du cockpit">%s</ul>'
+                  % "".join("<li>%s</li>" % _e(line) for line in part["recette"]))
+    return "<details %s><summary %s>%s</summary>%s</details>" % (details, summary, _e(part.get("label")), lines)
 
 
-def _render_request_panel(requests, anchors):
-    """No result is open: the first request, and the way to its detail and
-    its actions."""
-    if not requests:
-        return ('<article class="pn-panel pn-result" %s><h2>Rien ne t’attend</h2>'
-                "<p>Aucune demande ouverte.</p></article>" % anchors("panel"))
-    first = requests[0]
-    return (
-        '<article class="pn-panel pn-result" %s><small>%s</small><h2>%s</h2>'
-        "<p>Son détail et ses actions sont sous « %s ».</p>"
-        '<button type="button" class="pn-open-request" data-request="%s">Voir le détail et les actions</button>'
-        "</article>"
-    ) % (anchors("panel"), _e(" · ".join(filter(None, (first["projet"], first["pourquoi"])))), _e(first["quoi"]),
-         LEGACY_SUMMARY, _e(first["id"]))
-
-
-def _render_projects(projects, anchors):
+def _render_projects(projects, anchors, unread=False):
     panel, title, rows_anchor = anchors("panel"), '<h2 %s>Projets</h2>' % anchors("h2"), anchors("rows")
     rows = []
     for project in projects:
         row, holder, name, chantier, stats = (anchors("row"), anchors("div"), anchors("strong"), anchors("small"),
                                               anchors("small-stats"))
-        figures = "".join("<span %s>%s</span>" % (anchors("span"), _e(figure)) for figure in project["figures"]) or \
-            "<span %s>Volumes non collectés</span>" % anchors("span")
+        figures = "".join("<span %s>%s</span>" % (anchors("span"), _e(figure)) for figure in project["figures"])
         rows.append(
             '<div class="pn-row pn-project" %s><a href="%s">'
             '<div %s><strong %s>%s</strong><small %s>%s</small><div class="pn-stats" %s>%s</div>'
             '<div class="pn-release" %s>%s</div></div><span aria-hidden="true" %s>→</span></a></div>'
             % (row, _e(project_page_url(project["id"])), holder, name, _e(project["name"]), chantier,
                _e(project["chantier"]), stats, figures, anchors("release-info"),
-               _e(project["release"] or "Release non cadrée"), anchors("span")))
-    body = "".join(rows) or "<p>Aucun projet déclaré.</p>"
+               _e(project["release"]), anchors("span")))
+    body = "".join(rows) or ("<p>Lecture des projets en cours : leur état réel n’est pas encore connu.</p>" if unread
+                             else "<p>Aucun projet déclaré.</p>")
     return '<section class="pn-panel pn-projects" %s>%s<div class="pn-rows" %s>%s</div></section>' % (
         panel, title, rows_anchor, body)
 
-
-# The cards of the last runs, inside their frame, as the reference draws
-# them: three a row, one under the other in a frame under 850 px. A card
-# opens the destination Runs; opening the run itself is T44's. The status of
-# a run waiting for a decision is written darker in the light theme, where
-# the reference's is under 4.5:1 on the surface.
-RUNS_CSS = (
-    ":root{color-scheme:light;--surface:#fff;--line:#dbe0e8;--ink:#17202e;--muted:#657185;--accent:#415fce;"
-    "--ok:#1c7954;--human:#e4bc6d;--code:#55b5ae;--agent:#a897eb;--wait:#85590f}"
-    "@media (prefers-color-scheme: dark){:root{color-scheme:dark;--surface:#161b23;--line:#2a3240;--ink:#ecedf3;"
-    "--muted:#9aa6b9;--accent:#99aaff;--ok:#55c89d;--wait:#e4bc6d}}"
-    "*{box-sizing:border-box}html,body{margin:0;background:var(--surface);color:var(--ink);font:15px system-ui,sans-serif}"
-    ".grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}"
-    ".card{display:block;height:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;"
-    "padding:18px;color:inherit;text-decoration:none}"
-    ".card:hover{border-color:var(--accent)}.card:focus-visible{outline:2px solid var(--accent);outline-offset:-4px}"
-    ".card h2{margin:12px 0 7px;font-size:18px;overflow-wrap:anywhere}"
-    ".card p{margin:0 0 14px;font-size:14px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}"
-    ".card-top{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--muted)}"
-    ".badge{color:var(--ok)}.badge.live{color:var(--accent)}.badge.wait{color:var(--wait)}"
-    ".live-dot{display:inline-block;width:7px;height:7px;border-radius:100%;background:var(--accent);margin-right:6px}"
-    ".card-foot{display:flex;justify-content:space-between;gap:10px;margin-top:15px;font-size:13px;color:var(--muted)}"
-    ".mono{font:13px ui-monospace,monospace}"
-    ".mini{display:grid;gap:6px;font-size:11px}"
-    ".mini-row{display:grid;grid-template-columns:70px 1fr;gap:8px;align-items:center}"
-    ".mini-track{height:8px;position:relative;border-bottom:1px solid var(--line);"
-    "background:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),var(--line) 25%)}"
-    ".mini-bar{position:absolute;height:5px;border-radius:4px;top:1px;background:var(--agent);min-width:2px}"
-    ".mini-bar.code{background:var(--code)}.mini-bar.human{background:var(--human)}"
-    ".mini-axis{margin:8px 0 0 78px;display:flex;justify-content:space-between;color:var(--muted);font-size:10px}"
-    ".none{margin:12px 0;font-size:14px;line-height:1.5;color:var(--muted)}"
-    "@media(max-width:850px){.grid{grid-template-columns:1fr}}"
-)
-
-
-def _runs_document(runs):
-    """The document of the frame « Derniers runs »: a card for each run of
-    ``runs``, or that the cockpit reads none."""
-    anchors = Anchors()
-    cards = "".join(_run_card(run, anchors) for run in runs)
-    body = ('<div class="grid" %s>%s</div>' % (anchors("grid"), cards) if cards
-            else '<p class="none">Aucun run récent n’est lu par le cockpit.</p>')
-    return ('<!doctype html><html lang="fr"><head><meta charset="utf-8"><base target="_top">'
-            "<style>%s</style></head><body>%s</body></html>" % (RUNS_CSS, body))
-
-
-def _run_card(run, anchors):
-    """One card: the workflow and the status of the run, its title and its
-    step, a lane per participant with a bar per job, placed within the run,
-    its axis, its start and its duration."""
-    elapsed = run["elapsed"]
-    card, top = anchors("card"), anchors("card-top")
-    tone = run.get("tone")
-    dot = '<span class="live-dot" %s></span>' % anchors("live-dot") if tone in ("wait", "live") else ""
-    head = ('<div class="card-top" %s><span %s>%s</span><span class="badge %s" %s>%s%s</span></div>'
-            % (top, anchors("span"), _e(run["type"]), tone if tone in ("wait", "live") else "", anchors("badge"),
-               dot, _e(run["status"])))
-    title = "<h2 %s>%s</h2><p %s>%s</p>" % (anchors("h2"), _e(run["title"]), anchors("p"), _e(run["step"]))
-    mini = anchors("mini")
-    rows = []
-    for lane in run["lanes"]:
-        row, name, track = anchors("mini-row"), anchors("span"), anchors("mini-track")
-        bars = "".join('<span class="mini-bar %s" style="left:%s%%;width:%s%%" %s></span>'
-                       % (_e(lane["kind"]), _n(100 * start / elapsed), _n(100 * (end - start) / elapsed),
-                          anchors("mini-bar"))
-                       for start, end in lane["jobs"])
-        rows.append('<div class="mini-row" %s><span %s>%s</span><div class="mini-track" %s>%s</div></div>'
-                    % (row, name, _e(lane["name"]), track, bars))
-    axis = anchors("mini-axis")
-    ticks = "".join("<span %s>%s</span>" % (anchors("span"), _tick(seconds)) for seconds in (0, elapsed / 2, elapsed))
-    foot = anchors("card-foot")
-    return (
-        '<a class="card" href="%s" %s>%s%s<div class="mini" %s>%s</div><div class="mini-axis" %s>%s</div>'
-        '<div class="card-foot" %s><span %s>Début %s (Paris)</span><span class="mono" %s>%s</span></div></a>'
-    ) % (_e(run.get("href") or "/runs"), card, head, title, mini, "".join(rows), axis, ticks, foot, anchors("span"), _e(run["started"]),
-         anchors("mono"), duration(elapsed))
-
-
-def _tick(seconds):
-    """A mark of the axis of a card: « 0s », « 45s », « 6m », « 4m06s »."""
-    seconds = int(round(seconds))
-    minutes, rest = divmod(seconds, 60)
-    if not minutes:
-        return "%ds" % rest
-    return "%dm%02ds" % (minutes, rest) if rest else "%dm" % minutes
 
 CSS = """
 :root{--pn-series-1:#415fce;--pn-series-2:#1c7954;--pn-series-3:#97691e}
@@ -544,16 +813,20 @@ CSS = """
 .pn-origin{display:block;margin-bottom:8px;font-size:14px;overflow-wrap:anywhere}
 .pn-result h2{margin-top:12px;overflow-wrap:anywhere}
 .pn-result>p{margin:0 0 8px}
+.pn-result-issue{padding:10px 12px;border:1px solid var(--line);border-left:3px solid var(--pn-warn-text);
+  border-radius:6px;color:var(--ink);overflow-wrap:anywhere}
 .pn-resources{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:22px}
 .pn-overview .pn-resource{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;width:100%;
-  min-height:95px;padding:15px;text-align:left;border-color:var(--line)}
-.pn-overview .pn-resource:disabled{opacity:1;cursor:default}
+  min-height:95px;padding:15px;text-align:left;border-color:var(--pn-control-line)}
+.pn-overview .pn-resource:disabled{opacity:1;cursor:default;border-color:var(--line)}
 .pn-resource>span:first-child{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere}
 .pn-resources details{grid-column:1/-1}
 .pn-result details{border-top:1px solid var(--line);padding:14px 0}
 .pn-result>details{margin-top:8px}
 .pn-result summary{cursor:pointer;color:var(--pn-muted-text)}
 .pn-result details p{font-size:14px;margin:10px 0 0;overflow-wrap:anywhere}
+.pn-recette{margin:10px 0 0;padding-left:20px;font-size:14px}
+.pn-recette li{margin-top:6px;overflow-wrap:anywhere}
 .pn-dock{display:flex;flex-wrap:wrap;gap:12px;align-items:center;border-top:1px solid var(--line);
   padding-top:18px;margin-top:22px}
 .pn-dock>:is(button,.pn-button){flex:1;min-height:54px;font-size:16px;font-weight:650}
@@ -561,6 +834,20 @@ CSS = """
   background:var(--surface);border:1px solid var(--pn-control-line);border-radius:8px;text-decoration:none}
 .pn-button[aria-disabled=true]{opacity:.5;cursor:not-allowed}
 .pn-unwired{flex-basis:100%;margin:0;font-size:13px;color:var(--pn-muted-text)}
+.pn-avis{display:grid;gap:10px;align-content:start;padding:14px;border:1px solid var(--line);border-radius:8px}
+.pn-avis fieldset{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0;border:0}
+.pn-avis legend{padding:0 0 6px;font-weight:650}
+.pn-avis label{display:inline-flex;gap:6px;align-items:center;min-height:32px}
+.pn-avis-proposition{display:grid;gap:6px}
+.pn-avis :is(textarea,select,input[type=text]){width:100%;min-height:44px;padding:8px 10px;font:inherit;color:var(--ink);
+  background:transparent;border:1px solid var(--pn-control-line);border-radius:6px}
+.pn-avis pre{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+@media (min-width:1101px){
+  .pn-result:has(.pn-avis:not([hidden])){display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,42%);column-gap:18px;align-items:start}
+  .pn-result:has(.pn-avis:not([hidden]))>*{grid-column:1}
+  .pn-result:has(.pn-avis:not([hidden]))>.pn-avis{grid-column:2;grid-row:1 / span 12}
+  .pn-result:has(.pn-avis:not([hidden]))>.pn-dock{grid-column:1 / -1}
+}
 .pn-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0;
   border-bottom:1px solid var(--line)}
 .pn-row:last-child{border-bottom:0}
@@ -585,6 +872,9 @@ CSS = """
 .pn-legacy{margin-top:28px;border-top:1px solid var(--line);padding-top:16px}
 .pn-legacy>summary{cursor:pointer;color:var(--pn-muted-text)}
 .pn-legacy:not([open])>.pn-legacy-body{display:none}
+.pn-inbox>[hidden]{display:none}
+.pn-unknown{margin:0 20px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:6px;
+  color:var(--pn-warn-text);overflow-wrap:anywhere}
 @media (max-width:1100px){.pn-inbox{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:800px){
   .pn-metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -594,26 +884,25 @@ CSS = """
   .pn-resources{grid-template-columns:minmax(0,1fr)}
   .pn-row,.pn-project>a{align-items:flex-start}
 }
-"""
+""" + POUR_MOI_CSS
 
-# A request opens its detail and its actions, under « Détails techniques et
-# actions ».
+# A line of « Ce qui t’attend » opens its request beside the list, in place
+# of the one open: the result, or another request with its gestures.
 SCRIPT = """
 <script>
 (function () {
   function openRequest(id) {
-    var legacy = document.getElementById('pn-legacy');
-    if (!legacy) { return; }
-    legacy.open = true;
-    var item = legacy.querySelector('.li[data-id="' + id.replace(/"/g, '') + '"]');
-    if (item) { item.click(); }
-    var detail = document.getElementById('d-' + id);
-    var target = detail || legacy.querySelector('summary');
-    target.scrollIntoView({block: 'start'});
-    // The focus goes where the page went: the keyboard goes on from the
-    // detail, not from a line now out of sight.
-    if (target.tabIndex < 0 && !target.hasAttribute('tabindex')) { target.setAttribute('tabindex', '-1'); }
-    target.focus({preventScroll: true});
+    var panels = document.querySelectorAll('#pn-inbox [data-open]');
+    var target = null;
+    panels.forEach(function (panel) { if (panel.getAttribute('data-open') === id) { target = panel; } });
+    if (!target) { return; }
+    panels.forEach(function (panel) { panel.hidden = panel !== target; });
+    document.querySelectorAll('#pn-inbox .pn-request[data-request]').forEach(function (line) {
+      line.setAttribute('aria-current', line.getAttribute('data-request') === id ? 'true' : 'false');
+    });
+    // On a narrow screen the request opens under the list: the page goes
+    // to it.
+    if (window.matchMedia('(max-width: 1100px)').matches) { target.scrollIntoView({block: 'start'}); }
   }
   // The frame of the last runs is as tall as its cards: none is cut, none
   // is scrolled to inside the page.
@@ -627,8 +916,126 @@ SCRIPT = """
   });
   window.addEventListener('resize', function () { document.querySelectorAll('iframe.pn-runs').forEach(fit); });
   document.addEventListener('click', function (event) {
-    var request = event.target.closest('[data-request]');
+    var request = event.target.closest('.pn-request[data-request]');
     if (request) { openRequest(request.getAttribute('data-request')); }
+  });
+
+  // Essai: the tab is opened in the gesture, or the browser blocks it, then
+  // led to the product once it answers.
+  function post(action, body) {
+    return fetch('/api/actions/' + action, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                            credentials: 'same-origin', body: JSON.stringify(body)});
+  }
+  function essai(link) {
+    var status = document.querySelector('[data-essai-status]');
+    function say(text) { status.hidden = false; status.textContent = text; }
+    if (link.getAttribute('aria-busy') === 'true') { return; }
+    var tab = window.open('', '_blank');
+    if (!tab) { say('Le navigateur a bloqué le nouvel onglet : autorise-le, puis relance Essai. Rien n’a été lancé.'); return; }
+    link.setAttribute('aria-busy', 'true');
+    say('Préparation du produit de cette version…');
+    post('essai', {chantier: link.getAttribute('data-essai'), commit: link.getAttribute('data-commit')}).then(function (response) {
+      return response.json().then(function (body) { return {ok: response.ok, body: body}; });
+    }).then(function (answer) {
+      if (!answer.ok) { throw new Error(answer.body.error || 'Le produit ne démarre pas.'); }
+      tab.opener = null;
+      tab.location.href = answer.body.address;
+      say('Le produit de cette version est ouvert dans un autre onglet.');
+    }).catch(function (error) {
+      tab.close();
+      say(String(error.message || error).replace(/^refus : /, ''));
+    }).then(function () { link.removeAttribute('aria-busy'); });
+  }
+  document.addEventListener('click', function (event) {
+    var link = event.target.closest('[data-essai]');
+    if (link) { event.preventDefault(); essai(link); }
+  });
+
+  // Avis prepares a message for the session of the operator, which records
+  // the answer: nothing here writes, and any change withdraws the message.
+  var panel = document.getElementById('pn-avis');
+  if (!panel) { return; }
+  var judgement = JSON.parse(panel.getAttribute('data-judgement'));
+  var result = panel.closest('.pn-result');
+  function part(name) { return result.querySelector('[data-avis="' + name + '"]'); }
+  var words = document.getElementById('pn-avis-words'), reason = document.getElementById('pn-avis-reason');
+  var message = part('message');
+  var NOT_RECORDED = 'Message préparé : aucune réponse enregistrée tant que ta session ne l’a pas fait.';
+  var COPIED = 'Message copié : aucune réponse enregistrée tant que ta session ne l’a pas fait.';
+  var VERDICT_WORDS = {avant: 'à faire avant d\\'accepter', plus_tard: 'plus tard', sans_suite: 'sans suite'};
+  var RESPONSE_WORDS = {accepted: 'accepté', findings: 'constats rendus', abandoned: 'abandonné'};
+  function answer() {
+    var chosen = panel.querySelector('input[name="pn-avis-answer"]:checked');
+    return chosen ? chosen.value : '';
+  }
+  function verdicts() { return Array.prototype.slice.call(panel.querySelectorAll('select[data-proposition]')); }
+  function say(text) { var status = part('status'); status.hidden = !text; status.textContent = text; }
+  function ready() {
+    var kind = answer();
+    if (!kind || !words.value.trim()) { return false; }
+    if (kind === 'abandoned') { return !!reason.value.trim(); }
+    return kind !== 'accepted' || verdicts().every(function (select) {
+      return select.value && select.value !== 'avant';
+    });
+  }
+  function withdraw() {
+    message.hidden = true;
+    message.querySelector('pre').textContent = '';
+    part('copy').disabled = true;
+    say('');
+    part('reason').hidden = answer() !== 'abandoned';
+    part('prepare').disabled = !ready();
+  }
+  function shell(text) { return "'" + String(text).replace(/'/g, "'\\\\''") + "'"; }
+  function oneLine(text) { return text.trim().replace(/\\s+/g, ' '); }
+  function compose() {
+    var kind = answer(), said = oneLine(words.value), convoy = judgement.convoy, lines = [];
+    var approver = ' --approved-by benjamin';
+    lines.push('Session d’acceptation du chantier ' + convoy + ', dossier au commit ' + judgement.commit +
+               ', empreinte ' + judgement.pack + '. Ouvre le dossier à jour et enregistre ma réponse telle quelle : ' +
+               'mes mots exacts, sans résumer le dossier ni donner ton avis.');
+    verdicts().forEach(function (select) {
+      if (select.value) {
+        lines.push('bin/owner-answer verdict ' + convoy + ' --proposition ' + shell(select.getAttribute('data-proposition')) +
+                   ' --verdict ' + shell(VERDICT_WORDS[select.value]) + ' --words ' + shell(said || 'Vu.') + approver);
+      }
+    });
+    var record = 'bin/owner-answer record ' + convoy + ' --response ' + shell(RESPONSE_WORDS[kind]) + approver;
+    record += ' --words ' + shell(said) + ' --commit ' + judgement.commit + ' --pack-digest ' + judgement.pack;
+    if (kind === 'abandoned') { record += ' --reason ' + shell(oneLine(reason.value)); }
+    if (kind === 'findings') {
+      var findings = words.value.split('\\n').map(oneLine).filter(Boolean).map(function (text) { return {text: text}; });
+      lines.push('Écris ce fichier constats.json, mot pour mot : ' + JSON.stringify({findings: findings}));
+      record += ' --findings constats.json';
+    }
+    lines.push(record);
+    return lines.join('\\n');
+  }
+  function showAvis(open) {
+    panel.hidden = !open;
+    part('open').hidden = open;
+    ['close', 'prepare', 'copy', 'cost'].forEach(function (name) { part(name).hidden = !open; });
+    if (open) { words.focus(); withdraw(); }
+  }
+  panel.addEventListener('input', withdraw);
+  panel.addEventListener('change', withdraw);
+  result.addEventListener('click', function (event) {
+    var action = event.target.closest('button[data-avis]');
+    if (!action) { return; }
+    var name = action.getAttribute('data-avis');
+    if (name === 'open') { showAvis(true); }
+    if (name === 'close') { showAvis(false); part('open').focus(); }
+    if (name === 'prepare') {
+      message.querySelector('pre').textContent = compose();
+      message.hidden = false;
+      part('copy').disabled = false;
+      say(NOT_RECORDED);
+    }
+    if (name === 'copy') {
+      navigator.clipboard.writeText(message.querySelector('pre').textContent).then(function () { say(COPIED); }, function () {
+        say('Copie impossible : sélectionne le message à la main. Aucune réponse enregistrée.');
+      });
+    }
   });
 })();
 </script>

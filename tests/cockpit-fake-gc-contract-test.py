@@ -152,6 +152,26 @@ class FakeGcAnswersLikeTheRealOne(unittest.TestCase):
             self.assertLessEqual({"id", "template", "running", "last_active"}, set(item))
         self.assertLessEqual(set(fake["items"][0]) - {"active_bead"}, set(real["items"][0]) | {"session_name"})
 
+    def test_a_session_kept_once_stopped_says_no_bead_and_the_log_says_the_bead_it_took(self):
+        # What bin/cockpit-isolated serves of the sessions a dataset says
+        # (af-k2rbw1, code review F5.1): a session the supervisor keeps
+        # once stopped says no `active_bead`; the bead it worked is in the
+        # log, an `execution.step_started` naming the bead and the session.
+        base = "/v0/city/%s/" % self.real_city
+        stopped = json.loads(get(REAL_BASE_URL, base + "events?type=session.stopped&limit=5")[2])["items"]
+        kept = [json.loads(body) for status, _, body in
+                (get(REAL_BASE_URL, base + "session/%s" % event["session_id"]) for event in stopped)
+                if status == 200]
+        kept = [session for session in kept if not session.get("running")]
+        self.assertTrue(kept, "the real supervisor keeps no stopped session to compare with")
+        for session in kept:
+            self.assertNotIn("active_bead", session, "a stopped session says a bead: " + session["id"])
+        started = json.loads(get(REAL_BASE_URL, base + "events?type=execution.step_started&limit=5")[2])["items"]
+        self.assertTrue(started, "the real supervisor logs no step started")
+        for event in started:
+            self.assertLessEqual({"seq", "type", "ts", "subject", "session_id"}, set(event))
+            self.assertTrue(event["subject"] and event["session_id"], event)
+
     def test_city_event_stream_framing(self):
         real = first_frames(REAL_BASE_URL, "/v0/city/%s/events/stream" % self.real_city, {"heartbeat"})
         self.fake.emit("bead.closed", subject="af-fake")  # nobody listening yet: harmless

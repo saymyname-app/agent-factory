@@ -26,6 +26,10 @@ from cockpit.core.readmodel import PARIS
 from cockpit.projects import etat as etat_mod
 from cockpit.projects.model import LIVRE, SANS_PROJET, STAGES
 
+# The panel of the result open on the home page (cockpit.ui.home.overview):
+# where the chip of a chantier whose Outcome is to judge leads.
+RESULT_PANEL_ID = "pn-result"
+
 SECTION_TITLE = "Projets"
 EMPTY_TEXT = "Aucun projet déclaré."
 NO_CHANTIER_TEXT = "Aucun chantier actif."
@@ -91,6 +95,8 @@ def _render_roadmap(project):
     if project.roadmap_step is None:
         return ""
     text = "Roadmap : %s" % project.roadmap_step.title
+    if project.roadmap_step.reserve:
+        text += " · %s" % project.roadmap_step.reserve
     return '<span class="cockpit-project-roadmap" data-state="known">%s</span>' % html.escape(text)
 
 
@@ -187,6 +193,13 @@ def _render_etat(chantier, home=""):
     if texte == etat_mod.DEFAUT_LABEL or chantier.etat == etat_mod.BLOQUE:
         return '<span class="chip bloque cockpit-chantier-etat" %s>%s</span>' % (attrs, label)
     chip = "chip go %s cockpit-chantier-etat" % _CHIP_CLASS[chantier.etat]
+    if chantier.etat == etat_mod.A_TOI_DE_JOUER and chantier.outcome:
+        # An Outcome of the new flow is judged at its Acceptance Session,
+        # never by a button here (cockpit.projects.actions refuses it): the
+        # chip leads to its result, open on the home page (A1).
+        return '<a class="%s" %s href="%s#%s" title="Voir le résultat à juger">%s</a>' % (
+            chip, attrs, html.escape(home), RESULT_PANEL_ID, label,
+        )
     if chantier.etat == etat_mod.A_TOI_DE_JOUER and chantier.stage == LIVRE:
         if home:
             return '<a class="%s" %s href="%s#acc-%s" title="Aller là où tu dois agir">%s</a>' % (
@@ -208,8 +221,10 @@ def _render_etat(chantier, home=""):
 
 def _render_chantier_actions(chantier):
     """The acceptance panel of a Livré chantier (spec .30, .31), closed
-    until its "À toi de jouer" chip opens it in place."""
-    if chantier.stage != LIVRE:
+    until its "À toi de jouer" chip opens it in place. None for an Outcome
+    of the new flow: its acceptance is recorded at the Acceptance Session
+    (bin/owner-answer), which this panel cannot do (A1)."""
+    if chantier.stage != LIVRE or chantier.outcome:
         return ""
     bead_id = html.escape(chantier.id)
     return (
@@ -228,8 +243,8 @@ def _render_chantier_actions(chantier):
 
 
 def _render_chantier(chantier):
-    # "Livraison · 5/9 tickets mergés"; a detail that already starts with
-    # its stage ("Livré : 4/4 tickets mergés") is not prefixed twice.
+    # "Livraison · 5/9 tickets fermés"; a detail that already starts with
+    # its stage ("Livré : 4/4 tickets fermés") is not prefixed twice.
     if chantier.detail.startswith(chantier.stage):
         sous_titre = chantier.detail
     else:
@@ -256,7 +271,7 @@ def _render_chantier(chantier):
 
 
 # Chips and the acceptance panel. A "goto" chip opens the request it names
-# in the inbox (the list row's own click does the selecting); one naming a
+# in « Pour moi » (the line's own click does the opening); one naming a
 # request the inbox no longer holds says so instead of doing nothing.
 PROJECTS_SCRIPT = """
 <script>
@@ -273,10 +288,11 @@ PROJECTS_SCRIPT = """
     var go = event.target.closest('[data-goto]');
     if (go) {
       event.preventDefault();
-      var row = document.querySelector('.li[data-id="' + go.getAttribute('data-goto') + '"]');
+      // The line of the request in « Pour moi » (B, af-4uzgzm) opens it.
+      var row = document.querySelector('.pn-request[data-request="' + go.getAttribute('data-goto') + '"]');
       if (!row) { toast("Cette demande n'est pas dans la liste."); return; }
       row.click();
-      document.getElementById('inbox').scrollIntoView({block: 'start'});
+      document.getElementById('pn-inbox').scrollIntoView({block: 'start'});
       return;
     }
     var open = event.target.closest('[data-acc-open]');

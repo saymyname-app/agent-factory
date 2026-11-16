@@ -89,6 +89,35 @@ class ActionGuard:
             return GuardResult(False, REFUSED_IDENTITY)
         return GuardResult(True, "")
 
+    def check_reader(self, headers):
+        """Checked on every request before anything is read or served (I,
+        af-cp4fzd; Spec af-fgcw0d « Accès hôte » : « identité autorisée
+        […] aucun nouveau destinataire »). Behind Tailscale Serve every
+        request carries the login of the member of the tailnet who sent
+        it: one that is not the operator's is refused, pages and readings
+        alike. A request without that header did not come through Serve:
+        it came from this host itself (the cockpit listens on loopback
+        only), which already has every power there is."""
+        login = headers.get("Tailscale-User-Login", "") or ""
+        if login and login != self._expected_login:
+            return GuardResult(False, REFUSED_IDENTITY)
+        return GuardResult(True, "")
+
+    def check_page_post(self, method, headers):
+        """Checked on the POSTs a page sends that are not Operator Actions
+        (a section of the page Usine read again, the health checked
+        again): they write nothing, but a POST from another page than the
+        cockpit's own is refused all the same (Spec af-fgcw0d « Accès
+        hôte » : « POST/Origin/SameSite conservés »). The method, the
+        Origin and the identity behind Serve are checked; the session
+        cookie is left to the actions that write."""
+        if method != "POST":
+            return GuardResult(False, REFUSED_METHOD)
+        origin = headers.get("Origin", "") or ""
+        if not self._allowed_origin or origin != self._allowed_origin:
+            return GuardResult(False, REFUSED_ORIGIN)
+        return self.check_reader(headers)
+
 
 def session_cookie_header(token):
     """The ``Set-Cookie`` value handed out on every GET so a same-origin

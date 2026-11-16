@@ -35,7 +35,7 @@ convoi <convoy> : un Delivered Outcome attend votre jugement — dossier :
 ## The command
 
 ```bash
-./bin/acceptance-session open   af-convoy [--repo <project repository>] [--profile <descriptor>]
+./bin/acceptance-session open   af-convoy [--repo <project repository>] [--profile <descriptor>] [--trial]
 ./bin/acceptance-session close  af-convoy
 ./bin/acceptance-session record af-convoy [--repo <project repository>] --response relancer|planification|abandon
 ```
@@ -56,6 +56,11 @@ them or none (two start attempts each, 30 s). It answers `kind`
 (`acceptance` or `non_conforme`), `commit`, `digest`, `page`, `address`
 (the first product), `products` (`{dataset, address}` each), `rules`, and,
 for a « non conforme » request, the three `issues`.
+
+**`open --trial`** is what Essai of the cockpit runs (A2, af-ocz64w): one
+product, on the first dataset the profile declares, and a session already
+open at the commit of the dossier answers its address again instead of being
+refused. The refusals and the outage are those of `open`.
 
 **`close`** stops every product of the session and answers once each port
 is free again (`stopped`: `{dataset, port, free}`), then removes the

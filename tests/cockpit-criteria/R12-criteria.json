@@ -1,0 +1,11 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/projects-roadmap-rows-test.py::ProjectsRoadmapRows.test_a_step_whose_result_benjamin_returned_is_in_progress_without_reserve_and_heads_the_roadmap",
+      "tests/cockpit-criteria/commands/projects-roadmap-rows-test.py::ProjectsRoadmapRows.test_every_step_in_progress_carrying_a_reserve_heads_the_roadmap_with_none_and_its_line_names_the_first_with_its_reserve",
+      "tests/cockpit-criteria/commands/projects-roadmap-rows-test.py::ProjectsRoadmapRows.test_a_step_waiting_on_a_required_step_is_not_flagged_for_its_merged_or_accepted_result_and_never_heads_the_roadmap",
+      "tests/cockpit-criteria/commands/projects-roadmap-rows-test.py::ProjectsRoadmapRows.test_a_roadmap_all_done_names_its_last_step_without_reserve",
+      "tests/cockpit-criteria/commands/projects-roadmap-rows-test.py::ProjectsRoadmapRows.test_a_tracker_not_read_flags_no_step_and_the_roadmap_heads_with_its_first_step_in_progress"
+    ]
+  }
+}

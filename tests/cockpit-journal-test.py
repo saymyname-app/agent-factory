@@ -9,8 +9,10 @@ the proposal door and :mod:`cockpit.actions.trace` leave them. The test
 starts the real ``bin/cockpit`` on faked sources and reads only ``GET
 /journal``, ``GET /api/journal``, ``GET /`` and ``POST /api/actions/*``.
 """
+import html
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -18,6 +20,7 @@ import tempfile
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -169,7 +172,7 @@ class JournalTest(unittest.TestCase):
         self.fake_gc.stop()
         self.tmp.cleanup()
 
-    def start_cockpit(self):
+    def start_cockpit(self, **extra_env):
         env = dict(os.environ)
         env.update(
             {
@@ -191,6 +194,7 @@ class JournalTest(unittest.TestCase):
                 "FAKE_BD_FAIL_FLAG_FILE": self.fail_flag_file,
             }
         )
+        env.update(extra_env)
         self.proc = subprocess.Popen(
             [sys.executable, str(COCKPIT_BIN), "run"],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -238,9 +242,10 @@ class JournalTest(unittest.TestCase):
         )
 
         page = self.get("/journal?filtre=tout")
-        # Panorama: the destination Journal, its filters, a timeline by day.
-        self.assertIn("<h1>Journal</h1>", page)
-        self.assertIn('href="/journal?filtre=decisions"', page)
+        # Panorama: the destination Journal, its categories (each a button
+        # of a form sent by GET), a timeline by day.
+        self.assertIn(">Journal</h1>", page)
+        self.assertIn('name="categorie" value="decisions"', page)
         self.assertIn('class="jn-day"', page)
 
         answered = self.entry_html(page, "af-rep1")
@@ -259,6 +264,9 @@ class JournalTest(unittest.TestCase):
         cleared = self.entry_html(page, "af-clr1")
         self.assertIn("Effacée sans réponse enregistrée", cleared)
         self.assertIn("date inconnue", cleared)
+        # What no trace dates is listed last, under a day said unknown.
+        days = re.findall(r'<h2 class="jn-day"[^>]*>([^<]*)</h2>', page)
+        self.assertEqual("Date inconnue", days[-1], days)
         self.assertNotIn("<span>par ", cleared, "a trace that names nobody shows no author")
 
         # Benjamin, 2026-10-06: « affiche tel quel » -- the journal is a record,
@@ -326,23 +334,265 @@ class JournalTest(unittest.TestCase):
             {k: entries[0].get(k) for k in ("bead_id", "demande", "quoi", "quand", "par", "voie")},
         )
 
-        event = self.entry_html(self.get("/journal?filtre=tout"), "af-ev1")
+        # Both are events of technical sources (delivery, CI): logs of the
+        # journal (F, af-njwz8v), each under its title and at its time.
+        logs = self.get("/journal?vue=logs")
+        event = logs[logs.index('data-bead-id="af-ev1"'):logs.index('data-bead-id="af-ev2"')]
         self.assertIn("Release 1.4 publiée", event)
-        self.assertIn("<time>06/10 13:30</time>", event)
-        self.assertIn("<span>livraison</span>", event)
+        self.assertIn("13:30 (Paris) · Livraison", event)
+        self.assertIn("12:00 (Paris) · CI", logs[logs.index('data-bead-id="af-ev2"'):])
         # An event answers no request: no request block, not even the empty one.
         self.assertNotIn("cockpit-journal-demande", event)
         self.assertNotIn("Demande sans texte enregistré", event)
+        # They are not useful events: the journal of those does not list them.
+        self.assertNotIn('data-bead-id="af-ev1"', self.get("/journal?filtre=tout"))
+        # Words no log says: the page says which.
+        self.assertIn("Aucun log ne contient « absent ».", self.get("/journal?vue=logs&q=absent"))
 
     def test_unreadable_journal_is_unknown_never_empty(self):
         Path(self.fail_flag_file).write_text("fail")
         self.start_cockpit()
         self.assertEqual("unknown", self.get("/api/journal")["state"])
-        page = self.get("/journal?filtre=tout")
-        self.assertIn("Inconnu : journal illisible", page)
+        # Being read, then once the read failed: never an empty journal.
+        self.assertNotIn("Rien à afficher ici", self.get("/journal?filtre=tout"))
+        page = wait_until(lambda: (lambda p: p if "Cette vue est indisponible" in p else None)(
+            self.get("/journal?filtre=tout")))
         self.assertNotIn("Aucune demande résolue", page)
+        self.assertNotIn("Rien à afficher ici", page)
+        # No source is said connected or absent while the journal cannot be read.
+        self.assertIn("<strong>CI</strong> · inconnue — la source ne répond pas", self.get("/journal?vue=sources"))
         os.remove(self.fail_flag_file)
         wait_until(self.journal)
+
+    def test_a_journal_read_lasts_as_long_as_the_cockpit_allows_it(self):
+        # A tracker that never answers, and a cockpit that allows the journal
+        # one second per read: the journal says its read failed well before
+        # the twenty seconds it allows itself otherwise -- the isolated
+        # recipe allows 24 hours, and a reading under way stays one.
+        self.start_cockpit(COCKPIT_BD_BIN=str(ROOT / "tests" / "fixtures" / "cockpit" / "requests" / "silent-bd"),
+                           COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS="1")
+        self.assertIn("Lecture en cours…", self.get("/journal"))
+        wait_until(lambda: "Cette vue est indisponible" in self.get("/journal"), timeout=10)
+
+    # The Journal Prototype Fold (F, af-njwz8v) -------------------------
+
+    def write_beads(self, *extra):
+        with open(self.state_file, "w") as fh:
+            json.dump(beads() + list(extra), fh)
+
+    def test_a_category_keeps_its_own_and_a_former_filter_names_its_category(self):
+        self.start_cockpit()
+        wait_until(self.journal)
+        decisions = self.get("/journal?categorie=decisions")
+        self.assertIn('aria-current="true" data-anchor="primary-2">Décisions', decisions)
+        self.assertIn('data-bead-id="af-rep1"', decisions)
+        self.assertNotIn('data-bead-id="af-prop1"', decisions)
+        self.assertNotIn('data-bead-id="af-clr1"', decisions)
+        # The filters of the journal before its tabs still open a category:
+        # « Effacées » is now under « Événements ».
+        cleared = self.get("/journal?filtre=effacees")
+        self.assertIn('aria-current="true" data-anchor="primary-2">Événements', cleared)
+        self.assertIn('data-bead-id="af-clr1"', cleared)
+        self.assertNotIn('data-bead-id="af-rep1"', cleared)
+
+    def test_a_merged_run_is_a_change_of_the_journal_that_leads_to_its_run(self):
+        self.write_beads({
+            "id": "af-tk-run", "title": "Une page", "status": "closed", "issue_type": "task", "labels": [],
+            "notes": "", "closed_at": "2026-10-06T10:05:00Z",
+            "metadata": {
+                "gc.flow.models": json.dumps({"author": {"at": "2026-10-06T09:00:00Z", "model": "m"}}),
+                "gc.flow.merge": json.dumps({"at": "2026-10-06T10:00:00Z", "outcome": "merged"}),
+            },
+        })
+        self.start_cockpit()
+        wait_until(self.journal)
+        page = wait_until(lambda: (lambda p: p if 'data-bead-id="af-tk-run"' in p else None)(
+            self.get("/journal?categorie=changements")))
+        merged = page[page.index('data-bead-id="af-tk-run"'):]
+        merged = merged[:merged.index("</article>")]
+        # An integrated ticket: its title says neither merged nor its
+        # identifier (F3.22).
+        self.assertIn("<h3 data-anchor=\"h3-1\">Intégré · Une page</h3>", merged)
+        self.assertNotIn("fusionné ·", merged)
+        self.assertIn("12:00 (Paris) · Changement", merged)
+        # The run is named by a field of the form: a form sent by GET drops
+        # the query of its action (F2.10).
+        self.assertIn('action="/runs/run"><input type="hidden" name="id" value="af-tk-run">', merged)
+        self.assertIn("Voir le run", merged)
+        self.assertNotIn('data-bead-id="af-rep1"', page, "a decision is not a change")
+
+    def test_the_run_a_delivery_of_the_journal_links_to_opens(self):
+        # F2.10: a delivery of the D01 flow is one run of the page Runs, its
+        # convoy's; the « Voir le run » of its change in the journal opens it.
+        self.write_beads(
+            {"id": "af-conv-e", "title": "Recherche dans les notes", "status": "open", "issue_type": "convoy",
+             "labels": [], "notes": "", "created_at": "2026-10-06T08:55:00Z",
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e",
+                          "gc.project_id": "saymyname"}},
+            {"id": "af-tk-e1", "title": "Une page", "status": "closed", "issue_type": "task", "labels": [],
+             "notes": "", "created_at": "2026-10-06T09:00:00Z", "closed_at": "2026-10-06T10:05:00Z",
+             "metadata": {"gc.flow.mark": "new-flow/v1", "gc.graph_digest": "sha256:e", "gc.ticket_id": "AF-TK-E1",
+                          "gc.flow.gate.dispatch": json.dumps({"at": "2026-10-06T09:00:00Z"}),
+                          "gc.flow.models": json.dumps({"author": {"at": "2026-10-06T09:00:00Z", "model": "m"}}),
+                          "gc.flow.merge": json.dumps({"at": "2026-10-06T10:00:00Z", "outcome": "merged"})}},
+        )
+        self.start_cockpit()
+        wait_until(self.journal)
+        page = wait_until(lambda: (lambda p: p if "Voir le run" in p else None)(
+            self.get("/journal?categorie=changements")))
+        forms = re.findall(r'<form class="pn-open" method="get" action="([^"]*)">((?:(?!</form>).)*?)<button[^>]*>Voir le run</button>',
+                           page, re.S)
+        self.assertTrue(forms, "no « Voir le run » in the journal")
+        for action, inner in forms:
+            # What a browser opens: the address of the form, its query
+            # replaced by the fields of the form.
+            fields = dict(re.findall(r'<input type="hidden" name="([^"]*)" value="([^"]*)">', inner))
+            address = html.unescape(action).split("?", 1)[0] + "?" + urllib.parse.urlencode(fields)
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:%d%s" % (self.port, address), timeout=5) as resp:
+                    status, run = resp.status, resp.read().decode("utf-8")
+            except urllib.error.HTTPError as exc:
+                status, run = exc.code, exc.read().decode("utf-8")
+            self.assertEqual(200, status, "« Voir le run » opens %s: « Run introuvable »" % address)
+            self.assertIn("Recherche dans les notes", run)
+
+    def test_secrets_and_private_reasoning_never_leave_a_raw_event(self):
+        # Secrets of no known shape, under the names of a JSON key or of a
+        # field; a private reasoning, quoted or written to the end of its line.
+        raw = [
+            '{"password": "hunter2-correct-horse", "job": "regression"}',
+            '{"api_key":"k0123456789abcdefXYZ","exit":1}',
+            'session.started role=author reasoning=je pense que la clé est dans le fichier privé',
+            '{"thinking": "une pensée privée \\"citée\\" du modèle", "outcome": "failure"}',
+            '{"reasoning": {"steps": ["étape privée une", "étape privée deux"]}, "kept": "visible"}',
+        ]
+        private = ["hunter2-correct-horse", "k0123456789abcdefXYZ", "je pense", "la clé est dans le fichier privé",
+                   "une pensée privée", "citée", "étape privée"]
+        self.write_beads({
+            "id": "af-ev-secret", "title": "Vérification échouée", "status": "closed", "issue_type": "event",
+            "labels": ["ci"], "notes": "", "created_at": "2026-10-06T13:30:00+02:00",
+            "metadata": {"gc.journal_event": "ci", "gc.journal_folded": json.dumps(raw)},
+        })
+        self.start_cockpit()
+        wait_until(lambda: any(e["bead_id"] == "af-ev-secret" for e in (self.journal() or {"entries": []})["entries"]))
+        served = {"GET /journal?vue=logs": self.get("/journal?vue=logs"),
+                  "GET /api/journal": json.dumps(self.get("/api/journal"), ensure_ascii=False)}
+        self.assertEqual([], [(where, words) for where, body in served.items() for words in private if words in body],
+                         "a secret or a private reasoning is served")
+        # What the raw event says otherwise stays as received.
+        logs = served["GET /journal?vue=logs"]
+        for kept in ("regression", "role=author", "outcome", "failure", "kept", "visible", "exit"):
+            self.assertIn(kept, logs)
+
+    def test_a_source_declared_connected_stays_connected_while_it_is_silent(self):
+        # A source the factory declares connected (a bead naming it under
+        # gc.journal_source) that sent nothing yet; and CI, which sent a log.
+        self.write_beads(
+            {"id": "af-src-agents", "title": "Source des logs : agents", "status": "open", "issue_type": "task",
+             "labels": [], "notes": "", "metadata": {"gc.journal_source": "agents"}},
+            {"id": "af-ev-ci", "title": "Rapport nocturne reçu", "status": "closed", "issue_type": "event",
+             "labels": ["ci"], "notes": "", "created_at": "2026-10-06T12:00:00+02:00",
+             "metadata": {"gc.journal_event": "ci"}},
+        )
+        self.start_cockpit()
+        wait_until(self.journal)
+        sources = self.get("/journal?vue=sources")
+        self.assertIn("<strong>CI</strong> · raccordée — 1 log lu", sources)
+        self.assertIn("<strong>Agents</strong> · raccordée — aucun log reçu", sources)
+        self.assertIn("<strong>Livraison</strong> · absente — aucun log reçu", sources)
+
+    def test_the_logs_of_the_ci_and_of_the_connections_the_cockpit_reads(self):
+        # F2.9: no event bead held for the journal; the CI GitHub answers and
+        # the sources the cockpit reads are logs of their own, their sources
+        # connected; a source without producer stays absent.
+        github = os.path.join(self.tmp.name, "github.json")
+        at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 600))
+        with open(github, "w") as fh:
+            json.dump({"repository": "saymyname-app/notes", "pull_requests": [], "workflow_runs": [
+                {"id": 41, "name": "regression", "status": "completed", "conclusion": "failure", "created_at": at,
+                 "updated_at": at, "head_branch": "main", "event": "push"}]}, fh)
+        self.start_cockpit(COCKPIT_GITHUB_REPO="saymyname-app/notes", COCKPIT_GITHUB_POLL_SECONDS="0.2",
+                           COCKPIT_GH_BIN=str(ROOT / "tests" / "fixtures" / "cockpit" / "github" / "fake-gh"),
+                           FAKE_GH_STATE_FILE=github)
+        wait_until(self.journal)
+        ci = wait_until(lambda: (lambda p: p if "regression" in p else None)(self.get("/journal?vue=logs&source=ci")))
+        self.assertIn("CI · regression · échouée", ci)
+        self.assertIn("Lecture réussie : tickets", self.get("/journal?vue=logs&source=connexions"))
+        sources = self.get("/journal?vue=sources")
+        self.assertRegex(sources, r"<strong>CI</strong> · raccordée — 1 log lu")
+        self.assertRegex(sources, r"<strong>Connexions</strong> · raccordée — \d+ logs? lus?")
+        self.assertIn("<strong>Livraison</strong> · absente — aucun log reçu", sources)
+
+    def test_no_model_is_called_to_read_or_label_the_journal(self):
+        # Every way out of the cockpit to a model is recorded: the network,
+        # through a proxy, the providers' own addresses, and their commands.
+        recorder = Recorder().start()
+        self.addCleanup(recorder.stop)
+        shims = Path(self.tmp.name) / "bin"
+        shims.mkdir()
+        calls = Path(self.tmp.name) / "model-commands.log"
+        for name in ("claude", "codex", "gemini", "llm", "ollama"):
+            shim = shims / name
+            shim.write_text('#!/bin/sh\necho "%s $*" >> "%s"\n' % (name, calls))
+            shim.chmod(0o755)
+        self.write_beads({
+            "id": "af-ev-unknown", "title": "Une note étrange", "status": "closed", "issue_type": "event",
+            "labels": [], "notes": "", "created_at": "2026-10-06T12:00:00+02:00",
+            "metadata": {"gc.journal_event": "mystere"},
+        })
+        self.start_cockpit(
+            HTTP_PROXY=recorder.url, HTTPS_PROXY=recorder.url, ALL_PROXY=recorder.url,
+            http_proxy=recorder.url, https_proxy=recorder.url, all_proxy=recorder.url,
+            NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
+            ANTHROPIC_BASE_URL=recorder.url, OPENAI_BASE_URL=recorder.url, OPENAI_API_BASE=recorder.url,
+            OLLAMA_HOST=recorder.url, PATH="%s:%s" % (shims, os.environ.get("PATH", "")),
+        )
+        wait_until(self.journal)
+        pages = [self.get(path) for path in ("/journal", "/journal?vue=logs", "/journal?vue=sources",
+                                             "/journal?categorie=evenements")]
+        # The labels are the fixed ones of each type; the unknown event is
+        # said by the fallback, not given a meaning.
+        self.assertIn("Signal non reconnu venant d’une source inconnue", pages[0])
+        self.assertIn("Événement non reconnu", pages[1])
+        self.assertIn("Libellés fixes par type d’événement ; aucun appel de modèle.", pages[1])
+        self.assertEqual([], recorder.requests, "the cockpit called out while it read the journal")
+        self.assertFalse(calls.exists(), "the cockpit ran a model command: %s" % (
+            calls.read_text() if calls.exists() else ""))
+
+
+class Recorder:
+    """An HTTP server that answers 503 to everything and records what it
+    was asked: where the cockpit would reach a model."""
+
+    def __init__(self):
+        import http.server
+        import threading
+
+        recorded = self.requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def _record(self):
+                recorded.append("%s %s" % (self.command, self.path))
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            do_GET = do_POST = do_PUT = do_CONNECT = _record
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def start(self):
+        self.thread.start()
+        return self
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
 
 
 if __name__ == "__main__":

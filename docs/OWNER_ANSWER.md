@@ -88,9 +88,11 @@ and he answers again on a new dossier.
 `text` is one line, Benjamin's words. The file may be left out when a
 proposition « à faire avant d'accepter » is waiting: it is the batch.
 
-**`record --response abandonné`** takes `--reason`, one line. It is
+**`record --response abandonné`** takes `--reason`, one line, and keeps
+`--words` when given. It is
 recorded with the commit and the fingerprint of the dossier he judged — the
-Delivered Outcome, or the one of a « non conforme » request. The next pass
+Delivered Outcome, or the one of a « non conforme » request; `--commit` and
+`--pack-digest`, when given, are held to it as for « accepté ». The next pass
 closes the convoy with that reason and merges nothing.
 
 **Abandoned during delivery.** On a convoy that is neither Delivered nor
@@ -214,8 +216,8 @@ second repair for a finding; `set-owner-proposal` and
   words, commit, at}`, then `proposal` (« plus tard ») or `answer` (the
   number of the « constats rendus » answer that returned it);
 - `answers`, oldest first: `{response: accepted|findings|abandoned,
-  approver, commit, pack, at}` with `words` (accepted, findings), `reason`
-  (abandoned); an abandon during delivery is `{response: abandoned,
+  approver, commit, pack, at}` with `words` (accepted, findings; abandoned
+  when given), `reason` (abandoned); an abandon during delivery is `{response: abandoned,
   in_flight: true, approver, words, reason, at}` with `commit` (the tip of
   the integration branch) when there was one, and no `pack`; `findings` — each `{text, route, cites?, draft?, ticket?,
   proposal?, proposition?}` — and `exception`: `{findings: [n…], at,

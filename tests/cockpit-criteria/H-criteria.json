@@ -1,0 +1,23 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/factory-stop-test.py::FactoryStop.test_a_clean_stop_shows_its_work_is_followed_on_facts_then_is_confirmed_and_verified_at_the_resume",
+      "tests/cockpit-criteria/commands/factory-stop-test.py::FactoryStop.test_a_progress_is_read_on_facts_never_on_a_timer",
+      "tests/cockpit-criteria/commands/factory-stop-test.py::FactoryStop.test_a_ticket_lost_during_the_stop_is_no_confirmation",
+      "tests/cockpit-criteria/commands/factory-stop-test.py::FactoryStop.test_a_resume_that_changed_a_holder_lists_its_gap_and_is_not_verified",
+      "tests/cockpit-criteria/commands/factory-stop-test.py::FactoryStop.test_a_stop_is_not_offered_while_the_work_in_flight_is_unknown",
+      "tests/cockpit-criteria/commands/factory-stop-states-test.py::FactoryStopStates.test_factory_draining_shows_the_work_going_to_rest",
+      "tests/cockpit-criteria/commands/factory-stop-states-test.py::FactoryStopStates.test_factory_suspended_shows_the_suspension_confirmed",
+      "tests/cockpit-criteria/commands/factory-stop-states-test.py::FactoryStopStates.test_factory_resuming_shows_the_resume_under_way"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/factory-stop-blocked-test.py::FactoryStopBlocked.test_thirty_minutes_without_progress_ask_benjamin_with_the_risks_and_force_nothing",
+      "tests/cockpit-criteria/commands/factory-stop-blocked-test.py::FactoryStopBlocked.test_the_forced_stop_benjamin_decides_keeps_the_assignments_for_the_resume",
+      "tests/cockpit-criteria/commands/factory-stop-blocked-test.py::FactoryStopBlocked.test_no_forced_stop_before_the_thirty_minutes"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/factory-stop-interrupted-test.py::FactoryStopInterrupted.test_a_host_restarted_during_the_suspension_shows_the_interruption_and_its_gaps",
+      "tests/cockpit-criteria/commands/factory-stop-interrupted-test.py::FactoryStopInterrupted.test_the_procedure_of_the_machine_is_read_and_nothing_powers_it_off"
+    ]
+  }
+}

@@ -4,10 +4,9 @@ spec af-oohx2x §"Arrêt propre et redémarrage"). Pure function of a
 flight -- no I/O.
 
 ``enabled`` decides whether the stop and restart controls exist at all.
-Spec .91 keeps the button hidden until a real trial triggered by Benjamin
-has succeeded; the served page passes ``enabled=False`` (af-mjfvwx slice
-7a: nothing in the cockpit can stop the factory yet) and the zone then
-says so. With ``enabled=True`` the stop button is in **mode essai** until
+The stop is asked on the page Usine (H, af-69qhlk,
+:func:`cockpit.ui.factory.page.render_stop`): the home page passes
+``enabled=False`` and the zone says where it is. With ``enabled=True`` the stop button is in **mode essai** until
 ``driver.essai_reussi()`` reports a persisted successful trial (a clean
 stop followed by a verified resume), a plain button after.
 """
@@ -28,9 +27,7 @@ ESSAI_TEXT = (
     "Mode essai : ceci est l'essai réel de l'arrêt propre. "
     "Un arrêt suivi d'une reprise vérifiée rend ensuite ce bouton normal."
 )
-NOT_AVAILABLE_TEXT = (
-    "L'arrêt depuis le cockpit n'est pas encore disponible : il attend ton essai réel."
-)
+NOT_AVAILABLE_TEXT = "L'arrêt propre se demande depuis la page Usine."
 WORK_UNKNOWN_TEXT = "Travail en vol : inconnu — le superviseur ne répond pas."
 WORK_NONE_TEXT = "Aucun travail en vol : aucun agent ne tient de ticket."
 UNTITLED_TICKET_TEXT = "ticket dont le titre n'a pas été lu"

@@ -228,18 +228,27 @@ def _measure_url() -> str:
         return f"http://127.0.0.1:{_server.server_address[1]}/measure.html"
 
 
+# How long the browser may run the measuring page: a reading, then each
+# step played (the settling it waits, and what a step waits on its own).
+BUDGET_MS, STEP_BUDGET_MS = 30000, 6000
+
+
 def measure(address: str, path: str = "/", *, theme: str = "dark", widths: tuple[int, ...] = (1440,),
-            click: str | None = None, keys: bool = False) -> list[dict]:
+            click: str | None = None, keys: bool = False, steps: tuple[dict, ...] = ()) -> list[dict]:
     """How the page at `address` + `path` renders in `theme`, one record per
     frame width: see home_destination_measure.js for what a record holds.
     With `click`, the control whose accessible name is `click` (or starts
     with it) is activated in each frame -- with `keys`, by the keyboard:
     focused, then Enter pressed on it --, and the record holds, under
-    `after`, the frame read again two seconds later."""
+    `after`, the frame read again two seconds later. With `steps`, each
+    step is played in turn and the record holds, under `readings`, the
+    frame as first read and then after each step."""
     query = urllib.parse.urlencode({
         "target": address + path, "widths": ",".join(str(w) for w in widths),
         "height": FRAME_HEIGHT, "click": click or "", "keys": "1" if keys else "",
+        "steps": json.dumps(list(steps)),
     })
+    budget = BUDGET_MS + sum(STEP_BUDGET_MS + int(step.get("wait") or 0) for step in steps)
     work = tempfile.mkdtemp(prefix="cockpit-home-browser-")
     argv = [
         find_browser(), "--headless", "--disable-gpu", "--hide-scrollbars", f"--user-data-dir={work}/profile",
@@ -248,14 +257,14 @@ def measure(address: str, path: str = "/", *, theme: str = "dark", widths: tuple
         "--disable-web-security", "--disable-site-isolation-trials",
         f"--window-size={max(widths) + 20},{FRAME_HEIGHT + 20}",
         f"--blink-settings=preferredColorScheme={COLOUR_SCHEMES[theme]}",
-        "--virtual-time-budget=30000", "--dump-dom", f"{_measure_url()}?{query}",
+        f"--virtual-time-budget={budget}", "--dump-dom", f"{_measure_url()}?{query}",
     ]
     proc = None
     try:
         with open(Path(work) / "dom.html", "wb") as out, open(Path(work) / "browser.log", "wb") as log:
             proc = subprocess.Popen(argv, cwd=work, stdin=subprocess.DEVNULL, stdout=out, stderr=log,
                                     start_new_session=True)
-            proc.wait(timeout=BROWSER_TIMEOUT)
+            proc.wait(timeout=BROWSER_TIMEOUT + budget // 1000)
         dom = (Path(work) / "dom.html").read_text(encoding="utf-8", errors="replace")
     finally:
         if proc is not None:

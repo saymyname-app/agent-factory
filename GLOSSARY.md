@@ -25,8 +25,9 @@ _French conversational alias_: langue de l'opérateur
 _Avoid_: locale, i18n, per-project UI language
 
 **Cockpit Lexicon**:
-The fixed starting set of domain words the Cockpit may show at the interface without translation, held as this glossary's own conversational aliases (each marked "visible dans le cockpit" where its canonical term is defined above or below) rather than as a second list anywhere else in code or docs; growing it is a pull request on this file. Starting lexicon: usine, projet, agent, ticket, PR, tests automatiques (CI), Spec, carte de planification, graphe de tickets, proposition, rituel, décision.
+The fixed starting set of domain words the Cockpit may show at the interface without translation, held as this glossary's own conversational aliases (each marked "visible dans le cockpit" where its canonical term is defined above or below) rather than as a second list anywhere else in code or docs; growing it is a pull request on this file. Starting lexicon: usine, projet, agent, ticket, PR, tests automatiques (CI), Spec, carte de planification, graphe de tickets, proposition, rituel, décision. The internal terms a Cockpit main text never shows are held here too, under « _Never shown in the cockpit_ », and read from there by the Cockpit's text control (`lib/cockpit/text/validate.py`).
 _French conversational alias_: lexique du cockpit
+_Never shown in the cockpit_: bead, beads, convoy, convoi, order, orders, molecule, wisp, rig, rigs, Mayor, Maire, Gas City, orchestrator, harness, control plane
 _Avoid_: UI copy list, second glossary, translation table
 
 **Operator Action**:
@@ -369,9 +370,14 @@ _French conversational alias_: projet (visible dans le cockpit)
 _Avoid_: Rig alone, City
 
 **Roadmap Step**:
-One entry of a Project's structured roadmap file (id, title, "done when" condition, order, and to-do / in-progress / done status), referenced by `planning_run_target` when a Planning Run targets it.
+One entry of a Project's structured roadmap file (id, title, "done when" condition, order, and to-do / in-progress / done status, optionally the steps its "done when" condition requires), referenced by `planning_run_target` when a Planning Run targets it.
 _French conversational alias_: étape de roadmap
 _Avoid_: milestone, Planning Run, Chantier
+
+**Release Plan**:
+A Project's plan for its next release, versioned as `release.toml` beside its structured roadmap: a revisable target, the criteria verified with their proof, the criteria that remain, the decisions open, deferred or included, the next milestone and how it is verified, an estimate that is conditional or unavailable, and the history of changes to the target kept apart from what was verified. The cockpit reads it; the ritual « Préparer la prochaine release » writes it.
+_French conversational alias_: cadrage de release
+_Avoid_: cadrage alone (the Planning Run's own stage), roadmap, Spec
 
 **Fixture City Oracle**:
 The hermetic public-behavior harness that starts from synthetic project intent

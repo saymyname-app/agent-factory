@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-10-12T12:00:00+02:00",
+  "synthetic": true,
+  "ui": {
+    "id": "factory-stop-demo",
+    "page": "health",
+    "selected": "result",
+    "theme": "dark",
+    "width": 1440
+  },
+  "visible_text": "Usine\n\nRessources, connexions et réglages de l’environnement d’exécution.\n\nMachine d’exécution\nVM Factory · Linux · 8 cœurs · 23 Go de mémoire\nExemple · dernière lecture 14:42 (Paris)\nProcesseur\n32 %\nCharge moyenne : 2,1 / 8 cœurs\nMémoire\n8,4 Go\n23 Go de capacité totale\nDisque\n41 %\n82 Go utilisés sur 200 Go\nEnvironnement et provenance\nConnexions\nTailnet\nAccès privé à la VM\n24 ms\nSuperviseur\nLecture du travail de l’usine\n8 ms\nGitHub\nCode, PR et vérifications\n126 ms\nNotifications\nDernière remise connue\nNon mesuré\n\nLatences d’exemple · notification : aucun ping assimilé à une réception sur téléphone.\n\nRevérifier\nFournisseurs et accès API\nOpenAI / Codex\nAccès configuré · exemple\nQuota inconnu\nAnthropic / Claude\nAccès configuré · exemple\nQuota inconnu\n\nAucune clé affichée. Un compte configuré ne prouve pas que son quota est disponible.\n\nGestion des accès\nAgents dans le workflow\nConfiguration lue le 12 octobre · les sessions en cours sont visibles dans Runs\nOrchestration du flux de livraison\nCode déterministe · transitions et départs contrôlés\n↓\nPréparer les tests\nAuteur livraison · Opus 5.5 · Moyen\n↓\nRelire les tests\nRelecteur livraison · Opus 5.5 · Élevé\n↓\nRéaliser et corriger\nAuteur livraison · Opus 5.5 · Moyen\n↓\nRevue du code\nRelecteur livraison · Opus 5.5 · Élevé\nÉvaluer la tâche\nÉvaluateur livraison · Opus 5.5 · Élevé\n↓\nIntégration et vérifications\nCode déterministe\n↓\nRevue finale\nRelecteur livraison · Opus 5.5 · Élevé\nÉvaluer le résultat\nÉvaluateur livraison · Opus 5.5 · Élevé\n↓\nTon jugement → fusion du résultat accepté\nDécision humaine, puis exécution contrôlée\nAuteur livraison\nFournisseur\nClaude\nModèle configuré\nOpus 5.5\nEffort\nMoyen\nConcurrence\n2 sessions maximum\n\nAucun secours inter-fournisseur validé\n\nDeux sessions de livraison au total. Trois reprises, deux exceptions ouvertes, deux tours de fin : limites configurées, pas un optimum calculé.\n\nConfigurer\nAutres rôles\nConfiguration et observation\nSuspension, reprise et arrêt\n\nLa VM héberge l’usine. Fermer ou éteindre ce PC client n’arrête pas la VM.\n\nDéparts autorisés\nDemander la suspension\nPréparer l’arrêt de la machine\n\nLes étapes et preuves affichées ici sont simulées.\n\nNettoyer les espaces inutilisés\n\nPrévisualiser les candidats et protéger les travaux encore utiles.\n\nExaminer le périmètre\nCommande et preuve",
+  "production_writes": 0,
+  "stop_supervisor": {
+    "work": [
+      {
+        "session": "auteur-factures",
+        "role": "Auteur",
+        "ticket": "synthetic-arret-factures",
+        "title": "Trier les factures du trimestre"
+      },
+      {
+        "session": "relecteur-export",
+        "role": "Relecteur",
+        "ticket": "synthetic-arret-export",
+        "title": "Relire l’export des listes"
+      }
+    ],
+    "drains_in_seconds": {
+      "relecteur-export": 2,
+      "auteur-factures": 8
+    }
+  }
+}

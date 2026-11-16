@@ -40,11 +40,14 @@ acceptance:
                    never a repair.
                    Nothing closes; the Outcome is no longer Delivered; the
                    rounds of the end start again from zero.
-  abandonné        with a one-line reason (`--reason`). On a convoy that
-                   is neither Delivered nor carrying a « non conforme »
-                   request -- abandoned during delivery -- also with his
-                   words (`--words`); the tip of the integration branch is
-                   recorded, and the next pass withdraws the open tickets.
+  abandonné        with a one-line reason (`--reason`), his words
+                   (`--words`) kept when given; `--commit` and
+                   `--pack-digest`, when given, must be those of the
+                   Delivered Outcome. On a convoy that is neither Delivered
+                   nor carrying a « non conforme » request -- abandoned
+                   during delivery -- his words are required; the tip of the
+                   integration branch is recorded, and the next pass
+                   withdraws the open tickets.
 
 `resolve-exception` records, on his words, that the Planning Exception of
 the last batch is resolved; until then the Outcome is not Delivered again.
@@ -456,7 +459,7 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
             raise Refusal(
                 "« abandonné » exige une raison d'une ligne (--reason) : absente, vide ou sur plusieurs lignes ; "
                 "rien n'est écrit")
-        in_flight: list[str] = []
+        extra = ["--words", args.words] if args.words and args.words.strip() else []
         if not convoy.dossier():
             # Abandoned during delivery: his words, and the tip the
             # integration branch keeps as a source (af-npz9v1).
@@ -465,9 +468,11 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
                     f"le convoi {convoy.id} n'est ni Delivered ni porteur d'une demande « non conforme » : « abandonné » "
                     "en cours de route s'enregistre avec les mots de Benjamin (--words), non vides ; rien n'est écrit")
             tip = convoy.integration_tip()
-            in_flight = ["--words", args.words, *(("--commit", tip) if tip else ())]
+            extra += ["--commit", tip] if tip else []
+        elif args.commit is not None or args.pack_digest is not None:
+            held_dossier(convoy, args.commit, args.pack_digest, "« abandonné »")
         state_write("record-owner-answer", convoy.id, "--response", response, "--approver", approver,
-                    "--reason", args.reason.strip(), *in_flight)
+                    "--reason", args.reason.strip(), *extra)
     else:
         name = f"« {RESPONSE_NAMES[response]} »"
         if not args.words or not args.words.strip():

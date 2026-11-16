@@ -7,6 +7,7 @@ the real ``bin/cockpit`` clones throwaway local repositories (the "faux
 clone git de projet" of the Testing Decisions: real git, no network) and
 the test reads only ``GET /``, ``GET /projet/<id>`` and the JSON twins.
 """
+import html
 import json
 import os
 import socket
@@ -233,7 +234,8 @@ class DepotsTest(unittest.TestCase):
         body = wait_until(lambda: self.get("/") if "Roadmap : Bêta privée" in self.get("/") else None)
 
         demo = self.project_block(body, "demo")
-        self.assertIn("Roadmap : Bêta privée", demo)
+        # No chantier targets the step in progress: shown with its reserve (R3, af-plu8kn).
+        self.assertIn("Roadmap : Bêta privée · Aucun chantier relié", demo)
         self.assertIn("demo-back : dev a 3 commits d'avance", demo)
         # A project whose structured roadmap is not written: unknown, never a blank or a guess.
         brut = self.project_block(body, "brut")
@@ -242,9 +244,15 @@ class DepotsTest(unittest.TestCase):
         wait_until(lambda: "Tout est à jour à" in self.get("/"))
 
         page = self.get("/projet/demo")
-        self.assertIn("Roadmap : Bêta privée", page)
+        # The page of the project shows its whole roadmap (E, af-8rbceu); a
+        # step in progress no chantier targets is not headed as current (R3, af-plu8kn).
+        self.assertRegex(page, r"ROADMAP</small></h2><div[^>]*><span[^>]*>Un</span>")
+        self.assertRegex(page, r"Bêta privée</span><span[^>]*>En cours · Aucun chantier relié")
+        self.assertNotRegex(page, r"<h2[^>]*>Bêta privée</h2>")
         self.assertIn("demo-back : dev a 3 commits d'avance", page)
-        self.assertIn("Roadmap inconnue", self.get("/projet/brut"))
+        # Its page names the roadmap file its repository lacks (R4, af-6weijp).
+        self.assertIn("Aucune roadmap dans le dépôt org/brut-knowledge : le fichier roadmap.toml n’existe pas.",
+                      html.unescape(self.get("/projet/brut")))
 
         # The clones are the cockpit's own, with nothing checked out in them (AC5).
         for repo in ("org__demo-knowledge", "org__demo-back", "org__brut-knowledge"):
@@ -275,6 +283,18 @@ class DepotsTest(unittest.TestCase):
             texts,
         )
         self.assertNotIn("af-conv1", " ".join(texts))
+
+    def test_an_unreadable_release_plan_and_an_unreadable_roadmap_each_give_their_own_reason(self):
+        # R4 (af-6weijp): each file of the repository is read on its own.
+        self.origins.commit("org/brut-knowledge", "main", {"roadmap.toml": "[[step]\n", "release.toml": "target = \n"})
+        self.start_cockpit()
+        page = wait_until(lambda: (lambda p: p if "illisible" in p else None)(html.unescape(self.get("/projet/brut"))))
+        self.assertIn("Roadmap illisible : le fichier roadmap.toml du dépôt org/brut-knowledge ne se lit pas : "
+                      "roadmap.toml is not valid TOML: ", page)
+        self.assertIn("Le fichier de cadrage de release release.toml du dépôt org/brut-knowledge ne se lit pas : "
+                      "TOML illisible : ", page)
+        self.assertEqual(1, page.count("roadmap.toml is not valid TOML"), "the release plan gives the roadmap's error")
+        self.assertNotIn("de le dépôt", page)
 
     def test_unreachable_repositories_are_unknown_then_read_again(self):
         hidden = self.dir / "origins-hidden"
@@ -330,7 +350,7 @@ class DepotsTest(unittest.TestCase):
         self.assertNotIn("Fiches contacts", self.project_block(body, "demo"), "a promoted chantier is finished")
         wait_until(lambda: "dev a 0 commits d'avance" in self.get("/"))
         page = self.get("/projet/demo")
-        self.assertGreater(page.index("Fiches contacts"), page.rindex("Historique"), "it is in the project's history")
+        self.assertGreater(page.rindex("Fiches contacts"), page.rindex("Historique"), "it is in the project's history")
 
     def test_promotion_that_cannot_be_read_is_unknown_and_asks_nothing(self):
         self.accepted_chantier("0" * 40)  # a commit the clone does not know

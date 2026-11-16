@@ -1,0 +1,25 @@
+{
+  "criteria": {
+    "1": [
+      "tests/cockpit-criteria/commands/projects-release-test.py::ProjectsRelease.test_the_whole_line_of_a_project_opens_its_page_by_a_click_and_by_the_keyboard",
+      "tests/cockpit-criteria/commands/projects-release-test.py::ProjectsRelease.test_projects_content_shows_the_target_the_gains_with_their_proofs_what_remains_the_decision_and_the_milestone",
+      "tests/cockpit-criteria/commands/projects-release-test.py::ProjectsRelease.test_projects_content_says_its_estimate_unavailable_and_keeps_the_history_of_its_target_apart",
+      "tests/cockpit-criteria/commands/projects-release-test.py::ProjectsRelease.test_release_expanded_adds_the_included_criterion_to_what_remains_and_keeps_its_gains",
+      "tests/cockpit-criteria/commands/projects-release-test.py::ProjectsRelease.test_release_estimate_shows_a_range_only_with_its_scope_and_its_hypotheses",
+      "tests/cockpit-criteria/commands/projects-release-test.py::ProjectsRelease.test_project_missing_says_the_release_plan_absent_points_what_lacks_and_deduces_nothing"
+    ],
+    "2": [
+      "tests/cockpit-criteria/commands/projects-roadmap-test.py::ProjectsRoadmap.test_the_factory_roadmap_comes_from_its_repository_with_its_date_and_flags_in_progress_items_already_ended",
+      "tests/cockpit-criteria/commands/projects-roadmap-test.py::ProjectsRoadmap.test_the_saymyname_page_shows_its_own_roadmap_and_a_history_of_its_results_with_issue_and_reason",
+      "tests/cockpit-criteria/commands/projects-roadmap-test.py::ProjectsRoadmap.test_the_roadmap_the_factory_delivers_holds_no_item_in_progress_whose_chantier_is_closed"
+    ],
+    "3": [
+      "tests/cockpit-criteria/commands/projects-recette-test.py::ProjectsRecette.test_projects_narrow_is_faithful_readable_and_usable_at_both_widths_in_both_themes_and_by_the_keyboard",
+      "tests/cockpit-criteria/commands/projects-recette-test.py::ProjectsRecette.test_projects_light_is_faithful_readable_and_usable_at_both_widths_in_both_themes_and_by_the_keyboard",
+      "tests/cockpit-criteria/commands/projects-recette-test.py::ProjectsRecette.test_no_project_and_a_project_with_nothing_yet_each_say_what_is_missing_and_invent_nothing",
+      "tests/cockpit-criteria/commands/projects-recette-test.py::ProjectsRecette.test_a_project_whose_tracker_is_still_being_read_says_so_and_says_no_chantier_absent",
+      "tests/cockpit-criteria/commands/projects-recette-test.py::ProjectsRecette.test_a_project_whose_tracker_fails_says_the_reading_failed_and_says_no_chantier_absent",
+      "tests/cockpit-criteria/commands/projects-recette-test.py::ProjectsRecette.test_long_content_is_shown_whole_and_stays_readable_at_both_widths_in_both_themes"
+    ]
+  }
+}

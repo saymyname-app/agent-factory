@@ -98,7 +98,7 @@ def _render_report_menu(bead_id):
 # server-side, so this is a defence in depth, not the only guard).
 TWO_STEP_ACTIONS = (
     "repondre", "accepter_proposition", "rejeter_proposition", "reporter_proposition", "relancer",
-    "accepter_chantier",
+    "accepter_chantier", "forcer_arret",
 )
 
 SCRIPT = """
@@ -209,6 +209,15 @@ SCRIPT = """
     var marked = mark(el, beadId, text);
     return request.then(function (resp) {
       return resp.json().then(function (data) {
+        if (data && data.incertain) {
+          // The command expired, or the gesture waits for the source to be
+          // read again (af-fksj2c): nothing is said done, nothing is sent
+          // again; the page is read again once the source was.
+          marked.confirm(data.error);
+          say(data.error);
+          setTimeout(function () { window.location.reload(); }, 5000);
+          return data;
+        }
         if (!resp.ok || !data || data.error) {
           marked.undo();
           say('Action refusée : ' + ((data && data.error) || resp.status));
@@ -247,14 +256,15 @@ SCRIPT = """
   // second click on the SAME armed control within CONFIRM_WINDOW_MS
   // sends confirm:true; any other click disarms it first.
   var TWO_STEP_ACTIONS = ['repondre', 'accepter_proposition', 'rejeter_proposition', 'reporter_proposition', 'relancer',
-                          'accepter_chantier'];
+                          'accepter_chantier', 'forcer_arret'];
   var TWO_STEP_DONE = {
     accepter_proposition: 'Proposition acceptée, à planifier',
     rejeter_proposition: 'Proposition refusée',
     reporter_proposition: 'Proposition reportée',
     repondre: 'Réponse envoyée',
     relancer: 'Relance demandée',
-    accepter_chantier: 'Chantier accepté'
+    accepter_chantier: 'Chantier accepté',
+    forcer_arret: 'Arrêt forcé demandé'
   };
   var CONFIRM_WINDOW_MS = 10000;
   var armed = null; // {el, timer}
@@ -281,6 +291,11 @@ SCRIPT = """
       return {bead_id: beadId, raison: raisonEl ? raisonEl.value : ''};
     }
     if (action === 'reporter_proposition') {
+      // A delay of the menu of the proposal (B, af-4uzgzm), else a time
+      // written in its field.
+      if (el.getAttribute('data-option')) {
+        return {bead_id: beadId, option: el.getAttribute('data-option')};
+      }
       var heureEl = document.querySelector('.cockpit-reporter-heure[data-bead-id="' + beadId + '"]');
       return {bead_id: beadId, heure: heureEl ? heureEl.value : ''};
     }
@@ -340,6 +355,9 @@ SCRIPT = """
       });
     } else if (action === 'reporter_ouvrir' || action === 'reporter_fermer') {
       showReportMenu(beadId, action === 'reporter_ouvrir');
+    } else if (action === 'reporter_proposition_ouvrir' || action === 'reporter_proposition_fermer') {
+      var menu = document.querySelector('.cockpit-proposal-report-menu[data-bead-id="' + beadId + '"]');
+      if (menu) { menu.hidden = action === 'reporter_proposition_fermer'; }
     } else if (action === 'reporter') {
       var body = {bead_id: beadId, option: el.getAttribute('data-option') || '1h'};
       if (body.option === 'libre') {

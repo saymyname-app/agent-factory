@@ -211,7 +211,9 @@ class GcSsePoller:
     def _refresh_status(self):
         try:
             city = self._resolve_city()
+            started = time.monotonic()
             status = self._get_json(STATUS_PATH % urllib.parse.quote(city, safe=""))
+            latency = time.monotonic() - started
             value = {
                 "city": city,
                 "suspended": bool(status["suspended"]),
@@ -228,7 +230,7 @@ class GcSsePoller:
             stream_alive = self._stream_seen_at is not None and (
                 now - self._stream_seen_at <= self._stream_silence_seconds
             )
-        self._read_model.ingest(self._source, value, complete=stream_alive)
+        self._read_model.ingest(self._source, value, complete=stream_alive, latency=latency)
 
     def _read_delivery_ready(self, city):
         """True when a delivery-plane ticket is ready; None when unreadable
