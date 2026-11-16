@@ -47,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from home_destination import git  # noqa: E402
 from usine_page import (  # noqa: E402
     GPT_5_6, OPUS_5_5, PAGE, LaunchTree, anchors_by_name, in_order, measure, observed, reconfigure, replaced, says,
     section_titled, section_titles,
@@ -84,6 +85,15 @@ class FactoryRoles(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.tree = LaunchTree()
+        # The reviewer's chain the cases describe (Codex, then Claude) is the
+        # case's, not the one the Factory runs today (Claude alone since
+        # #888, 16/11/2026): the tree under test starts from it.
+        policy = Path(cls.tree.repo) / "config" / "provider-policy.json"
+        document = json.loads(policy.read_text(encoding="utf-8"))
+        document["targets"]["delivery-reviewer"]["chain"] = ["codex-readonly", "claude-readonly"]
+        policy.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        git(cls.tree.repo, "commit", "--quiet", "--all", "--message", "the reviewer's chain of the cases")
+        cls.tree.head = git(cls.tree.repo, "rev-parse", "HEAD")
 
     @classmethod
     def tearDownClass(cls) -> None:

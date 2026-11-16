@@ -26,6 +26,7 @@ make, or if the sessions under way are said to be changed.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import unittest
@@ -34,7 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from home_destination import LaunchTree  # noqa: E402
-from usine_reglages import PAGE, control, in_service, serve_usine, visible_text, walk  # noqa: E402
+from usine_reglages import PAGE, control, git, in_service, serve_usine, visible_text, walk  # noqa: E402
 
 REVIEWER = PAGE + "?role=reviewer"
 CODEX_READONLY = "GPT-5.6 Sol (Codex) · lecture seule"
@@ -55,6 +56,14 @@ class FactoryConfigure(unittest.TestCase):
         # A tree of its own per case: serve_usine commits the dataset of the
         # case in it, and a case never sees what another case left.
         self.tree = LaunchTree()
+        # The chain the case starts from is its own (Codex, then Claude), not
+        # the one the Factory runs today (Claude alone since #888,
+        # 16/11/2026): committed before the dataset serve_usine commits.
+        policy = Path(self.tree.repo) / "config" / "provider-policy.json"
+        document = json.loads(policy.read_text(encoding="utf-8"))
+        document["targets"]["delivery-reviewer"]["chain"] = ["codex-readonly", "claude-readonly"]
+        policy.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        git(self.tree.repo, "commit", "--quiet", "--all", "--message", "the reviewer's chain of the case")
 
     def tearDown(self) -> None:
         self.tree.remove()

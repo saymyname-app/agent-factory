@@ -36,6 +36,8 @@ FIXTURES = ROOT / "tests" / "fixtures" / "cockpit" / "core"
 COCKPIT_BIN = ROOT / "bin" / "cockpit"
 FACTORY_FILES = ("config/delivery-roles.json", "config/provider-policy.json", "city.toml",
                  "config/delivery-flow.json")
+# The reviewer's chain the cases describe.
+REVIEWER_CHAIN = ["codex-readonly", "claude-readonly"]
 
 sys.path.insert(0, str(FIXTURES))
 
@@ -137,6 +139,14 @@ class FactoryPageTest(unittest.TestCase):
         for name in FACTORY_FILES:
             (Path(cls.stored) / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(ROOT / name, Path(cls.stored) / name)
+        # The cases describe a reviewer on Codex, then Claude as fallback: the
+        # chain is the case's, not the one the Factory runs today (Claude
+        # alone since #888, 16/11/2026), so a change of it does not make them
+        # lie about the page.
+        policy = Path(cls.stored) / "config" / "provider-policy.json"
+        document = json.loads(policy.read_text(encoding="utf-8"))
+        document["targets"]["delivery-reviewer"]["chain"] = REVIEWER_CHAIN
+        policy.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
