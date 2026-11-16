@@ -339,7 +339,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/cockpit-isolated-https-test.py`,
   `python3 tests/cockpit-isolated-door-locks-test.py`,
   `python3 tests/evaluation-capacity-test.py`,
-  `bash tests/gh-unsupported-subcommand-guard-test.sh` — complet pour le dossier
+  `bash tests/gh-unsupported-subcommand-guard-test.sh`,
+  `python3 tests/reversibility-test.py`,
+  `bash tests/pr-autopilot-project-hold-test.sh` — complet pour le dossier
   personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
   liste fermée des 27 faux, rejoue la limite d'un argument sur chacun, la
   fermeture d'un bloqué sur les 11 qui écrivent l'état et les huit formes
@@ -360,10 +362,19 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   sous le parent inscriptible `$HOME/.cache`. Le dernier refuse dans
   `bin/` et `lib/` les formes de `gh` absentes du vrai : `gh pr
   update-branch`, et `--jq` suivi de `--arg`, que le faux `gh` de la
-  relance d'un contrôle rouge acceptait (af-toyety).
+  relance d'un contrôle rouge acceptait (af-toyety). Les deux suivants
+  tiennent la lecture des fichiers d'une PR par ses deux portes de
+  `pr-autopilot` : la réversibilité lit la liste page par page, jamais le
+  diff entier que GitHub refuse au-delà de 300 fichiers (le faux `gh` le
+  refuse aussi), et refuse de juger une liste plus courte que la PR ; une
+  liste illisible n'arme pas une PR comme une liste vide (af-u0uuhr).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
-  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68 ; af-33j358.
+  af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68 ; af-33j358 ; af-u0uuhr
+  (`bin/reversibility-check` lisait le diff entier d'une PR : HTTP 406 sur
+  les 325 fichiers de #889, une erreur `pr-autopilot` à chaque passage ;
+  la porte des descripteurs de projet prenait une liste illisible pour une
+  liste vide).
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée

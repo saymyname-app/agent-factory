@@ -567,6 +567,11 @@ project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
     log "  PR #$num: project descriptor check timed out -> not arming this pass (retried next tick)"
     return 1
   fi
+  if [ "$rc" != 0 ]; then   # an unread file list is not an empty one (af-u0uuhr)
+    log "  PR #$num: project descriptor files could not be read -> not arming this pass (fail closed)"
+    ERRORS=$((ERRORS+1))
+    return 1
+  fi
   added=$(printf '%s\n' "$rows" | awk -F'\t' '$2=="added"{print $1}')
   removed=$(printf '%s\n' "$rows" | awk -F'\t' '$2=="removed"{print $1}')
   if [ -z "$added" ] && [ -z "$removed" ]; then
