@@ -833,6 +833,14 @@ Simultaneous groups and eviction after a red group are **not yet proven**.
 Group limits do not mean one CI run for a batch. The check protecting the
 workflow trigger is `tests/ci-workflow-cost-test.sh`.
 
+A PR the queue removes (its combined commit red, e.g. a conflict in meaning
+with a PR merged just before) loses its auto-merge, while its own head stays
+green. `pr-autopilot` never queues that head again (af-nih6m6: PR #889 was
+queued 7 times in 80 minutes on 2026-11-16): its ticket goes back to its
+author like a red check, or a bead is filed once for a PR without a ticket.
+A new commit is queued as usual; queuing the same head again is done by hand.
+Held by `tests/pr-autopilot-merge-queue-refusal-test.sh`.
+
 Returning to the former mode is an ADMIN decision: restore strict
 up-to-date checks before removing the merge_queue rule. Do not run
 `bin/enable-strict-main-protection --rollback` as a queue rollback; that

@@ -204,6 +204,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   pourraient consommer une réponse sont tenues par
   `python3 tests/convoy-advance-resumes-stops-end-test.py ConvoyAdvanceTest.test_an_evaluation_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_removed_stage_stop_answered_while_its_request_is_cleared_is_not_resumed ConvoyAdvanceTest.test_a_grouped_answer_recorded_while_changed_parkings_are_re_raised_is_applied_first`
   et `python3 tests/convoy-advance-review-evaluation-correction-test.py ConvoyAdvanceTest.test_a_code_review_stop_answered_while_its_request_is_cleared_is_not_resumed`.
+  Le refus de la file de fusion GitHub est tenu par
+  `bash tests/pr-autopilot-merge-queue-refusal-test.sh`.
 - Occurrences : #635, #637, #650, #653, #662, #666, #672, #673, #679, #682,
   #687, #702, #704, #709, #711, #712, #718 ; af-npz9v1.44 ; af-npz9v1.47 ; af-npz9v1.48 ; af-npz9v1.35 ;
   af-bf0e7d (`evaluation_outage` repris une fois après la livraison prouvée
@@ -304,7 +306,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `end_stop_lifts` et compte un tour au-delà de la borne ; la table du
   contrôle tient désormais les trois raisons `END_STOPS` et les trois
   options de `non_conforme_request`, prouvé par
-  `python3 tests/convoy-stops-fixture-city-test.py ConvoyStopsOnTheFixtureCity.test_the_answer_a_to_the_non_conforme_request_lifts_the_stop_and_grants_exactly_one_round_more ConvoyStopsOnTheFixtureCity.test_the_answers_b_and_c_to_the_non_conforme_request_lift_nothing ConvoyStopsOnTheFixtureCity.test_an_answer_a_given_before_the_non_conforme_request_lifts_nothing`).
+  `python3 tests/convoy-stops-fixture-city-test.py ConvoyStopsOnTheFixtureCity.test_the_answer_a_to_the_non_conforme_request_lifts_the_stop_and_grants_exactly_one_round_more ConvoyStopsOnTheFixtureCity.test_the_answers_b_and_c_to_the_non_conforme_request_lift_nothing ConvoyStopsOnTheFixtureCity.test_an_answer_a_given_before_the_non_conforme_request_lifts_nothing`) ;
+  af-nih6m6 (la file de fusion GitHub retirait PR #889, son commit combiné
+  rouge, et `pr-autopilot` la réarmait au même head à la passe suivante,
+  7 fois en 80 minutes, chacune un run `merge_group` complet : ce refus
+  n'avait aucune sortie codée ; une tête refusée n'est plus remise en file,
+  son ticket repart à son auteur, sinon un bead est déposé une fois, prouvé
+  par `bash tests/pr-autopilot-merge-queue-refusal-test.sh`).
 - Ouvertes : exceptions datées du 29/10/2026, tenues une par une par le
   contrôle : `criterion_already_green` reste au Planning Run, sauf
   le repair qui ne fait que déplacer une preuve (af-oa2ci4 : `tdd-step red`
