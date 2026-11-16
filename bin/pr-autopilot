@@ -895,6 +895,51 @@ retry_ci_failure() {  # repo num sha workflow -> 0 retried, 1 already retried, 2
   return 0
 }
 
+# af-nih6m6: GitHub's merge queue removes a PR whose combined commit fails its
+# required check, and its auto-merge with it. The PR's own head is still green
+# and CLEAN, so it read like a PR never armed: PR #889 was armed again 7 times
+# in 80 minutes on the same head (2026-11-16), each time a full merge_group
+# run, until a human made it a draft. A refusal holds for the head the queue
+# was given, so such a head is never sent back to the queue; a new commit is.
+# The event's beforeCommit is the base the group was built on, not the PR's
+# head (read on #889), hence the timeline: a removal later than the head's
+# last commit or push refused this head. Because a commit dated before that
+# removal but pushed after it sorts before it, each refusal is recorded once
+# with the head it refused (a PR comment naming the event), and only that
+# head is held. An operator who wants the same head queued again queues it by
+# hand. QUEUE_REFUSED_REASON carries GitHub's reason for the removal.
+QUEUE_REFUSED_REASON=""
+queue_refused() {  # repo num sha -> 0 refused at this head, 1 not refused, 2 unknown (a read timed out)
+  local repo=$1 num=$2 sha=$3 last kind event comments rc marker
+  QUEUE_REFUSED_REASON=""
+  last=$(bounded "$AP_READ_CAP" gh api graphql \
+    -f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){pullRequest(number:$num){timelineItems(itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT],last:1){nodes{__typename ... on RemovedFromMergeQueueEvent{id reason}}}}}}' \
+    -f owner="${repo%%/*}" -f name="${repo#*/}" -F num="$num" \
+    --jq '(.data.repository.pullRequest.timelineItems.nodes[-1] // {}) | [.__typename // "", .id // "", .reason // ""] | @tsv' 2>/dev/null); rc=$?
+  timed_out "$rc" && return 2
+  if [ "$rc" != 0 ]; then
+    log "  PR #$num: merge queue history unreadable (gh exit $rc) -> armed as before"
+    return 1
+  fi
+  IFS=$'\t' read -r kind event QUEUE_REFUSED_REASON <<<"$last"
+  [ "$kind" = "RemovedFromMergeQueueEvent" ] && [ -n "$event" ] || return 1
+  [ "$QUEUE_REFUSED_REASON" = "merged" ] && return 1   # how a merged PR leaves the queue
+  # It ends up inside single-quoted gc commands (reject_ticket, the bead below).
+  QUEUE_REFUSED_REASON=${QUEUE_REFUSED_REASON//[^A-Za-z0-9_ .-]/}
+  QUEUE_REFUSED_REASON=${QUEUE_REFUSED_REASON:-no reason given}
+  comments=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json comments --jq '.comments[].body' 2>/dev/null); rc=$?
+  timed_out "$rc" && return 2
+  [ "$rc" = 0 ] || return 2
+  marker="pr-autopilot: merge queue removal $event refused"
+  if grep -qF "$marker" <<<"$comments"; then
+    grep -qF "$marker ${sha:0:12}" <<<"$comments"
+    return
+  fi
+  run gh pr comment "$num" --repo "$repo" \
+    --body "$marker ${sha:0:12} ($QUEUE_REFUSED_REASON): not queued again until a new commit." >/dev/null 2>&1
+  return 0
+}
+
 # ---------- P06: DIRTY/red-after-retry returns a ticket to the pool ----------
 # af-elhn7: a factory-worker used to leave a red or conflicted PR behind when
 # it moved on to the next ticket -- nobody watched the PR come back, and a
@@ -1343,6 +1388,35 @@ Auto-merge was not armed. Fix the build, then pr-autopilot will arm it on the ne
       BEHIND_NUMS+=("$num"); BEHIND_SHAS+=("$sha"); BEHIND_CHECKS+=("$checks"); BEHIND_LABELS+=("$labels")
       SKIPPED=$((SKIPPED+1))
       continue
+    fi
+    # af-nih6m6: not armed, maybe because the merge queue removed it. A head
+    # the queue refused goes back to its ticket like a red check, or is filed
+    # once for a PR without a ticket -- never queued again, and it does not
+    # hold the queue.
+    if [ "$armed" = "null" ] || [ -z "$armed" ]; then
+      queue_refused "$repo" "$num" "$sha"; rc=$?
+      if [ "$rc" = 2 ]; then
+        log "  PR #$num: merge queue history unknown (a read timed out) -> not armed this pass"
+        SKIPPED=$((SKIPPED+1)); continue
+      elif [ "$rc" = 0 ]; then
+        refusal="merge queue refused head ${sha:0:12} ($QUEUE_REFUSED_REASON)"
+        reject_ticket "$repo" "$rig_path" "$num" "$sha" "$refusal"; rc=$?
+        if [ "$rc" = 1 ]; then
+          title="[autopilot] PR #$num refused by the merge queue at ${sha:0:12}"
+          existing=$(printf '%s' "$RIG_OPEN_BEADS_JSON" \
+            | jq -r --arg t "$title" '[.[]|select(.title==$t)]|length' 2>/dev/null)
+          if [ "${existing:-0}" = "0" ]; then
+            log "  PR #$num: $refusal, no ticket to send it back to -> filing"
+            run bash -c "cd '$rig_path' && gc bd create '$title' -p 1 -t bug \
+              -d 'GitHub merge queue removed this PR ($QUEUE_REFUSED_REASON) and pr-autopilot does not queue the same head again. PR: https://github.com/$repo/pull/$num
+Push a commit that fixes it (often a conflict with what merged meanwhile), or queue it again by hand.' \
+              --metadata '{\"pr_number\":\"$num\",\"source\":\"pr-autopilot\"}'"
+            FLAGGED=$((FLAGGED+1))
+          fi
+        fi
+        vlog "PR #$num: $refusal -> not armed"
+        SKIPPED=$((SKIPPED+1)); continue
+      fi
     fi
     # af-31t0y8: past the gates and up to date, with its required check
     # waiting, running or green: this PR holds the queue.
