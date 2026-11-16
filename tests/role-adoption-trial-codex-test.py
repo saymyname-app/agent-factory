@@ -370,6 +370,50 @@ class CodexRestartTest(unittest.TestCase):
         self.assertFalse(any(call[:2] == ("session", "nudge") for call in city.calls))
 
 
+class ClaudeSubmitTest(unittest.TestCase):
+    """af-nfurnj: a submit gc delivered but did not see turn busy is answered
+    by the transcript; any other submit failure still refuses; a message
+    Claude Code would take as a paste is never sent."""
+
+    class City:
+        def __init__(self, stderr):
+            self.stderr = stderr
+
+        def gc(self, *argv, check=True, **_kwargs):
+            if check:  # what TrialCity.run does with a failed command
+                raise trial.Refusal(f"gc {' '.join(argv[:2])} failed: {self.stderr}")
+            return subprocess.CompletedProcess(argv, 1, "", self.stderr)
+
+    class ClaudeTranscript(trial.ClaudeTranscript):
+        def __init__(self):
+            pass
+
+        @staticmethod
+        def said(_nonce):
+            return True
+
+    def ask(self, stderr, instruction="write"):
+        original_sleep = trial.time.sleep
+        trial.time.sleep = lambda _seconds: None
+        try:
+            return trial.ask(self.City(stderr), "trial-reviewer", self.ClaudeTranscript(), instruction, timeout=1)
+        finally:
+            trial.time.sleep = original_sleep
+
+    def test_delivered_without_observed_busy_waits_for_the_transcript(self):
+        stderr = ('gc session submit: sending message to session: nudge: submit Enter delivered and '
+                  'composer drained but busy state was never observed: session "s-art-wisp-g7x"')
+        self.assertTrue(self.ask(stderr))
+
+    def test_a_claude_message_long_enough_to_be_a_paste_is_refused_before_sending(self):
+        with self.assertRaisesRegex(trial.Refusal, "as a paste"):
+            self.ask("unused", instruction="x" * trial.CLAUDE_PASTE_CHARS)
+
+    def test_another_submit_failure_refuses(self):
+        with self.assertRaisesRegex(trial.Refusal, "session not found"):
+            self.ask("gc session submit: session not found")
+
+
 @unittest.skipUnless(shutil.which("bwrap"), "bwrap is not installed")
 class SandboxTest(unittest.TestCase):
     def test_the_trial_repository_refuses_shell_write_commit_and_push(self):
