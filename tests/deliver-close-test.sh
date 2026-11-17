@@ -58,6 +58,9 @@ assert_closed_with_all_six() {
     [[ $call == *"$field"* ]] || fail_test "$scenario missing proof field in Beads write: $field"
   done
   [[ $call == *"--status=closed"* ]] || fail_test "$scenario did not close the bead"
+  # af-2cuvon: the close adds its reason to the ticket's notes, never replaces them.
+  [[ $call == *"--append-notes"* && " $call " != *" --notes "* ]] \
+    || fail_test "$scenario must append its reason to the notes, not replace them: $call"
 }
 
 assert_refused() {
@@ -150,6 +153,8 @@ for field in "gc.outcome=pass" "gc.work_outcome=shipped" "gc.work_commit=cafef00
   "gc.work_branch=do-work/af-work" "--status=closed"; do
   [[ $call == *"$field"* ]] || fail_test "--outcome shipped missing field in Beads write: $field"
 done
+[[ $call == *"--append-notes"* && " $call " != *" --notes "* ]] \
+  || fail_test "--outcome must append its reason to the notes, not replace them: $call"
 
 TESTS_RUN=$((TESTS_RUN + 1))
 run merged af-work --outcome no-op >/dev/null || fail_test "--outcome no-op should close successfully"

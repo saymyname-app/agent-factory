@@ -366,7 +366,7 @@ close_verified_pr() {  # bead-id repo pr reason verification
     --set-metadata "gc.ci_head_sha=$PR_HEAD"
     --set-metadata "gc.ci_conclusion=success")
   [[ -z $verification ]] || args+=(--set-metadata "gc.work_verification=$verification")
-  args+=(--status=closed --notes "$reason")
+  args+=(--status=closed --append-notes "$reason")
   "${args[@]}" || die "Beads update failed for $bead_id after delivery verification succeeded."
   log "Closed $bead_id after verified merge and '$REQUIRED_WORKFLOW' success on $PR_HEAD ($repo#$pr_number, $MERGE_COMMIT)."
   resolve_referenced_proposals "$bead_id" "$repo" "$pr_number"
@@ -414,7 +414,7 @@ close_by_outcome() {
   fi
   [[ -z $verification ]] || args+=(--set-metadata "gc.work_verification=$verification")
   [[ -z $planning_exception_id ]] || args+=(--set-metadata "gc.planning_exception_id=$planning_exception_id")
-  args+=(--status="$final_status" --notes "$reason")
+  args+=(--status="$final_status" --append-notes "$reason")
   "${args[@]}" || die "Beads update failed for $bead_id."
   if [[ $final_status == blocked ]]; then
     log "Parked $bead_id (status blocked, gc.work_outcome=blocked); dependents stay gated until it is answered and reopened."

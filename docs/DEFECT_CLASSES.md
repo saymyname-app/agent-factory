@@ -70,7 +70,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/spec-integration-test.py SpecIntegrationTest.test_a_control_kills_what_it_leaves_in_a_session_of_its_own_and_keeps_its_verdict`,
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_program_whose_trial_has_ended_though_its_folder_is_there`,
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_every_tool_that_runs_a_branch_s_commands_in_a_tree_of_its_own_holds_its_trial_lock`,
-  `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_product_whose_test_reaper_was_killed_with_its_test`
+  `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_product_whose_test_reaper_was_killed_with_its_test`,
+  `python3 tests/project-launch-test.py ProjectLaunchTest.test_a_launch_ends_with_its_owner_while_its_product_repository_cannot_be_read`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -119,7 +120,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `tests/bounded-process-test.py` refuse enfin une liste d'arguments de
   kill(1) qui donne un groupe (un pid négatif calculé) avant `--` :
   procps-ng 4.0.4 lit `kill -9 -11176` comme kill(-1, SIGKILL) ; un groupe
-  se signale par `os.killpg` (af-23j8a8).
+  se signale par `os.killpg` (af-23j8a8). Le dernier tient l'arrêt d'un
+  lancement dont la copie ne peut être vérifiée : les processus marqués de
+  son identité sont arrêtés quand même, et la copie dont git ne lit plus le
+  dépôt source (en cours de retrait) est reconnue par son fichier de
+  propriété (af-u7df4z).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -151,7 +156,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   temporaire du test encore là, sans marque, sans dossier disparu ni
   essai ; le nettoyage du test de ce correctif, `kill -9 -<groupe>`, a tué
   par kill(-1) tous les processus du compte du runner GitHub : le lot 5
-  perdu deux fois, sans journal).
+  perdu deux fois, sans journal) ; af-u7df4z (le produit d'Essai, lancé
+  depuis la copie du Cockpit qui le possède, survivait quand le garde le
+  lisait pendant que l'arrêt de ce Cockpit retirait la copie : git échouait,
+  le garde partait sans rien tuer ; le faucheur de
+  `tests/cockpit-criteria-test.py` l'a trouvé, PR #899 et #901, 17/11).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
@@ -620,6 +629,21 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   d'outils et états exécutés ensuite par des sessions libres) ; les sessions
   d'écriture tournent sans confinement avec le jeton propriétaire. Les deux
   relèvent de J11 (configuration et identité par rôle), af-q55qqx.
+
+## H — Historique d'un ticket écrasé par une écriture
+
+- Invariant : Une écriture sur un bead existant ajoute à ses notes
+  (`--append-notes`), elle ne les remplace jamais (`--notes`) ; seul
+  `bd create --notes` reste permis, un bead neuf n'ayant rien à perdre.
+- Contrôle : `python3 tests/bead-notes-append-test.py`,
+  `bash tests/deliver-close-test.sh`
+- Occurrences : af-2cuvon (le 11/11 puis le 17/11/2026, la fermeture
+  d'af-icbz5h par `bin/deliver-close` a remplacé toutes ses notes par le
+  motif de fermeture ; même écriture dans `bin/factory-delivery-guard`,
+  `bin/factory-watchdog`, `bin/factory-session-loop-guard`, l'ouverture de
+  PR de `mol-do-work` et `mol-polecat-commit`, la fermeture des étapes de
+  toutes les formules et la règle d'AGENTS.md), corrigé ici.
+- Ouvertes : aucune connue.
 
 ## A — Autre
 

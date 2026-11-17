@@ -262,6 +262,9 @@ class ProjectLaunchTest(unittest.TestCase):
             self.assertEqual(1, refused.returncode)
             self.assertTrue(Path(unrelated).exists())
             self.assertTrue(state_file.exists())
+            # The copy is kept, not the product: its processes carry the
+            # launch's mark (af-u7df4z).
+            self.assertFalse(_alive(record["pid"]), "a refused stop left the marked product running")
             state_file.write_text(json.dumps(record))
             self.stop(state_file=state_file)
 
@@ -803,6 +806,27 @@ class ProjectLaunchTest(unittest.TestCase):
         self.assertEqual([], left, "a process of the launch outlived its killed owner")
         self.assertFalse(state_file.exists(), "the launch record outlived its owner")
         self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived its owner")
+
+    def test_a_launch_ends_with_its_owner_while_its_product_repository_cannot_be_read(self):
+        # af-u7df4z: Essai's product is launched from the copy of the cockpit
+        # that owns it; stopping that cockpit removes the copy. A guard that
+        # read the copy half-removed got an error from git and left, its
+        # product alive: the reaper of tests/cockpit-criteria-test.py found
+        # it at the end of the file (PR #899, #901, 17/11/2026).
+        with _adopting_orphans():
+            state_file = self.new_state_file()
+            owner = self._owned_launch(state_file)
+            record = json.loads(state_file.read_text())
+            shutil.rmtree(self.product / ".git")
+            (self.product / ".git").write_text("gitdir: /nonexistent/removed-copy\n")
+            owner.kill()
+            owner.wait(timeout=5)
+            left = self._until_no_children()
+            _end(left)
+        self.assertEqual([], left, "a process of the launch outlived its owner")
+        self.assertFalse(state_file.exists(), "the launch record outlived its owner")
+        self.assertFalse(Path(record["worktree"]).exists(), "the launch copy outlived its owner")
+        self.assertTrue(_port_is_free(record["port"]))
 
     def test_an_owned_launch_stopped_normally_leaves_no_guard(self):
         with _adopting_orphans():

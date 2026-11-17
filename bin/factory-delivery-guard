@@ -460,14 +460,14 @@ process_convoy_delivery_scope() {  # rig label
           --set-metadata "gc.merge_commit=$mc" \
           --set-metadata "gc.delivered_via=$id" \
           --status=closed \
-          --notes "Closed by factory-delivery-guard: delivered via $id ($ghr#$prn, $mc)." >/dev/null 2>&1); then
+          --append-notes "Closed by factory-delivery-guard: delivered via $id ($ghr#$prn, $mc)." >/dev/null 2>&1); then
       did "$exec_id ($label) closed -- delivery proof copied from workflow bead $id ($ghr#$prn)"
       INCOMPLETE=$((INCOMPLETE + 1))
       local convoy_stat
       convoy_stat=$(status_of "$statuses" "$rig" "$convoy_id")
       if [ -n "$convoy_stat" ] && [ "$convoy_stat" != "closed" ]; then
         if (cd "$ROOT" && $(gc_for "$rig") update "$convoy_id" --status=closed \
-              --notes "Closed by factory-delivery-guard: tracked bead $exec_id delivered via $id." >/dev/null 2>&1); then
+              --append-notes "Closed by factory-delivery-guard: tracked bead $exec_id delivered via $id." >/dev/null 2>&1); then
           did "$convoy_id ($label) input convoy closed alongside $exec_id"
         fi
       fi
