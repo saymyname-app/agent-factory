@@ -8,7 +8,8 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-export HOME=$tmp/home
+export HOME=$tmp/home TRANSCRIPTS_BACKUP_ACCOUNT_HOME=$tmp/home
+mkdir -p "$HOME"
 dest=$tmp/archive/transcripts
 export TRANSCRIPTS_BACKUP_DEST=$dest TRANSCRIPTS_BACKUP_MIN_FREE_GB=0
 mkdir -p "$HOME/.claude/projects/p" "$HOME/.codex/sessions/2026/11/09"

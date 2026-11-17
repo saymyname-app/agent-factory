@@ -14,12 +14,17 @@
 # readable by its owner only (0700), on the same host as its source.
 #
 # Usage: transcripts-backup [--dry-run]
-# Env: TRANSCRIPTS_BACKUP_DEST (default ~/factory-archive/transcripts),
+# Env: TRANSCRIPTS_BACKUP_ACCOUNT_HOME (default: the account's, from getent),
+#      TRANSCRIPTS_BACKUP_DEST (default ~/factory-archive/transcripts),
 #      TRANSCRIPTS_BACKUP_RETENTION_DAYS (default 90),
 #      TRANSCRIPTS_BACKUP_MIN_FREE_GB (default 10: refuse, exit 1, below it).
 set -euo pipefail
 
-dest=${TRANSCRIPTS_BACKUP_DEST:-$HOME/factory-archive/transcripts}
+# The account's home from the password database, not the inherited one: a
+# Gas City check runs with it set to the city root (tests/account-home-lint-test.py).
+account=${TRANSCRIPTS_BACKUP_ACCOUNT_HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}
+[[ -d $account ]] || { echo "transcripts-backup: no home directory for uid $(id -u)" >&2; exit 1; }
+dest=${TRANSCRIPTS_BACKUP_DEST:-$account/factory-archive/transcripts}
 days=${TRANSCRIPTS_BACKUP_RETENTION_DAYS:-90}
 min_free_gb=${TRANSCRIPTS_BACKUP_MIN_FREE_GB:-10}
 dry=()
@@ -38,7 +43,7 @@ if (( free_kb < min_free_gb * 1024 * 1024 )); then
 fi
 
 copied=0
-for pair in "claude-projects:$HOME/.claude/projects" "codex-sessions:$HOME/.codex/sessions"; do
+for pair in "claude-projects:$account/.claude/projects" "codex-sessions:$account/.codex/sessions"; do
   name=${pair%%:*} src=${pair#*:}
   [[ -d $src ]] || continue
   mkdir -p "$dest/$name"
