@@ -20,6 +20,20 @@ states (``docs/SPEC_APPROVE.md``, ``bin/spec-approve``,
     approved and published draft in the inbox (19/10/2026: 11 of them).
     A published convoy keeps the draft label; it is not a draft either.
 
+Neither shape waits on the operator any more (af-x7xg4s) when:
+
+  * the bead is closed: a closed draft is no draft (a question still open
+    on it is the builder's, as every NEEDS BENJAMIN);
+  * the operator already answered the question the draft asked him
+    (``bin/escalation-door repondre``: ``gc.escalation_response_at`` not
+    older than ``gc.escalation_horodatage``, no question open): what is
+    left is an agent's to apply -- the health zone says so
+    (:func:`answered_drafts`); a newer question is the builder's again.
+
+The drafts of an abandoned chantier are closed at their source by
+``bin/planning-artifacts-close`` (af-s3lc5g), and so leave by the first
+rule: the beads list read here holds no closed convoy to tell them by.
+
 This is a fixed-phrase type (spec: "des phrases fixes dans le code pour
 chaque type d'événement machine") — the cockpit invents nothing beyond
 the bead's own title, and the request never offers an "Approuver" action
@@ -54,6 +68,36 @@ def _is_draft_graph(bead):
     return not any(str(metadata.get(key) or "").strip() for key in APPROVAL_KEYS)
 
 
+def _answered(bead):
+    """The operator answered the last question this bead asked him, and
+    none is open on it now."""
+    metadata = bead.get("metadata") or {}
+    question = metadata.get("gc.needs_benjamin")
+    if question and question != "none":
+        return False
+    asked = parse_iso(metadata.get("gc.escalation_horodatage"))
+    answered = parse_iso(metadata.get("gc.escalation_response_at"))
+    return asked is not None and answered is not None and answered >= asked
+
+
+def _waits_on_operator(bead):
+    return bead.get("status") != "closed" and not _answered(bead)
+
+
+def answered_drafts(beads):
+    """Every open Spec or graph draft the operator answered and that is
+    still unapproved: ``[{"id", "since"}]`` (``since``: his answer) for the
+    health zone -- it waits on an agent now, never on him."""
+    out = []
+    for bead in beads or ():
+        if not isinstance(bead, dict) or bead.get("status") == "closed":
+            continue
+        if (_is_draft_spec(bead) or _is_draft_graph(bead)) and _answered(bead):
+            out.append({"id": bead.get("id") or "",
+                        "since": parse_iso((bead.get("metadata") or {}).get("gc.escalation_response_at"))})
+    return out
+
+
 def _request_for(bead, req_type, quoi, pourquoi, prompt_label, verifie_a):
     bead_id = bead.get("id") or ""
     metadata = bead.get("metadata") or {}
@@ -78,7 +122,7 @@ def build_specs_and_graphs_requests(beads, verifie_a=None):
     this is just oldest first)."""
     requests = []
     for bead in beads or []:
-        if not isinstance(bead, dict):
+        if not isinstance(bead, dict) or not _waits_on_operator(bead):
             continue
         title = bead.get("title") or bead.get("id") or ""
         if _is_draft_spec(bead):

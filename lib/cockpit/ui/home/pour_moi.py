@@ -31,7 +31,7 @@ from cockpit.requests.sources.paused_sessions import TYPE_SESSION_EN_PAUSE
 from cockpit.requests.sources.readability import TYPE_SOURCE_ILLISIBLE
 from cockpit.requests.sources.silence import TYPE_USINE_MUETTE
 from cockpit.stop.requests import TYPE_ARRET_BLOQUE
-from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, FIELD_LABELS, incomplete_label
+from cockpit.text.fallback import FALLBACK_NO_RECOMMENDATION, FIELD_LABELS, incomplete_label, unreadable_label
 from cockpit.ui.actions.render import REPORT_OPTIONS, FREE_TIME_OPTION, render_actions
 from cockpit.ui.home.page import LEVEL_CLASS, _render_option, _since
 
@@ -84,10 +84,14 @@ def render_request(request, now, links, stale=False, shown=False, anchor="", und
     status = ['<span class="lvl %s"><i></i>%s</span>' % (level, _e(request.niveau))]
     if since:
         status.append("<small>depuis %s</small>" % _e(since))
-    other_missing = [field for field in request.missing_fields if field != "quoi"]
+    # A field rewritten from its producer's words is shown, not missing; one
+    # replaced is said missing only when its producer wrote nothing.
+    other_missing = [field for field in request.missing_fields
+                     if field != "quoi" and field not in request.reecrits]
     if request.incomplete and other_missing:
-        status.append('<span class="incomplete cockpit-request-incomplete">%s</span>'
-                      % _e(incomplete_label(other_missing[0])))
+        field = other_missing[0]
+        label = unreadable_label(field) if (request.texte_origine or {}).get(field) else incomplete_label(field)
+        status.append('<span class="incomplete cockpit-request-incomplete">%s</span>' % _e(label))
     if request.acquittee:
         status.append('<span class="chip ack">Acquittée · rappels coupés</span>')
     if request.reportee:
@@ -185,7 +189,8 @@ def render_details(request, links):
             ("Nature", "%s <code>%s</code>" % (_e(KINDS.get(request.type, request.type)), _e(request.type)))]
     for field_name in request.missing_fields:
         for reason in request.motifs.get(field_name, []):
-            rows.append(("Remplacé (%s)" % FIELD_LABELS.get(field_name, field_name), _e(reason)))
+            verb = "Réécrit" if field_name in request.reecrits else "Remplacé"
+            rows.append(("%s (%s)" % (verb, FIELD_LABELS.get(field_name, field_name)), _e(reason)))
     for field_name, written in (request.texte_origine or {}).items():
         if written:
             rows.append(("Texte écrit (%s)" % FIELD_LABELS.get(field_name, field_name), "<code>%s</code>" % _e(written)))

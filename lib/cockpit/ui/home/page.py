@@ -50,7 +50,8 @@ def _option_control(r, lettre):
     « Pas bon → agent » on a delivered chantier (spec .30, .31). Approving
     a Spec or a graph never gets one (spec .37)."""
     bead_id = html.escape(r.id)
-    if r.type == TYPE_ESCALATION and "que_faire" not in r.missing_fields and lettre:
+    answerable = "que_faire" not in r.missing_fields or "que_faire" in r.reecrits
+    if r.type == TYPE_ESCALATION and answerable and lettre:
         return 'data-action="repondre" data-bead-id="%s" data-lettre="%s"' % (bead_id, html.escape(lettre))
     if r.type == TYPE_LIVRE_NON_ACCEPTE and lettre == "a":
         return 'data-action="accepter_chantier" data-bead-id="%s"' % bead_id
