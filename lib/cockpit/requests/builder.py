@@ -45,7 +45,7 @@ from cockpit.requests.model import (
 )
 from cockpit.requests.proposals import is_open_decision
 from cockpit.text import fallback
-from cockpit.text.validate import request_violations
+from cockpit.text.validate import RAISON_LABEL, que_faire_violations, request_violations, rewrite
 
 NEEDS_BENJAMIN_KEY = "gc.needs_benjamin"
 
@@ -138,6 +138,45 @@ def _is_acceptance_request(bead):
     return (bead.get("metadata") or {}).get("gc.escalation_lien") == page
 
 
+PROPOSAL_TITLE_PREFIX = "PROPOSITION:"
+
+
+def _readable_quoi(quoi, bead, req_type):
+    """``(title, rewritten)``: what the producer wrote, made readable; else
+    the title of its bead (bin/proposal-door's « PROPOSITION: » left out);
+    else the fixed title of its kind (``rewritten`` False). Never
+    « incomplète : champ quoi manquant » (af-x7xg4s)."""
+    title = (bead.get("title") or "").strip()
+    if title.startswith(PROPOSAL_TITLE_PREFIX):
+        title = title[len(PROPOSAL_TITLE_PREFIX):]
+    for candidate in (quoi, title):
+        rewritten = rewrite("quoi", candidate)
+        if rewritten:
+            return rewritten, True
+    return fallback.FALLBACK_QUOI.get(req_type, fallback.FALLBACK_QUOI_DEFAULT), False
+
+
+def _readable_que_faire(options):
+    """The producer's options made readable, or ``None`` when one of them
+    cannot be: an option whose own words cannot be shown is not offered
+    (the operator would choose what he cannot read), whereas a consequence
+    or a reason that cannot is said to be in the folded details. The
+    options keep their letters, so the answer is still the producer's."""
+    if not isinstance(options, list) or not options or not all(isinstance(o, dict) for o in options):
+        return None
+    out = []
+    for index, item in enumerate(_normalise_que_faire(options)):
+        label = rewrite("option %d" % (index + 1), item["option"])
+        if label is None:
+            return None
+        consequence = rewrite("conséquence", item["consequence"]) or fallback.CONSEQUENCE_IN_DETAILS
+        raison = item["raison"]
+        if item["recommande"]:
+            raison = rewrite(RAISON_LABEL, raison) or fallback.RAISON_IN_DETAILS
+        out.append(dict(item, option=label, consequence=consequence, raison=raison))
+    return None if que_faire_violations(out) else out
+
+
 def _build_one(bead, verifie_a, defects):
     metadata = bead.get("metadata") or {}
     bead_id = bead.get("id") or ""
@@ -181,12 +220,27 @@ def _build_one(bead, verifie_a, defects):
         origin = _origin_text(field_name, raw_value)
         if origin is not None:
             texte_origine[field_name] = origin
+    # A field outside the contract is first rewritten from the producer's
+    # own words (af-x7xg4s); only when they do not allow it is it replaced
+    # by its fixed repli. Either way it stays in ``missing`` (a counted
+    # producer defect, its words in the folded details); ``reecrits`` says
+    # which ones still carry the producer's words.
+    reecrits = []
     if "quoi" in failures:
-        quoi = fallback.incomplete_label("quoi")
+        quoi, rewritten = _readable_quoi(quoi, bead, req_type)
+        if rewritten:
+            reecrits.append("quoi")
     if "pourquoi" in failures:
-        pourquoi = fallback.FALLBACK_POURQUOI
+        rewritten = rewrite("pourquoi", pourquoi)
+        pourquoi = rewritten or fallback.FALLBACK_POURQUOI
+        if rewritten:
+            reecrits.append("pourquoi")
     if "que_faire" in failures:
-        que_faire = fallback.fallback_que_faire()
+        que_faire = _readable_que_faire(que_faire_parsed)
+        if que_faire is None:
+            que_faire = fallback.fallback_que_faire()
+        else:
+            reecrits.append("que_faire")
     else:
         que_faire = _normalise_que_faire(que_faire_parsed)
 
@@ -222,6 +276,7 @@ def _build_one(bead, verifie_a, defects):
         lien=bead_id,
         incomplete=incomplete,
         missing_fields=missing,
+        reecrits=reecrits,
         recommande_absent=recommande_absent,
         motifs=motifs,
         texte_origine=texte_origine,

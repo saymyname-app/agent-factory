@@ -540,7 +540,8 @@ class RequestsSeamTest(CockpitOnFakes):
         req = payload["requests"][0]
         self.assertTrue(req["incomplete"])
         self.assertIn("quoi", req["missing_fields"])
-        self.assertTrue(req["quoi"].startswith("incomplète : champ"))
+        self.assertEqual("pour la suite", req["quoi"])
+        self.assertEqual("voir af-xyz123 pour la suite", req["texte_origine"]["quoi"])
         self.assertGreaterEqual(payload["defect_count"], 1)
 
     # ------------------------------------------------------------------
@@ -695,6 +696,134 @@ class UnknownSignalSeamTest(CockpitOnFakes):
 
         self.assertEqual({"af-conv": "Quand tu veux", "af-conw": "Urgent"},
                          {r["id"]: r["niveau"] for r in payload["requests"]})
+
+
+def graph_draft(bead_id, title, status="open", **metadata):
+    return {"id": bead_id, "title": title, "status": status, "labels": ["ticket-graph-draft"], "notes": "",
+            "issue_type": "task", "created_at": "2026-11-01T00:00:00Z", "metadata": dict(metadata)}
+
+
+class WaitsReallyOnTheOperatorSeamTest(CockpitOnFakes):
+    """« Ce qui t'attend » holds only what waits on the operator, each
+    request readable (af-x7xg4s): one family per case, kept and left out."""
+
+    def test_a_title_outside_the_contract_is_rewritten_never_said_missing(self):
+        self.start_cockpit()
+        jargon = proposal_bead("af-pr01", "le bead attend", "elle change la portée", SOME_OPTIONS,
+                               "2026-11-01T08:00:00Z", classe="decision")
+        jargon["title"] = "PROPOSITION: Garder la file de fusion telle quelle"
+        self.write_beads([
+            escalation_bead("af-id03", "Choisir la suite de af-xyz123", "elle change la portée", SOME_OPTIONS,
+                            "2026-11-01T08:00:00Z"),
+            escalation_bead("af-lo03", "La file de fusion attend que les tests de la correction passent " * 3,
+                            "elle change la portée", SOME_OPTIONS,
+                            "2026-11-01T08:00:00Z"),
+            jargon,
+            escalation_bead("af-te04", "le Mayor attend", "elle change la portée", SOME_OPTIONS,
+                            "2026-11-01T08:00:00Z"),
+            escalation_bead("af-mi03", "", "elle change la portée", SOME_OPTIONS, "2026-11-01T08:00:00Z"),
+            escalation_bead("af-ok03", "Choisir la suite", "Un agent demande ta décision sur af-ok03",
+                            SOME_OPTIONS, "2026-11-01T08:00:00Z"),
+        ])
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 5)
+        by_id = {r["id"]: r for r in payload["requests"]}
+        self.assertEqual("Choisir la suite", by_id["af-id03"]["quoi"])
+        self.assertEqual("La file de fusion attend que les tests de la correction passent La file de fusion attend "
+                         "que les tests de la correction passent La file…", by_id["af-lo03"]["quoi"])
+        self.assertEqual("Garder la file de fusion telle quelle", by_id["af-pr01"]["quoi"])
+        self.assertEqual("Un agent te pose une question", by_id["af-te04"]["quoi"])
+        self.assertEqual("Un agent demande ta décision", by_id["af-ok03"]["pourquoi"])
+        self.assertEqual(["pourquoi"], by_id["af-ok03"]["reecrits"])
+        for req in payload["requests"]:
+            self.assertNotIn("incomplète", req["quoi"])
+            self.assertTrue(req["incomplete"])
+        self.assertEqual(["quoi"], by_id["af-id03"]["reecrits"])
+        self.assertEqual([], by_id["af-te04"]["reecrits"])
+        self.assertEqual("le Mayor attend", by_id["af-te04"]["texte_origine"]["quoi"])
+        self.assertGreaterEqual(payload["defect_count"], 5)
+        self.assertNotIn("champ quoi manquant", self.home_body())
+
+    def test_options_with_an_unshown_word_stay_answerable_when_their_own_words_can_be_read(self):
+        self.start_cockpit()
+        consequence_jargon = [
+            {"option": "Reçue", "consequence": "Le bead de test est fermé", "lettre": "a",
+             "recommande": True, "raison": "Elle prouve le canal (#898)"},
+            {"option": "Pas reçue", "consequence": "Je cherche pourquoi", "lettre": "b"},
+        ]
+        option_jargon = [
+            {"option": "Relancer le convoi", "consequence": "Le travail reprend", "lettre": "a"},
+            {"option": "Attendre", "consequence": "Rien ne change", "lettre": "b"},
+        ]
+        self.write_beads([
+            escalation_bead("af-qf01", "As-tu reçu cette demande ?", "Seul toi peux le dire", consequence_jargon,
+                            "2026-11-01T08:00:00Z"),
+            escalation_bead("af-qf02", "Que faire de ce travail ?", "Il est arrêté", option_jargon,
+                            "2026-11-01T09:00:00Z"),
+        ])
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 2)
+        by_id = {r["id"]: r for r in payload["requests"]}
+        kept = by_id["af-qf01"]
+        self.assertEqual(["Reçue", "Pas reçue"], [o["option"] for o in kept["que_faire"]])
+        self.assertEqual("Conséquence écrite par l'agent : voir les détails", kept["que_faire"][0]["consequence"])
+        self.assertEqual("Elle prouve le canal", kept["que_faire"][0]["raison"])
+        self.assertEqual(["que_faire"], kept["reecrits"])
+        self.assertEqual("Le bead de test est fermé", json.loads(kept["texte_origine"]["que_faire"])[0]["consequence"])
+        replaced = by_id["af-qf02"]
+        self.assertEqual(["continuer avec un agent"], [o["option"] for o in replaced["que_faire"]])
+        self.assertEqual([], replaced["reecrits"])
+        body = self.home_body()
+        self.assertIn('data-action="repondre" data-bead-id="af-qf01"', body)
+        self.assertNotIn('data-action="repondre" data-bead-id="af-qf02"', body)
+        self.assertIn("incomplète : champ que faire illisible", body)
+        self.assertNotIn("incomplète : champ que faire manquant", body)
+
+    def test_a_proposal_put_off_until_an_event_waits_until_the_operator_takes_it_back(self):
+        self.start_cockpit()
+        beads = []
+        for bead_id, until in (("af-ev01", "prochaine session de planification"),
+                               ("af-fu01", "2099-01-01T00:00:00Z"),
+                               ("af-pa01", "2020-01-01T00:00:00Z"),
+                               ("af-no01", None)):
+            bead = proposal_bead(bead_id, "Étendre le lanceur", "un produit a deux dépôts", SOME_OPTIONS,
+                                 "2026-10-15T07:42:15Z", classe="decision")
+            if until:
+                bead["metadata"]["gc.proposal_report_until"] = until
+            beads.append(bead)
+        self.write_beads(beads)
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 2)
+        self.assertEqual(["af-no01", "af-pa01"], sorted(r["id"] for r in payload["requests"]))
+        health = http_get_json(self.port, "/api/health")
+        line = next(l for l in health["lines"] if "reportée" in l["text"])
+        self.assertEqual({"kind": "ok", "text": "1 proposition reportée par toi jusqu'à « prochaine session de planification »."},
+                         {"kind": line["kind"], "text": line["text"]})
+
+        # Taken back (no report any more): it waits on him again.
+        del beads[0]["metadata"]["gc.proposal_report_until"]
+        self.write_beads(beads)
+        self.wait_for_requests(lambda p: "af-ev01" in [r["id"] for r in p["requests"]])
+
+    def test_a_draft_answered_or_closed_waits_on_an_agent_not_on_the_operator(self):
+        self.start_cockpit()
+        answered = graph_draft("af-gr01", "Révision : reprendre la trace",
+                               **{"gc.needs_benjamin": "none", "gc.escalation_horodatage": "2026-11-02T00:54:01Z",
+                                  "gc.escalation_response_at": "2026-11-02T18:30:39Z"})
+        asked_again = graph_draft("af-gr02", "Révision : retirer trois réparations",
+                                  **{"gc.needs_benjamin": "Approuver la révision ?",
+                                     "gc.escalation_pourquoi": "La relecture est favorable",
+                                     "gc.escalation_que_faire": json.dumps(SOME_OPTIONS),
+                                     "gc.escalation_horodatage": "2026-11-03T00:00:00Z",
+                                     "gc.escalation_response_at": "2026-11-02T18:30:39Z"})
+        never_asked = graph_draft("af-gr03", "Révision : ordonner deux tickets")
+        closed = graph_draft("af-gr04", "Révision abandonnée", status="closed", **{"gc.needs_benjamin": "none"})
+        self.write_beads([answered, asked_again, never_asked, closed])
+        payload = self.wait_for_requests(lambda p: len(p["requests"]) == 2)
+        self.assertEqual({"af-gr02": "escalation", "af-gr03": "graphe_a_approuver"},
+                         {r["id"]: r["type"] for r in payload["requests"]})
+        health = http_get_json(self.port, "/api/health")
+        line = next(l for l in health["lines"] if "applique ta réponse" in l["text"])
+        self.assertEqual("warn", line["kind"])
+        self.assertTrue(line["text"].startswith("1 Spec ou graphe que tu as tranché attend qu'un agent applique"))
+        self.assertNotIn("af-gr01", line["text"])
 
 
 class TextContractSeamTest(CockpitOnFakes):

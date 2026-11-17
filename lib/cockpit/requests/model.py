@@ -39,6 +39,11 @@ class OperatorRequest:
     # as « champ manquant » with the field present (2026-10-07).
     motifs: dict = field(default_factory=dict)
     texte_origine: dict = field(default_factory=dict)
+    # The fields of missing_fields shown rewritten from the producer's own
+    # words (identifiers out, on one line, cut) rather than replaced by a
+    # fixed repli (af-x7xg4s). An escalation whose options are rewritten
+    # can still be answered: their letters are the producer's.
+    reecrits: list = field(default_factory=list)
     # A proposal's optional `details` (bin/proposal-door): identifiers and
     # evidence, shown as written in the folded details only (spec .75).
     precisions: str = ""

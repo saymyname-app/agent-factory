@@ -75,6 +75,20 @@ def maintenance_proposal_items(beads):
     return [{"since": _epoch_or_none(item.get("since"))} for item in _proposals.maintenance_in_progress(beads)]
 
 
+def proposal_deferred_to_event_items(beads):
+    """af-x7xg4s: every decision proposal the operator put off until an
+    event -- out of « Ce qui t'attend », said here with his words."""
+    return _proposals.deferred_to_events(beads)
+
+
+def answered_draft_items(beads):
+    """af-x7xg4s: every Spec or graph draft the operator answered and that
+    no agent approved yet -- out of « Ce qui t'attend », a stall here."""
+    from cockpit.requests.sources.specs_and_graphs import answered_drafts
+
+    return answered_drafts(beads)
+
+
 def proposal_sans_champs_items(beads):
     """ADR-0029 point 4: every pending proposal with no door-written
     field -- an anomaly to reformulate through the door or to close."""
