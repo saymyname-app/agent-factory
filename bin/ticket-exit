@@ -717,7 +717,7 @@ def record_planning_exception(args: argparse.Namespace, request: dict[str, Any])
 
 
 def escalate(ticket_id: str, request: dict[str, Any]) -> None:
-    payload = json.dumps({**request, "langue": operator_language(), "bloquant": True}, ensure_ascii=False)
+    payload = json.dumps({**request, "langue": operator_language(), "bloquant": True, "motif": "d01"}, ensure_ascii=False)  # ADR-0037: frozen D01, routing kept until its extinction (J3)
     proc = run([str(ESCALATION_TOOL), "benjamin", ticket_id, payload])
     if proc.returncode != 0:
         raise Refusal(f"la porte d'escalade a refusé la demande : {detail_of(proc)}")

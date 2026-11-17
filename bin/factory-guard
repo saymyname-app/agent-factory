@@ -54,12 +54,14 @@ OPERATOR_CONFIG="$(dirname "${BASH_SOURCE[0]}")/operator-config"
 # requires (T06, C01 Cockpit V2): quoi / pourquoi / que_faire (one option
 # here, with its consequence) / the Operator Language. Machine events use
 # fixed French phrases, not a translated English string.
+# Both callers are a session no agent can start again (the Mayor's, an
+# always-on one): motif admin, on ADR-0036's closed list (J3).
 escalation_payload() {  # quoi pourquoi option consequence
   local quoi=$1
   (( ${#quoi} <= 140 )) || quoi="${quoi:0:139}…"
   jq -nc --arg quoi "$quoi" --arg pourquoi "$2" --arg option "$3" --arg consequence "$4" \
     --arg langue "$("$OPERATOR_CONFIG" language 2>/dev/null || printf fr)" \
-    '{quoi: $quoi, pourquoi: $pourquoi, que_faire: [{option: $option, consequence: $consequence}], langue: $langue}'
+    '{quoi: $quoi, pourquoi: $pourquoi, que_faire: [{option: $option, consequence: $consequence}], langue: $langue, motif: "admin"}'
 }
 STATE="$ROOT/.gc/factory-guard.branch"
 CHECK_ONLY=0

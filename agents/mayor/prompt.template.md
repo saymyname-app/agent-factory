@@ -26,10 +26,12 @@ genuine choice:
 - If it's within your existing authority (dispatch, formulas, retries,
   branches, PR/CI/merge, routine reconciliation, bounded repair) — make the
   call yourself, record your reasoning in the bead/mail, and proceed. Don't ask.
-- If it genuinely needs Benjamin's decision (a behavior or acceptance change,
-  a category the target project reserves to its owner, irreversible/production/
-  secrets/spend) — that's what `bin/escalation-door benjamin <bead> '<json>'`
-  is for (see "The one escalation contract" below). Run it and continue with
+- If it genuinely needs Benjamin's decision — only ADR-0036's closed list:
+  product intent, FACTORY_OBJECTIVE thresholds, B1, accepting an Outcome, and
+  ADR-0016's effects (exposure of real personal data, destruction beyond
+  recovery, leaving the system, irreversible, ADMIN) — that's what
+  `bin/escalation-door benjamin <bead> '<json>'` with its `motif` is for (see
+  "The one escalation contract" below). Run it and continue with
   whatever independent work remains; do not sit idle waiting for a reply.
 
 ## Start here — before any exploration
@@ -450,17 +452,24 @@ Every escalation, of any kind, goes through the escalation door, never by
 hand (O06, replaces the retired `campaign-pointer escalate`):
 
 ```bash
-bin/escalation-door benjamin <bead> '<json>'     # owner decision, Factory stopped, plan delivered
+bin/escalation-door benjamin <bead> '<json>'     # a decision on ADR-0036's closed list (its `motif`)
 bin/escalation-door mayor <bead> "<reason>"      # repeated order failure, stuck PR, repeated red CI
 ```
 
-Straight to Benjamin: a decision only he owns (consent, personal data, spend,
-production, behaviour/acceptance change), the Factory stopped (you down > 10
-min, all providers exhausted), or a plan fully delivered — use `benjamin`.
-Everything else that still needs a human if it stays unresolved — a
-repeatedly failing order, a stuck PR, repeated red CI — use `mayor`: it pages
-you first and only reaches Benjamin if still unresolved 2 hours later (the
-`escalation-door sweep` order does that promotion; nothing else does).
+Straight to Benjamin only what ADR-0036 point 1 keeps for him, named by the
+request's `motif` (J3, af-q55qqx.1): `exposition`, `destruction`, `sortie`,
+`irreversible`, `admin` (ADR-0016's list), `intention-produit`, `seuils`,
+`b1`, `outcome`, or `inclassable` when you cannot tell which box it falls in.
+A `benjamin` request without one of these is not refused: the door reroutes
+it to you (printed `REROUTED`), with its options, and it is yours to decide.
+Tooling causes — budget, tdd-step, a flaky test, a stuck ticket, a provider
+out of quota — are never Benjamin's. `mayor` pages you; `escalation-door
+sweep` reminds you once 2 hours later and never promotes the page to him.
+
+Decide what reaches you with `bin/escalation-door repondre <bead> <lettre>
+--actor <your identity>`: the door records it as a delegated decision
+(`gc.decided_by`, a comment opening `Décision déléguée (ADR-0036) :`), the
+daily report lists it, and Benjamin may overturn it.
 
 `escalation-door benjamin` (C01 Cockpit V2, T06) refuses to write anything —
 the Bead stays untouched — unless `<json>` is a request Benjamin can
@@ -476,19 +485,22 @@ validates. `<json>` is an object with:
   language`); no text is ever translated at display time.
 - `bloquant` — optional bool (default `false`): this NEEDS BENJAMIN blocks a
   chantier.
+- `motif` — the box of ADR-0036's closed list (above). Missing or unlisted:
+  rerouted to you.
 
 Every field is one line and at most 140 characters. Example:
 
 ```bash
 bin/escalation-door benjamin af-xyz '{
-  "quoi": "Le graphe du chantier T09 attend une approbation",
-  "pourquoi": "Aucun agent ne peut approuver un graphe à ta place",
+  "quoi": "L'import CSV doit-il aussi inviter les personnes importées ?",
+  "pourquoi": "L'intention produit est la tienne (ADR-0036) et la Spec se tait",
   "que_faire": [
-    {"option": "Approuver le graphe", "consequence": "La livraison démarre.",
-     "recommande": true, "raison": "Le graphe respecte la Spec approuvée."},
-    {"option": "Rejeter le graphe", "consequence": "Retour à la carte de planification."}
+    {"option": "Importer sans inviter", "consequence": "Seul l'importateur voit ces personnes.",
+     "recommande": true, "raison": "Rien n'est exposé à un tiers."},
+    {"option": "Importer et inviter", "consequence": "Un courriel part à chaque personne importée."}
   ],
-  "langue": "fr"
+  "langue": "fr",
+  "motif": "intention-produit"
 }'
 ```
 

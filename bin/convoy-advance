@@ -1051,7 +1051,7 @@ def incident_request(convoy: Convoy) -> dict[str, Any]:
             {"option": "Laisser le convoi arrêté",
              "consequence": "Aucun ticket de ce convoi ne démarre ; l'incident reste dans cette liste."},
         ],
-        "langue": operator_language(),
+        "langue": operator_language(), "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
         "bloquant": True,
     }
 
@@ -2661,7 +2661,7 @@ def grouped_request(convoy: Convoy, origins: dict[str, list[str]]) -> tuple[dict
         "pourquoi": one_line(f"Plus aucun ticket du convoi {convoy.id} ne démarre ni ne fusionne sans ta réponse"),
         "que_faire": [lift, {"option": "Laisser ces tickets parqués",
                              "consequence": "Rien ne démarre ; le convoi reste ouvert, cette demande ne revient pas."}],
-        "langue": operator_language(),
+        "langue": operator_language(), "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
         "bloquant": True,
     }
     text = "\n".join([
@@ -2938,6 +2938,7 @@ def acceptance_request(convoy: Convoy, page: str) -> dict[str, Any]:
              "consequence": "Le produit est lancé au commit du dossier ; rien n'est accepté ni fusionné sans votre réponse."},
         ],
         "langue": operator_language(),
+        "motif": "outcome",  # ADR-0036: accepting an Outcome is his (J3)
         # A result ready to judge blocks no chantier: « Quand tu veux »
         # (Spec af-fgcw0d user story 8; the cockpit reads it so, F2.7).
         "bloquant": False,
@@ -3381,6 +3382,7 @@ def non_conforme_request(convoy: Convoy, stop: dict[str, Any], page: str) -> dic
              "consequence": "Rien n'est fusionné dans la branche protégée ; la branche d'intégration reste comme source."},
         ],
         "langue": operator_language(),
+        "motif": "outcome",  # ADR-0036: accepting an Outcome is his (J3)
         "bloquant": True,
         "lien": page,
     }
@@ -3698,7 +3700,7 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
             {"option": "Laisser le ticket arrêté",
              "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
         ],
-        "langue": operator_language(),
+        "langue": operator_language(), "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
         "bloquant": True,
     }, ensure_ascii=False)
 

@@ -8,8 +8,10 @@
 # Language); a complete request is written with its fields, timestamp and
 # blocking flag and still shows up on `list`; `repondre` writes the chosen
 # option, clears NEEDS BENJAMIN and wakes the Mayor, and refuses an unknown
-# option; Mayor-first only escalates after 2h unresolved (fake clock) and a
-# sweep promotion never fails even on an incomplete source; every escalation
+# option; a request without a motif of ADR-0036's closed list goes to the
+# Mayor, never to Benjamin, and an agent's answer is a recorded delegated
+# decision (J3, af-q55qqx.1); the sweep reminds the Mayor once after 2h
+# unresolved (fake clock) and never promotes to Benjamin; every escalation
 # fails loudly (no `>/dev/null || true`).
 
 set -Eeuo pipefail
@@ -52,7 +54,8 @@ COMPLETE_REQUEST='{
     {"option": "Approuver le graphe", "consequence": "La livraison démarre.", "recommande": true, "raison": "Le graphe respecte la Spec approuvée."},
     {"option": "Rejeter le graphe", "consequence": "Retour à la carte de planification."}
   ],
-  "langue": "fr"
+  "langue": "fr",
+  "motif": "intention-produit"
 }'
 
 # --- benjamin refuses an incomplete or malformed request --------------------
@@ -133,6 +136,61 @@ TESTS_RUN=$((TESTS_RUN + 1))
 out=$(door list) || fail "list should succeed"
 grep -Fq "graphe du chantier T09" <<<"$out" \
   || { echo "$out" >&2; fail "list did not display the complete request as before"; }
+
+# --- J3: only ADR-0036's closed list reaches Benjamin -----------------------
+for unlisted in '' '"motif": "budget",' '"motif": "tdd-step",'; do
+  reset_beads
+  seed af-tool '{"id":"af-tool","status":"open","metadata":{},"notes":"","labels":[]}'
+  TESTS_RUN=$((TESTS_RUN + 1))
+  request=$(jq 'del(.motif)' <<<"$COMPLETE_REQUEST" | sed "s/\"langue\": \"fr\"/$unlisted \"langue\": \"fr\"/")
+  out=$(door benjamin af-tool "$request") || fail "a request outside the closed list must be rerouted, not refused ($unlisted)"
+  [[ $out == "REROUTED (mayor"* ]] || { echo "$out" >&2; fail "a request outside the closed list must print REROUTED"; }
+  written=$(bead af-tool)
+  [[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' <<<"$written") == none ]] \
+    || fail "a request outside the closed list must not set gc.needs_benjamin ($unlisted)"
+  [[ $(jq -r '.metadata["gc.escalation_route"]' <<<"$written") == mayor ]] \
+    || fail "a rerouted request must record gc.escalation_route=mayor"
+  [[ $(jq -r '.metadata["gc.escalation_mayor_paged_at"]' <<<"$written") != none ]] \
+    || fail "a rerouted request must start the Mayor page"
+  [[ $(jq -r '.metadata["gc.escalation_que_faire"]' <<<"$written") == *"Approuver le graphe"* ]] \
+    || fail "a rerouted request must keep its options so the Mayor can answer"
+  grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "a rerouted request must not mail Benjamin"
+  grep -Fq 'mail send mayor' "$TEST_TMP/calls.log" || fail "a rerouted request must mail the Mayor"
+done
+
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-own '{"id":"af-own","status":"open","metadata":{},"notes":"","labels":[]}'
+out=$(door benjamin af-own "$(jq '.motif = "exposition"' <<<"$COMPLETE_REQUEST")") || fail "a listed motif must be accepted"
+[[ $out == "ESCALATED (benjamin, exposition)"* ]] || { echo "$out" >&2; fail "a listed motif must go to Benjamin"; }
+[[ $(jq -r '.metadata["gc.escalation_motif"]' <<<"$(bead af-own)") == exposition ]] \
+  || fail "the motif must be recorded on the bead"
+grep -Fq 'mail send human' "$TEST_TMP/calls.log" || fail "a listed motif must mail Benjamin"
+
+# The frozen D01 machinery (ADR-0037) keeps its route until its extinction.
+TESTS_RUN=$((TESTS_RUN + 1))
+seed af-d01 '{"id":"af-d01","status":"open","metadata":{},"notes":"","labels":[]}'
+out=$(door benjamin af-d01 "$(jq '.motif = "d01"' <<<"$COMPLETE_REQUEST")") || fail "d01 must be accepted"
+[[ $out == "ESCALATED (benjamin, d01)"* ]] || { echo "$out" >&2; fail "d01 must keep the route to Benjamin"; }
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if door benjamin af-own "$(jq '.motif = "deux mots"' <<<"$COMPLETE_REQUEST")" >/dev/null 2>&1; then
+  fail "a motif of more than one word must be refused"
+fi
+
+# The Mayor answers a rerouted request: a delegated decision, recorded.
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-tool '{"id":"af-tool","status":"open","metadata":{},"notes":"","labels":[]}'
+door benjamin af-tool "$(jq 'del(.motif)' <<<"$COMPLETE_REQUEST")" >/dev/null || fail "reroute should succeed"
+door repondre af-tool a --actor mayor >/dev/null || fail "the Mayor must be able to answer a rerouted request"
+written=$(bead af-tool)
+[[ $(jq -r '.metadata["gc.decided_by"]' <<<"$written") == mayor ]] \
+  || fail "an agent's answer must record gc.decided_by"
+[[ $(jq -r '.metadata["gc.escalation_mayor_paged_at"]' <<<"$written") == none ]] \
+  || fail "the answer must settle the Mayor page"
+grep -Fq 'bd comments add af-tool' "$TEST_TMP/calls.log" \
+  || fail "an agent's answer must try the « Décision déléguée (ADR-0036) » comment"
 
 # --- lien: the optional link of the dossier a request carries (T26) ---------
 # A request may carry the link of the dossier Benjamin reads to decide (the
@@ -354,45 +412,32 @@ ESCALATION_DOOR_NOW=$((T0 + 3600)) door sweep >/dev/null || fail "sweep should s
   || fail "sweep escalated to Benjamin before the 2h grace period elapsed"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep mailed Benjamin before 2h"
 
-# At/after 2h: sweep must escalate to Benjamin -- and never fail even though
-# af-order carries no quoi/pourquoi/que_faire of its own (T06: an incomplete
-# source stays a written, incomplete request, not a sweep failure).
+# At/after 2h (J3, ADR-0036): sweep reminds the Mayor once, stamps the
+# page overdue, and never promotes it to Benjamin.
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
-ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed at the 2h boundary"
+out=$(ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep) || fail "sweep should succeed at the 2h boundary"
 written=$(bead af-order)
-[[ $(jq -r '.metadata["gc.needs_benjamin"]' <<<"$written") == *"non résolue après 2h"* ]] \
-  || fail "sweep did not promote the unresolved Mayor-first escalation to Benjamin"
-[[ $(jq -r '.metadata["gc.escalation_pourquoi"]' <<<"$written") == *"il n'a pas dit pourquoi"* ]] \
-  || fail "sweep did not fill the fixed repli pourquoi for an incomplete source"
-[[ $(jq -r '.metadata["gc.escalation_que_faire"]' <<<"$written") == *"continuer avec un agent"* ]] \
-  || fail "sweep did not fill the fixed repli option for an incomplete source"
-grep -Fq 'mail send human' "$TEST_TMP/calls.log" || fail "sweep did not mail Benjamin once promoted"
+[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' <<<"$written") == none ]] \
+  || fail "sweep must never promote a Mayor page to Benjamin"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' <<<"$written") != none ]] \
+  || fail "sweep did not stamp the overdue page"
+[[ $out == *"SWEPT: af-order overdue"* ]] || { echo "$out" >&2; fail "sweep did not report the overdue page"; }
+grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep mailed Benjamin"
+grep -Fq 'mail send mayor' "$TEST_TMP/calls.log" || fail "sweep did not remind the Mayor"
 
-# A second sweep must not re-page: the bead now carries gc.needs_benjamin.
+# A second sweep must not remind again: the page is stamped overdue.
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
 ESCALATION_DOOR_NOW=$((T0 + 10800)) door sweep >/dev/null || fail "a later sweep should still succeed"
-grep -Fq 'mail send human' "$TEST_TMP/calls.log" && fail "sweep re-escalated an already-escalated bead"
+grep -Fq 'mail send' "$TEST_TMP/calls.log" && fail "sweep reminded the Mayor twice about one page"
 
-# A sweep promotion keeps quoi/pourquoi/que_faire escalation-door already
-# wrote on the bead, instead of overwriting them with the repli text.
-reset_beads
-EXISTING_QUE_FAIRE='[{"option":"Continuer","consequence":"Rien ne change.","lettre":"a"}]'
-seed af-has-fields "$(jq -nc --arg que_faire "$EXISTING_QUE_FAIRE" '
-  {id: "af-has-fields", status: "open",
-   metadata: {"gc.escalation_mayor_paged_at": "2026-09-30T00:00:00Z",
-              "gc.escalation_mayor_reason": "stuck PR",
-              "gc.escalation_pourquoi": "Déjà posée avec sa raison",
-              "gc.escalation_que_faire": $que_faire},
-   notes: "", labels: []}')"
+# A new page on the same bead after an answer starts a new clock.
 TESTS_RUN=$((TESTS_RUN + 1))
-ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed on a bead with existing fields"
-written=$(bead af-has-fields)
-[[ $(jq -r '.metadata["gc.escalation_pourquoi"]' <<<"$written") == "Déjà posée avec sa raison" ]] \
-  || fail "sweep must keep an existing pourquoi instead of overwriting it with the repli text"
-[[ $(jq -r '.metadata["gc.escalation_que_faire"]' <<<"$written") == *"Continuer"* ]] \
-  || fail "sweep must keep the existing que_faire instead of overwriting it with the repli option"
+door clear af-order >/dev/null || fail "clear should succeed"
+ESCALATION_DOOR_NOW=$((T0 + 20000)) door mayor af-order "stuck again" >/dev/null || fail "a new page should succeed"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"]' "$TEST_TMP/beads/af-order.json") == none ]] \
+  || fail "a new page must reset the overdue stamp"
 
 # A Mayor-first escalation resolved before 2h (cleared) must never reach Benjamin.
 reset_beads
@@ -441,8 +486,8 @@ if grep -q '^bd show ' "$TEST_TMP/calls.log"; then
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should succeed on the pending page at 2h"
-[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-pending.json") == *"non résolue après 2h"* ]] \
-  || fail "the pending page among settled ones must still be promoted at 2h"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-pending.json") != none ]] \
+  || fail "the pending page among settled ones must still be reminded at 2h"
 
 # The periodic sweep is retryable work. If another escalation owns the door,
 # it defers with the repository's explicit NOT RUN exit instead of reporting a
@@ -484,10 +529,10 @@ timed_status=$?
 set -e
 [[ $timed_status -eq 0 ]] \
   || { echo "$out" >&2; cat "$TEST_TMP/calls.log" >&2; fail "one due promotion exceeded the sweep's operation budget"; }
-grep -Fq "SWEPT: af-due promoted" <<<"$out" \
+grep -Fq "SWEPT: af-due overdue" <<<"$out" \
   || { echo "$out" >&2; fail "the deadline check did not exercise a due promotion"; }
-[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-later.json") == none ]] \
-  || fail "the deadline check promoted the page that was not due"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-later.json") == none ]] \
+  || fail "the deadline check reminded the page that was not due"
 
 # A bead the list returns without its metadata is read, never skipped: a
 # pending page must not be lost to a thinner list.
@@ -508,8 +553,8 @@ seed af-thin '{"id":"af-thin","status":"open","metadata":{"gc.escalation_mayor_p
 GC_BIN="$thin_gc" ED_BEAD_DIR="$TEST_TMP/beads" ED_CALL_LOG="$TEST_TMP/calls.log" \
   ESCALATION_DOOR_LOCK_FILE="$TEST_TMP/lock" ESCALATION_DOOR_NOW=$((T0 + 7200)) "$SCRIPT" sweep >/dev/null \
   || fail "sweep should succeed on a list without metadata"
-[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-thin.json") == *"non résolue après 2h"* ]] \
-  || fail "a pending page listed without its metadata must still be promoted"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-thin.json") != none ]] \
+  || fail "a pending page listed without its metadata must still be reminded"
 
 # A page about the bead's own PR is resolved by that PR's verified merge: the
 # sweep clears it instead of promoting it (af-53v22s, 2026-10-01: PR #360
@@ -546,10 +591,10 @@ written=$(bead af-shipped)
   || fail "a page resolved by its merged PR must be cleared, not left to be swept again"
 [[ $(jq -r '.notes' <<<"$written") == *"MAYOR FIRST RESOLVED"* ]] \
   || fail "clearing a page resolved by a merge must be traced in the bead's notes"
-[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-otherpr.json") == *"non résolue après 2h"* ]] \
-  || fail "a page about another PR than the merged one must still be promoted"
-[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-stillred.json") == *"non résolue après 2h"* ]] \
-  || fail "a page about a PR that is not merged must still be promoted"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-otherpr.json") != none ]] \
+  || fail "a page about another PR than the merged one must still be reminded to the Mayor"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-stillred.json") != none ]] \
+  || fail "a page about a PR that is not merged must still be reminded to the Mayor"
 
 # A page about a failing order is resolved once its bead is closed: the order
 # opens a new bead if it fails again (af-drwmqm, 2026-10-22: three closed
@@ -572,7 +617,7 @@ ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep >/dev/null || fail "sweep should s
 written=$(bead af-orderfixed)
 [[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' <<<"$written") == none ]]   || fail "a closed order-failure bead must not be promoted to Benjamin"
 [[ $(jq -r '.metadata["gc.escalation_mayor_paged_at"]' <<<"$written") == none ]]   || fail "the page of a closed order-failure bead must be cleared"
-[[ $(jq -r '.metadata["gc.needs_benjamin"] // "none"' "$TEST_TMP/beads/af-orderopen.json") == *"non résolue après 2h"* ]]   || fail "an order-failure bead still open must still be promoted"
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-orderopen.json") != none ]]   || fail "an order-failure bead still open must still be reminded to the Mayor"
 
 # --- clear -------------------------------------------------------------------
 reset_beads

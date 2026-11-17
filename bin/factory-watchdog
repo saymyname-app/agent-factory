@@ -432,8 +432,10 @@ else
 fi
 
 # --- 9. tickets of a marked convoy that nobody moves --------------------------
-# af-1fvzns: one bead and one request on the operator's list per ticket, kept
-# while the ticket stays without a next step, withdrawn once it moves again.
+# af-1fvzns: one bead and one request per ticket, kept while the ticket stays
+# without a next step, withdrawn once it moves again. A defect of the
+# Factory's code carries no motif of ADR-0036's closed list: since J3 the
+# door hands the request to the Mayor (maintenance), not to Benjamin.
 STALL_PREFIX="[watchdog] ticket sans suite :"
 stall_request() {  # stall_request <ticket> <message> -> the escalation-door benjamin JSON
   local since=${2#*sans suite depuis } language
@@ -463,7 +465,9 @@ if [ -x "$CONVOY_STATE" ]; then
       rows=$(gc bd show "${lookup_ids[@]}" --json 2>/dev/null) || { stall_ok=0; continue; }
       # af-o3clwq: a ticket with a 'blocks' dep still open waits for its blockers.
       lookup_state=$(jq -r '.[]? | [(.id // ""), (.status // "open"),
-        (((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | ($n != "" and $n != "none")),
+        ((((.metadata["gc.needs_benjamin"] // "") | tostring) as $n | ($n != "" and $n != "none"))
+         or ((.metadata["gc.escalation_route"] // "") == "mayor"
+             and (((.metadata["gc.escalation_mayor_paged_at"] // "none") | tostring) as $p | $p != "" and $p != "none"))),
         any(.dependencies[]?; .dependency_type == "blocks" and .status != "closed")] | @tsv' <<<"$rows") \
         || { stall_ok=0; continue; }
       while IFS=$'\t' read -r bead_id status listed blocked; do

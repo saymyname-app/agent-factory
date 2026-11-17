@@ -721,7 +721,7 @@ def raise_stop(convoy: Convoy, stop: dict[str, Any]) -> bool:
     operator's list, and bin/convoy-state records that it did."""
     if "raised" in stop:
         return False
-    payload = {**stop_request(convoy, stop), "langue": operator_language()}
+    payload = {**stop_request(convoy, stop), "langue": operator_language(), "motif": "d01"}  # ADR-0037: frozen D01, routing kept until its extinction (J3)
     proc = run([str(ESCALATION_TOOL), "benjamin", convoy.id, json.dumps(payload, ensure_ascii=False)])
     if proc.returncode != 0:
         raise Refusal(

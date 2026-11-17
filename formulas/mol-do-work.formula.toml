@@ -361,7 +361,8 @@ unblock it (out of scope, superseded, etc.) — mail the same way regardless.
 **Waiting on the operator's decision** (af-1al0t1: e.g. a prototype ticket
 whose operator must pick a variant): post the question with
 `"$FACTORY_ROOT/bin/escalation-door" benjamin "$WORK_BEAD_ID" '<json>'` (it
-mails the operator itself), then park with `--outcome blocked
+mails the operator itself; only a `motif` of ADR-0036's closed list reaches
+the operator, any other request goes to the Mayor, who answers it), then park with `--outcome blocked
 --classification repair` as above. Never try to close the bead while its
 NEEDS BENJAMIN is active — `deliver-close` refuses every closing form until
 the question is answered. `escalation-door repondre` records the answer and

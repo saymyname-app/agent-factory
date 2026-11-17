@@ -1793,9 +1793,15 @@ esac
                  if not entry.get("closed") and entry.get("state") != "closed"
                  for key in ("id", "name", "session_name", "alias") if entry.get(key)}
         open_beads = {bead_id for bead_id, bead in state["beads"].items() if bead.get("status") != "closed"}
+        def waits_a_decision(metadata):
+            # bin/factory-watchdog's rule: Benjamin's list, or a request the
+            # door handed to the Mayor and he has not decided yet (J3).
+            if str(metadata.get("gc.needs_benjamin") or "none") not in ("", "none"):
+                return True
+            return (metadata.get("gc.escalation_route") == "mayor"
+                    and str(metadata.get("gc.escalation_mayor_paged_at") or "none") not in ("", "none"))
         listed = {bead_id for bead_id in open_beads
-                  if str((state["beads"][bead_id].get("metadata") or {}).get("gc.needs_benjamin") or "none")
-                  not in ("", "none")}
+                  if waits_a_decision(state["beads"][bead_id].get("metadata") or {})}
         past_window = time.time() + 60 * (factory_watchdog.TICKET_STALL_MINUTES_DEFAULT + 1)
         return factory_watchdog.assess_ticket(shown, CONVOY, past_window, alive, open_beads, listed)
 

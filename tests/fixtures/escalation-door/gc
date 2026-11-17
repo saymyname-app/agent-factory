@@ -87,6 +87,12 @@ if [[ ${1:-} == bd && ${2:-} == update ]]; then
   exit 0
 fi
 
+if [[ ${1:-} == bd && ${2:-} == comments && ${3:-} == add ]]; then
+  printf '{}
+'
+  exit 0
+fi
+
 if [[ ${1:-} == bd && ${2:-} == list ]]; then
   shift 2
   status_filter=""

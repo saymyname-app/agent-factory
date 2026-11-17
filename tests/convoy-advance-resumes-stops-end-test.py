@@ -535,7 +535,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                 {"option": "Clore R8 sans fusion", "consequence": "R8 est fermé sans fusion."},
                 {"option": "Conserver R8", "consequence": "R8 reste ouvert."},
             ],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(first_request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", first_request["quoi"])
@@ -556,7 +556,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                 {"option": "Corriger la porte par maintenance",
                  "consequence": "Le ticket reprend après la maintenance."},
             ],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(second_request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", second_request["quoi"])
@@ -612,7 +612,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                  "consequence": "R8 est fermé sans fusion sans nouvel auteur."},
                 {"option": "Laisser R8 parqué", "consequence": "R8 reste ouvert."},
             ],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
@@ -1407,7 +1407,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "pourquoi": "Une panne de l'environnement n'est pas un refus.",
             "que_faire": [{"option": "Faire réparer l'environnement d'évaluation par la maintenance de l'usine",
                             "consequence": "Le ticket reprend après livraison."}],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "stop-raised", CONVOY, T1)
@@ -1446,7 +1446,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "quoi": "Le contrôle de l'usine est rouge",
             "pourquoi": "Le défaut est dans un test de l'usine, hors du ticket",
             "que_faire": [{"option": "Corriger par maintenance sur main", "consequence": "Le ticket reprend après livraison."}],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
@@ -1520,7 +1520,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "quoi": "Décision produit nouvelle, sans rapport avec la panne réparée",
             "pourquoi": "Cette décision appartient à Benjamin",
             "que_faire": [{"option": "Conserver le comportement", "consequence": "Attendre sa réponse explicite."}],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(human_request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", human_request["quoi"])
@@ -1551,7 +1551,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "pourquoi": "Le défaut est dans un test de l'usine, hors du ticket",
             "que_faire": [{"option": "Corriger par maintenance sur main",
                             "consequence": "Le ticket reprend après la fusion de sa réparation."}],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
@@ -1611,7 +1611,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                 {"option": "Autoriser une PR de maintenance vers l'intégration",
                  "consequence": "Une PR vise la branche d'intégration."},
             ],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", repair, json.dumps(request))
         self.run_ok(ESCALATION, "repondre", repair, letter, "--actor", "operateur-test")
@@ -1627,7 +1627,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "pourquoi": "Le rouge du ticket est impossible",
             "que_faire": [{"option": "Corriger par maintenance sur main : serve_sessions journalise par emit",
                             "consequence": "Le ticket reprend après la fusion de sa réparation."}],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])
@@ -1688,7 +1688,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             "pourquoi": "Le correctif livré sur main n'est pas dans l'arbre que le ticket teste.",
             "que_faire": [{"option": "Reprendre main par la porte d'intégration",
                             "consequence": "Le ticket reprend seulement sur le résultat vert."}],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # a D01 exit, as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, T1, "--cause", "operator_request", "--detail", request["quoi"])

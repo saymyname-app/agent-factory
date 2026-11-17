@@ -11,14 +11,24 @@
 # this closes).
 #
 # Routing (spec-factory-operations-v2-2026-09-28, ticket O06):
-#   straight to Benjamin  -- an owner decision (consent, personal data,
-#                            spend, production, behaviour/acceptance
-#                            change), the Factory stopped (Mayor down > 10
-#                            min, all providers exhausted), or a plan fully
-#                            delivered.
-#   Mayor first            -- a repeated order failure, a stuck PR, or
-#                            repeated red CI; Benjamin only sees it if it is
-#                            still unresolved 2 hours later.
+#   straight to Benjamin  -- only a request whose `motif` is in the closed
+#                            list of ADR-0036 point 1 (MOTIFS_BENJAMIN
+#                            below): exposition, destruction, sortie,
+#                            irreversible, admin (ADR-0016's list),
+#                            intention-produit, seuils, b1, outcome (what
+#                            ADR-0036 keeps for him), inclassable (a
+#                            decision that does not know its box); and,
+#                            until 11/12/2026, d01 (the frozen D01
+#                            machinery of ADR-0037, counted hors liste).
+#   Mayor                  -- everything else. A `benjamin` request without
+#                            a listed motif is not refused: it is rerouted
+#                            to the Mayor, who decides it (ADR-0036 point
+#                            2), answers with `repondre --actor <himself>`
+#                            and lists it in the daily report. A repeated
+#                            order failure, a stuck PR, or repeated red CI
+#                            page the Mayor directly; since J3 (af-q55qqx.1)
+#                            an unresolved page is re-mailed to the Mayor
+#                            after 2 hours, never promoted to Benjamin.
 #
 # Usage: escalation-door <command> [arguments]
 #
@@ -45,6 +55,13 @@
 #                                              needs its raison.
 #                                langue     -- must equal the Operator
 #                                              Language.
+#                                motif      -- the box of ADR-0036's closed
+#                                              list this decision falls in.
+#                                              Missing or not listed: the
+#                                              request goes to the Mayor
+#                                              (same fields recorded, no
+#                                              gc.needs_benjamin), printed
+#                                              REROUTED.
 #                                bloquant   -- optional bool (default
 #                                              false): this NEEDS BENJAMIN
 #                                              blocks a chantier.
@@ -74,7 +91,10 @@
 #                              door refuses. --actor benjamin only on
 #                              Benjamin's own words or gesture (the Cockpit
 #                              click), never a delegated answer (af-zkdvur).
-#                              Then it clears its NEEDS BENJAMIN and any
+#                              Any other acteur is a delegated decision
+#                              (ADR-0036 point 3): gc.decided_by=<acteur>
+#                              and a comment « Décision déléguée (ADR-0036)
+#                              : … » on <bead>. Then it clears its NEEDS BENJAMIN and any
 #                              Mayor-first paging state, and wakes the Mayor
 #                              with "<Operator> a répondu <lettre> sur
 #                              <bead>". Refuses an option <bead> never
@@ -88,16 +108,14 @@
 #                              gc.escalation_mayor_paged_at (only on the
 #                              first page; a repeat call re-mails mayor
 #                              without resetting the 2h clock).
-#   sweep                      Promote every Mayor-first escalation that is
-#                              still unresolved (no gc.needs_benjamin) 2
-#                              hours after its first page to a straight-to-
-#                              Benjamin escalation. Never fails on an
-#                              incomplete source: it keeps <bead>'s own
-#                              quoi/pourquoi/que_faire if escalation-door
-#                              already wrote them, otherwise it fills the
-#                              fixed repli text ("un agent n'a pas dit
-#                              pourquoi", "continuer avec un agent").
-#                              Deterministic: the clock is `date +%s`,
+#   sweep                      Re-mail the Mayor, once, about every Mayor
+#                              page still unresolved (no gc.needs_benjamin)
+#                              2 hours after its first page, and stamp
+#                              gc.escalation_mayor_overdue_at. Since J3
+#                              (ADR-0036, af-q55qqx.1) it never promotes a
+#                              page to Benjamin: what is not on the closed
+#                              list is the Mayor's to decide, however long
+#                              it waits. Deterministic: the clock is `date +%s`,
 #                              overridable with $ESCALATION_DOOR_NOW for
 #                              tests. Reads one list, then re-reads only a
 #                              page that is due or can be cleared: a settled
@@ -118,7 +136,9 @@
 #                              (every bead, whatever its status, carrying
 #                              an active gc.needs_benjamin; closed ones in
 #                              their own section -- af-1al0t1: a close
-#                              never answers the question) and the pending-proposal
+#                              never answers the question), the requests
+#                              rerouted to the Mayor still waiting for his
+#                              decision (J3, ADR-0036) and the pending-proposal
 #                              count (open beads labelled `proposal`). Safe
 #                              for the operator session to run at startup.
 set -Eeuo pipefail
@@ -137,6 +157,22 @@ PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$ROOT/bin/proposal-door}"
 OPERATOR_NAME="${GC_OPERATOR_NAME:-$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "${OPERATOR_CONFIG_FILE:-$ROOT/config/operator.toml}" 2>/dev/null | head -n1)}"
 OPERATOR_NAME="${OPERATOR_NAME:-Benjamin}"
 BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
+# ADR-0036 point 1, the only boxes that reach Benjamin (J3, af-q55qqx.1).
+# ADR-0016's effect tests: exposition (widen who sees real personal data),
+# destruction (beyond recovery), sortie (money, third party, publication),
+# irreversible (not undone by a revert and a reversible migration), admin
+# (host, access, secrets, production). Kept by ADR-0036: intention-produit,
+# seuils (FACTORY_OBJECTIVE.md), b1, outcome (accepting an Outcome). And
+# inclassable: « une décision qui ne sait pas dans quelle case elle tombe
+# va à Benjamin ».
+MOTIFS_BENJAMIN=" exposition destruction sortie irreversible admin intention-produit seuils b1 outcome inclassable "
+# Transitional, not on the closed list: the frozen D01 machinery of
+# ADR-0037 (convoy-advance, correction-round, code-review, ticket-exit,
+# ticket-evaluation, outcome-evaluation, spec-end, spec-end-review) keeps
+# the route its contracts were written for until its extinction on
+# 11/12/2026. Dormant since convoy-advance was paused (16/11); `mesure`
+# counts it hors liste. Remove it with the D01 components.
+MOTIFS_TRANSITOIRES=" d01 "
 
 log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
 die() { log "ERROR: $1"; exit 1; }
@@ -183,13 +219,16 @@ show_bead() {  # $1 = bead id -> prints the single-object JSON, or dies
     <<<"$raw" 2>/dev/null || die "$id did not resolve to exactly one Bead."
 }
 
-# emit_benjamin performs the write + mail once a request has validated;
-# never called directly from a command handler -- benjamin_payload validates
-# first, sweep's repli path always builds a request that will validate.
-emit_benjamin() {  # bead quoi pourquoi lettered_que_faire_json bloquant [lien]
-  local bead=$1 quoi=$2 pourquoi=$3 que_faire_json=$4 bloquant=$5 lien=${6:-}
+# emit_request performs the write + mail once a request has validated; never
+# called directly from a command handler -- benjamin_payload validates first.
+# The route is benjamin (motif on ADR-0036's closed list) or mayor (any other
+# request, J3): the same fields are recorded either way so the Mayor can
+# answer with `repondre`, but only the benjamin route sets gc.needs_benjamin
+# and mails the operator.
+emit_request() {  # route motif bead quoi pourquoi lettered_que_faire_json bloquant [lien]
+  local route=$1 motif=$2 bead=$3 quoi=$4 pourquoi=$5 que_faire_json=$6 bloquant=$7 lien=${8:-}
   local horodatage options_summary dossier_line=""
-  local -a lien_args=()
+  local -a lien_args=() route_args=()
   horodatage=$(now_iso)
   # The link belongs to one request: a value writes it, none resets the one
   # of the request before, nothing leaves a bead that never had one as it is.
@@ -197,49 +236,87 @@ emit_benjamin() {  # bead quoi pourquoi lettered_que_faire_json bloquant [lien]
     lien_args=(--set-metadata "gc.escalation_lien=$lien")
     [[ $lien == none ]] || dossier_line="DOSSIER: $lien"$'\n'
   fi
+  if [[ $route == benjamin ]]; then
+    route_args=(--set-metadata "gc.needs_benjamin=$quoi"
+      --set-metadata "gc.escalation_mayor_paged_at=none"
+      --set-metadata "gc.escalation_mayor_reason=none"
+      --set-metadata "gc.escalation_mayor_overdue_at=none"
+      --append-notes "NEEDS BENJAMIN ($motif): $quoi")
+  else
+    # A page already running keeps its clock; a new one starts it.
+    local paged_at
+    paged_at=$(jq -r '.metadata["gc.escalation_mayor_paged_at"] // ""' <<<"$ISSUE")
+    if [[ -z $paged_at || $paged_at == none ]]; then
+      route_args=(--set-metadata "gc.escalation_mayor_paged_at=$horodatage"
+        --set-metadata "gc.escalation_mayor_overdue_at=none")
+    fi
+    route_args+=(--set-metadata "gc.escalation_mayor_reason=$quoi"
+      --append-notes "HORS LISTE ADR-0036 (motif « ${motif:-aucun} ») → Mayor : $quoi")
+  fi
+  # The route's own fields first: gc.needs_benjamin leads the write, as it
+  # always has.
   "$GC_BIN" bd update "$bead" \
-    --set-metadata "gc.needs_benjamin=$quoi" \
+    "${route_args[@]}" \
+    --set-metadata "gc.escalation_route=$route" \
+    --set-metadata "gc.escalation_motif=${motif:-none}" \
     --set-metadata "gc.escalation_pourquoi=$pourquoi" \
     --set-metadata "gc.escalation_que_faire=$que_faire_json" \
     --set-metadata "gc.escalation_bloquant=$bloquant" \
     --set-metadata "gc.escalation_horodatage=$horodatage" \
-    --set-metadata "gc.escalation_mayor_paged_at=none" \
-    --set-metadata "gc.escalation_mayor_reason=none" \
     "${lien_args[@]}" \
-    --append-notes "NEEDS BENJAMIN: $quoi" \
     >/dev/null || die "Beads write failed for $bead."
   options_summary=$(jq -r '
     [.[] | "  \(.lettre)) \(.option) — \(.consequence)"
       + (if (.recommande // false) then " [Recommandé : \(.raison)]" else "" end)]
     | join("\n")' <<<"$que_faire_json")
-  "$GC_BIN" mail send "$ESCALATION_RECIPIENT" --notify \
-    -s "NEEDS BENJAMIN: $bead" \
-    -m "ACTION: escalation-door escalated $bead straight to $OPERATOR_NAME
+  if [[ $route == benjamin ]]; then
+    "$GC_BIN" mail send "$ESCALATION_RECIPIENT" --notify \
+      -s "NEEDS BENJAMIN: $bead" \
+      -m "ACTION: escalation-door escalated $bead straight to $OPERATOR_NAME ($motif)
 STATE: $quoi
 POURQUOI: $pourquoi
 QUE FAIRE:
 $options_summary
 ${dossier_line}EVIDENCE: gc bd show $bead
 NEXT: escalation-door repondre $bead <lettre>, ou escalation-door clear $bead" \
-    >/dev/null || die "Could not mail $ESCALATION_RECIPIENT; gc.needs_benjamin is set but the mail was not sent -- retry rather than clearing it by hand."
-  printf 'ESCALATED (benjamin): %s — %s\n' "$bead" "$quoi"
+      >/dev/null || die "Could not mail $ESCALATION_RECIPIENT; gc.needs_benjamin is set but the mail was not sent -- retry rather than clearing it by hand."
+    printf 'ESCALATED (benjamin, %s): %s — %s\n' "$motif" "$bead" "$quoi"
+    return
+  fi
+  "$GC_BIN" mail send mayor --notify \
+    -s "Décision déléguée à prendre (ADR-0036): $bead" \
+    -m "ACTION: escalation-door rerouted to the Mayor a request for $OPERATOR_NAME outside ADR-0036's closed list (motif « ${motif:-aucun} »)
+STATE: $quoi
+POURQUOI: $pourquoi
+QUE FAIRE:
+$options_summary
+${dossier_line}EVIDENCE: gc bd show $bead
+NEXT: decide it -- escalation-door repondre $bead <lettre> --actor <you> (recorded as a delegated decision, listed in the daily report); or escalation-door benjamin $bead with a listed motif if it truly is his" \
+    >/dev/null || die "Could not mail mayor; the request is recorded on $bead but the mail failed -- retry."
+  printf 'REROUTED (mayor, hors liste ADR-0036, motif « %s »): %s — %s\n' "${motif:-aucun}" "$bead" "$quoi"
 }
 
-benjamin_payload() {  # bead payload [already-read issue]
-  local bead=${1:-} payload=${2:-} issue=${3:-}
+motif_listed() {  # $1 = motif -> routes to the operator
+  [[ -n $1 && ( $MOTIFS_BENJAMIN == *" $1 "* || $MOTIFS_TRANSITOIRES == *" $1 "* ) ]]
+}
+
+benjamin_payload() {  # bead payload
+  local bead=${1:-} payload=${2:-}
   [[ -n $bead && -n $payload ]] || die "Usage: $PROGRAM_NAME benjamin <bead> <json>"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
   jq -e 'type == "object"' <<<"$payload" >/dev/null 2>&1 \
     || die "requête incomplète : le corps n'est pas un objet JSON valide."
-  local quoi pourquoi langue bloquant que_faire_raw lettered expected_language lien
+  local quoi pourquoi langue bloquant que_faire_raw lettered expected_language lien motif route=mayor
   quoi=$(jq -r '.quoi // ""' <<<"$payload")
   pourquoi=$(jq -r '.pourquoi // ""' <<<"$payload")
   langue=$(jq -r '.langue // ""' <<<"$payload")
+  motif=$(jq -r '.motif // "" | tostring' <<<"$payload")
   bloquant=$(jq -r 'if (.bloquant // false) == true then "true" else "false" end' <<<"$payload")
   que_faire_raw=$(jq -c '.que_faire // []' <<<"$payload")
   field_ok "quoi" "$quoi"
   field_ok "pourquoi" "$pourquoi"
   field_ok "langue" "$langue"
+  [[ $motif != *[[:space:]]* ]] || die "champ « motif » : un seul mot de la liste fermée (${MOTIFS_BENJAMIN# })."
   if jq -e 'has("lien")' <<<"$payload" >/dev/null; then
     jq -e '.lien | type == "string" and length > 0 and (test("[\n\r]") | not)' <<<"$payload" >/dev/null \
       || die "champ « lien » doit être une ligne de texte non vide."
@@ -249,11 +326,12 @@ benjamin_payload() {  # bead payload [already-read issue]
   expected_language=$(operator_language)
   [[ $langue == "$expected_language" ]] \
     || die "la requête est dans la langue « $langue », la langue de l'opérateur est « $expected_language »."
-  [[ -n $issue ]] || issue=$(show_bead "$bead")
-  if [[ -z ${lien:-} ]] && jq -e '.metadata | has("gc.escalation_lien")' <<<"$issue" >/dev/null; then
+  ISSUE=$(show_bead "$bead")
+  if [[ -z ${lien:-} ]] && jq -e '.metadata | has("gc.escalation_lien")' <<<"$ISSUE" >/dev/null; then
     lien=none
   fi
-  emit_benjamin "$bead" "$quoi" "$pourquoi" "$lettered" "$bloquant" "${lien:-}"
+  motif_listed "$motif" && route=benjamin
+  emit_request "$route" "$motif" "$bead" "$quoi" "$pourquoi" "$lettered" "$bloquant" "${lien:-}"
 }
 
 cmd_benjamin() {
@@ -293,7 +371,7 @@ cmd_repondre() {
   qui=$actor
   [[ $actor == benjamin ]] && qui=$OPERATOR_NAME
   local issue que_faire_raw chosen option_texte now reopen_note=""
-  local -a reopen_args=()
+  local -a reopen_args=() decided_args=()
   issue=$(show_bead "$bead")
   que_faire_raw=$(jq -r '.metadata["gc.escalation_que_faire"] // ""' <<<"$issue")
   [[ -n $que_faire_raw ]] || die "$bead ne porte aucune option enregistrée par escalation-door."
@@ -307,6 +385,9 @@ cmd_repondre() {
     reopen_args=("${REOPEN_ARGS[@]}")
     reopen_note=" ; $bead rouvert (était bloqué en attente de cette réponse)"
   fi
+  # ADR-0036 point 3: an answer by anyone but Benjamin is a delegated
+  # decision, recorded with the agent that took it.
+  [[ $actor == benjamin ]] || decided_args=(--set-metadata "gc.decided_by=$actor")
   "$GC_BIN" bd update "$bead" \
     --set-metadata "gc.escalation_response_option=$lettre" \
     --set-metadata "gc.escalation_response_at=$now" \
@@ -314,9 +395,17 @@ cmd_repondre() {
     --set-metadata "gc.needs_benjamin=none" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
+    --set-metadata "gc.escalation_mayor_overdue_at=none" \
+    "${decided_args[@]}" \
     "${reopen_args[@]}" \
     --append-notes "RÉPONSE: $lettre — $option_texte$reopen_note" \
     >/dev/null || die "Beads write failed for $bead."
+  if [[ $actor != benjamin ]]; then
+    # The comment the daily report lists (ADR-0036 point 4); best effort,
+    # gc.decided_by above is the record.
+    "$GC_BIN" bd comments add "$bead" "Décision déléguée (ADR-0036) : $actor a choisi $lettre) $option_texte sur $bead. Retour arrière : une autre réponse par escalation-door repondre, ou défaire l'effet de cette option." \
+      >/dev/null 2>&1 || log "WARNING: the delegated-decision comment was not written on $bead (gc.decided_by is)."
+  fi
   "$GC_BIN" mail send mayor --notify \
     -s "Réponse de $qui: $bead" \
     -m "ACTION: escalation-door recorded $qui's answer
@@ -340,6 +429,7 @@ cmd_mayor() {
     "$GC_BIN" bd update "$bead" \
       --set-metadata "gc.escalation_mayor_paged_at=$paged_at" \
       --set-metadata "gc.escalation_mayor_reason=$reason" \
+      --set-metadata "gc.escalation_mayor_overdue_at=none" \
       --append-notes "MAYOR FIRST: $reason" \
       >/dev/null || die "Beads write failed for $bead."
   fi
@@ -348,34 +438,9 @@ cmd_mayor() {
     -m "ACTION: escalation-door paged the Mayor first
 STATE: $reason
 EVIDENCE: gc bd show $bead
-NEXT: resolve within 2h of $paged_at, or escalation-door sweep escalates to $OPERATOR_NAME" \
+NEXT: decide it yourself (ADR-0036); escalation-door sweep re-mails you once 2h after $paged_at, never $OPERATOR_NAME" \
     >/dev/null || die "Could not mail mayor; retry rather than treating this page as delivered."
   printf 'ESCALATED (mayor-first): %s — %s\n' "$bead" "$reason"
-}
-
-# sweep_payload builds a JSON payload that cmd_benjamin is guaranteed to
-# accept: <bead>'s own quoi/pourquoi/que_faire if escalation-door already
-# recorded them on it, otherwise the fixed repli text -- promoting a
-# Mayor-first escalation must never fail on an incomplete source (T06).
-sweep_payload() {  # bead issue_json reason
-  local bead=$1 issue=$2 reason=$3
-  local language quoi pourquoi que_faire existing_que_faire
-  language=$(operator_language)
-  quoi="Escalade Mayor-first non résolue après 2h : $reason"
-  if (( ${#quoi} > MAX_LINE_LENGTH )); then
-    quoi="${quoi:0:$((MAX_LINE_LENGTH - 1))}…"
-  fi
-  existing_que_faire=$(jq -r '.metadata["gc.escalation_que_faire"] // ""' <<<"$issue")
-  if [[ -n $existing_que_faire ]] && jq -e 'type == "array" and length > 0' <<<"$existing_que_faire" >/dev/null 2>&1; then
-    pourquoi=$(jq -r '.metadata["gc.escalation_pourquoi"] // empty' <<<"$issue")
-    [[ -n $pourquoi ]] || pourquoi="Un agent demande ta décision sur $bead ; il n'a pas dit pourquoi"
-    que_faire=$(jq -c '[.[] | {option, consequence, recommande, raison}]' <<<"$existing_que_faire")
-  else
-    pourquoi="Un agent demande ta décision sur $bead ; il n'a pas dit pourquoi"
-    que_faire='[{"option":"continuer avec un agent","consequence":"Un agent reprend ce sujet avec ce contexte."}]'
-  fi
-  jq -nc --arg quoi "$quoi" --arg pourquoi "$pourquoi" --arg langue "$language" --argjson que_faire "$que_faire" \
-    '{quoi: $quoi, pourquoi: $pourquoi, que_faire: $que_faire, langue: $langue, bloquant: false}'
 }
 
 page_resolved_by_closing() {  # issue_json reason
@@ -398,7 +463,7 @@ cmd_sweep() {
   local count=0
   while IFS= read -r listed_issue; do
     [[ -n $listed_issue ]] || continue
-    local bead issue paged_at needs reason paged_epoch age payload
+    local bead issue paged_at needs reason paged_epoch age overdue
     bead=$(jq -r '.id // empty' <<<"$listed_issue")
     [[ -n $bead ]] || continue
     issue=$listed_issue
@@ -420,6 +485,8 @@ cmd_sweep() {
     [[ -n $paged_at && $paged_at != none ]] || continue
     needs=$(jq -r '.metadata["gc.needs_benjamin"] // empty' <<<"$issue")
     [[ -z $needs || $needs == none ]] || continue
+    overdue=$(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // empty' <<<"$issue")
+    [[ -z $overdue || $overdue == none ]] || continue
     reason=$(jq -r '.metadata["gc.escalation_mayor_reason"] // "unresolved"' <<<"$issue")
     # A page about the bead's own PR ("PR #N rejected ...", pr-autopilot) is
     # resolved once deliver-close has closed the bead on that same PR's
@@ -440,10 +507,20 @@ cmd_sweep() {
     paged_epoch=$(date -u -d "$paged_at" +%s 2>/dev/null) || continue
     age=$(( now - paged_epoch ))
     ((age >= MAYOR_FIRST_GRACE_SECONDS)) || continue
-    payload=$(sweep_payload "$bead" "$issue" "$reason")
-    benjamin_payload "$bead" "$payload" "$issue" >/dev/null \
-      || die "sweep could not escalate $bead to $OPERATOR_NAME."
-    printf 'SWEPT: %s promoted to %s after %ds unresolved\n' "$bead" "$OPERATOR_NAME" "$age"
+    # J3 (ADR-0036): what is not on the closed list stays the Mayor's to
+    # decide. One reminder, stamped, never a promotion to the operator.
+    "$GC_BIN" bd update "$bead" \
+      --set-metadata "gc.escalation_mayor_overdue_at=$(now_iso)" \
+      --append-notes "MAYOR FIRST OVERDUE: $reason -- toujours sans décision après 2h" \
+      >/dev/null || die "Beads write failed for $bead."
+    "$GC_BIN" mail send mayor --notify \
+      -s "Décision en retard (ADR-0036): $bead" \
+      -m "ACTION: escalation-door sweep found this page unresolved 2h after $paged_at
+STATE: $reason
+EVIDENCE: gc bd show $bead
+NEXT: decide it yourself and record it (gc.decided_by, « Décision déléguée (ADR-0036) : »); it never goes to $OPERATOR_NAME unless it is on ADR-0036's closed list" \
+      >/dev/null || die "Could not mail mayor about overdue $bead."
+    printf 'SWEPT: %s overdue after %ds, Mayor reminded\n' "$bead" "$age"
     count=$((count + 1))
   # A settled escalation keeps its key for ever, at "none", so the list only
   # grows. The list row is enough to reject settled and not-yet-due pages;
@@ -453,7 +530,9 @@ cmd_sweep() {
     | select((.metadata | type) != "object"
         or (((.metadata["gc.escalation_mayor_paged_at"] // "") | tostring) as $paged
             | ((.metadata["gc.needs_benjamin"] // "") | tostring) as $needs
-            | $paged != "" and $paged != "none" and ($needs == "" or $needs == "none")))
+            | ((.metadata["gc.escalation_mayor_overdue_at"] // "") | tostring) as $overdue
+            | $paged != "" and $paged != "none" and ($needs == "" or $needs == "none")
+              and ($overdue == "" or $overdue == "none")))
     ' <<<"$due_json")
   ((count > 0)) || printf 'SWEPT: nothing due\n'
 }
@@ -473,6 +552,7 @@ cmd_clear() {
     --set-metadata "gc.needs_benjamin=none" \
     --set-metadata "gc.escalation_mayor_paged_at=none" \
     --set-metadata "gc.escalation_mayor_reason=none" \
+    --set-metadata "gc.escalation_mayor_overdue_at=none" \
     --set-metadata "gc.escalation_cleared_at=$(now_iso)" \
     "${reopen_args[@]}" \
     --append-notes "DECISION CLEARED: escalation reset to none$reopen_note" \
@@ -512,6 +592,22 @@ cmd_list() {
     printf '%s' "$closed_lines"
   fi
 
+  # J3 (ADR-0036): what the door handed to the Mayor stays visible until he
+  # decides it -- the operator session and the daily report read it here.
+  local rerouted_json rerouted_lines
+  rerouted_json=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_route --json 2>/dev/null) \
+    || die "Could not list the requests rerouted to the Mayor."
+  rerouted_lines=$(jq -r '(if type == "array" then . else [.] end)[]
+    | select((.metadata["gc.escalation_route"] // "") == "mayor")
+    | select(((.metadata["gc.escalation_mayor_paged_at"] // "none") | tostring) != "none")
+    | select(((.metadata["gc.needs_benjamin"] // "none") | tostring) | . == "none" or . == "")
+    | "  \(.id) — \(.metadata["gc.escalation_mayor_reason"] // "")"
+      + (((.metadata["gc.escalation_lien"] // "none") | tostring) as $l
+         | if $l == "none" or $l == "" then "" else " — dossier : \($l)" end)' <<<"${rerouted_json:-[]}")
+  if [[ -n $rerouted_lines ]]; then
+    printf 'RENVOYÉ AU MAYOR (hors liste ADR-0036, à lui de décider) :\n%s\n' "$rerouted_lines"
+  fi
+
   # Pending proposals is counted by proposal-door itself (T07) -- it
   # excludes proposals already accepted or rejected; a legacy proposal
   # with no gc.proposal_state still counts as pending.
@@ -539,6 +635,7 @@ main() {
 require_command jq
 require_command "$GC_BIN"
 require_command flock
+ISSUE=""
 LOCK_FILE="${ESCALATION_DOOR_LOCK_FILE:-${XDG_RUNTIME_DIR:-/tmp}/agent-factory-escalation-door.lock}"
 exec 9>"$LOCK_FILE"
 if ! flock -w "${ESCALATION_DOOR_LOCK_WAIT_SECONDS:-10}" 9; then
