@@ -48,6 +48,20 @@ mapfile -t calls < "$CALLS"
 [[ ${calls[2]} == "--city $REPO_ROOT bd update af-fixture --set-metadata gc.dispatched_via=dispatch-door --set-metadata gc.dispatch_formula=mol-do-work --set-metadata gc.dispatch_target=factory-worker --set-metadata gc.dispatch_rig=agent-factory" ]] \
   || fail "unexpected dispatch-door stamp call: ${calls[2]}"
 
+# af-zry5xu: launched from an agent's work tree with no FACTORY_ROOT, the
+# dispatch names the main checkout to gc, never the work tree (which lacks
+# the generated city.provider.toml).
+git init -q "$TMP/main"
+git -C "$TMP/main" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$TMP/main" worktree add -q "$TMP/wt" -b do-work/af-fixture
+cp -r "$REPO_ROOT/bin" "$REPO_ROOT/lib" "$REPO_ROOT/config" "$TMP/wt/"
+MAIN=$(cd "$TMP/main" && pwd -P)
+: > "$CALLS"
+env -u FACTORY_ROOT GC_BIN="$TMP/gc" "$TMP/wt/bin/factory-work-dispatch" af-fixture >/dev/null
+mapfile -t calls < "$CALLS"
+[[ ${calls[1]-} == "--city $MAIN sling factory-worker af-fixture --on mol-do-work --reassign" ]] \
+  || fail "a dispatch from a work tree did not name the main checkout: ${calls[*]-}"
+
 : > "$CALLS"
 GC_BIN="$TMP/gc" FACTORY_ROOT="$REPO_ROOT" \
   FACTORY_WORK_DISPATCH_CONVOY_STATE_BIN="$TMP/convoy-state" \

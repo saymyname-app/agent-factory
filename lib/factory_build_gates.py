@@ -536,8 +536,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", help="city root (default: FACTORY_ROOT or repository root)")
     args = parser.parse_args(argv)
 
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from factory_city import city_root
+
     default_root = Path(__file__).resolve().parents[1]
-    root = Path(args.root or os.environ.get("FACTORY_ROOT", default_root)).resolve()
+    # From an agent's work tree, the live checkout (lib/factory_city.py, af-zry5xu).
+    root = Path(args.root or os.environ.get("FACTORY_ROOT") or city_root(default_root)).resolve()
     gc_bin = os.environ.get("GC_BIN", "gc")
     try:
         fixes, problems, rig_count, path_count = reconcile(root, gc_bin, args.check_only)
