@@ -487,6 +487,13 @@ class TicketEvaluationTest(unittest.TestCase):
         self.state("record-code-review", CONVOY, ticket, "--file", self.json_file("code-review.json", {
             "commit": tip, "findings": [], "answers": {}, "recorded_by": "delivery-reviewer-fx"}))
 
+    def next_second(self):
+        """Hold code's clock (convoy_state.now) one second after every event
+        written so far: what comes next is at a later second without waiting
+        for the wall clock to turn, which a fast run could share (af-b6p87s)."""
+        held = int(self.env.get("CONVOY_STATE_NOW", 0))
+        self.env["CONVOY_STATE_NOW"] = str(max(held, int(time.time())) + 1)
+
     def settle(self, expect=0, env=None):
         proc = self.run_cmd(TOOL, "settle", CONVOY, "--repo", self.repo, env=env)
         self.assertEqual(expect, proc.returncode, proc.stdout + proc.stderr)
@@ -1396,7 +1403,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.recorded(handed)
         self.settle()
         previous = self.evaluation()["rounds"]
-        time.sleep(1.1)  # Distinct event timestamps, as in the durable parking contract.
+        self.next_second()  # Distinct event timestamps, as in the durable parking contract.
         self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", "a")
         self.evaluator("silent")
         self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["launched"]])
@@ -1416,7 +1423,9 @@ class TicketEvaluationTest(unittest.TestCase):
         """The demonstration line unobservable by the criterion: the ticket is
         parked, the operator answers its request with `option`, the parking is
         lifted as bin/convoy-advance lifts it, and the Evaluator replays it,
-        still unobservable. Returns what the replay recorded."""
+        still unobservable. Returns what the replay recorded. Every event
+        before the lift is written in one second, as on a fast run."""
+        self.env["CONVOY_STATE_NOW"] = str(int(time.time()))
         tip, request = self.open_evaluation()
         handed = self.handed(tip, request)
         handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="aucun jeu n'a de CI absente")
@@ -1425,7 +1434,7 @@ class TicketEvaluationTest(unittest.TestCase):
         answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, option, "--actor", "benjamin",
                                 env={"ESCALATION_DOOR_NOW": "4102444800"})  # after the parking
         self.assertEqual(0, answered.returncode, answered.stdout + answered.stderr)
-        time.sleep(1.1)  # The lift after the parked round, at a later second (retry_after_lift).
+        self.next_second()  # The lift after the parked round, at a later second (retry_after_lift).
         self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", option)
         self.evaluator("silent")
         self.assertEqual([SLICE], [e["ticket"] for e in self.settle()["launched"]])
@@ -1461,7 +1470,7 @@ class TicketEvaluationTest(unittest.TestCase):
         answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, "c", "--actor", "benjamin",
                                 env={"ESCALATION_DOOR_NOW": "4102444800"})  # after the parking
         self.assertEqual(0, answered.returncode, answered.stdout + answered.stderr)
-        time.sleep(1.1)  # The lift after the parked round, at a later second (retry_after_lift).
+        self.next_second()  # The lift after the parked round, at a later second (retry_after_lift).
         self.state("lift-park", CONVOY, SLICE, "--request", SLICE, "--option", "c")
         self.assertNotIn("proven_by_test", self.shown()["park_lifts"][-1])
         self.evaluator("silent")
@@ -1500,8 +1509,8 @@ class TicketEvaluationTest(unittest.TestCase):
         self.assertEqual("Réévaluer sur le produit relancé", offered[2]["option"])
         self.assertEqual(quoi, self.bead_metadata(SLICE)["gc.needs_benjamin"])
         again = self.bead_metadata(SLICE)["gc.escalation_horodatage"]
-        time.sleep(1.1)  # a second request would carry a later time
-        self.settle()
+        # A second request would carry a later time.
+        self.settle(env={"ESCALATION_DOOR_NOW": str(int(time.time()) + 60)})
         self.assertEqual(again, self.bead_metadata(SLICE)["gc.escalation_horodatage"], "asked twice")
 
     def test_any_other_answer_leaves_the_unobservable_a_planning_exception(self):
