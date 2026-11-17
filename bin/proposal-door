@@ -50,6 +50,12 @@
 # fields, only adds the new ones going forward. The Cockpit shows it in
 # the health zone as « à reformuler par la porte » (ADR-0029 point 4).
 #
+# A transition in the operator's name (acteur benjamin, his name, or a
+# benjamin-* login) needs `--ref <référence>` anywhere among its arguments,
+# citing where he said it -- cockpit:<login>, session:<id> or
+# github:<comment url> (lib/operator_gesture.sh, ADR-0036 point 5); the door
+# records it as gc.proposal_response_ref and refuses the gesture without it.
+#
 # Usage: proposal-door <command> [arguments]
 #
 # Commands:
@@ -184,6 +190,8 @@ die() { log "ERROR: $1"; exit 1; }
 REQUEST_INCOMPLETE="proposition incomplète"
 # shellcheck source=lib/request_fields.sh
 . "$ROOT/lib/request_fields.sh"
+# shellcheck source=lib/operator_gesture.sh
+. "$ROOT/lib/operator_gesture.sh"
 
 usage() {
   awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
@@ -371,6 +379,7 @@ cmd_create() {
 cmd_reconvertir() {
   local proposal=${1:-} raison=${2:-} que_faire_raw=${3:-} acteur=${4:-}
   [[ -n $proposal && -n $acteur ]] || die "Usage: $PROGRAM_NAME reconvertir <proposition> <raison> <que_faire_json> <acteur>"
+  operator_gesture_check "$acteur" "$OPERATOR_REF"
   field_ok "raison" "$raison"
   valid_bead_id "$proposal" || die "'$proposal' is not a Bead id."
   local bead_json classe lettered old_que_faire bug_id bug_json bug_holder
@@ -406,6 +415,7 @@ cmd_reconvertir() {
     --set-metadata "gc.proposal_reconversion_raison=$raison" \
     --set-metadata "gc.proposal_response_at=$(now_iso)" \
     --set-metadata "gc.proposal_response_actor=$acteur" \
+    "${OPERATOR_REF_ARGS[@]}" \
     --append-notes "PROPOSITION RECONVERTIE en décision par $acteur — $raison" \
     >/dev/null || die "Beads write failed for $proposal."
   printf 'RECONVERTIE: %s — décision (%s)\n' "$proposal" "$raison"
@@ -414,12 +424,14 @@ cmd_reconvertir() {
 cmd_accepter() {
   local bead=${1:-} acteur=${2:-}
   [[ -n $bead && -n $acteur ]] || die "Usage: $PROGRAM_NAME accepter <bead> <acteur>"
+  operator_gesture_check "$acteur" "$OPERATOR_REF"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
   show_bead "$bead" >/dev/null
   "$GC_BIN" bd update "$bead" \
     --set-metadata "gc.proposal_state=a_planifier" \
     --set-metadata "gc.proposal_response_at=$(now_iso)" \
     --set-metadata "gc.proposal_response_actor=$acteur" \
+    "${OPERATOR_REF_ARGS[@]}" \
     --append-notes "PROPOSITION ACCEPTÉE par $acteur — passe à planifier" \
     >/dev/null || die "Beads write failed for $bead."
   printf 'ACCEPTÉE: %s — à planifier\n' "$bead"
@@ -429,6 +441,7 @@ cmd_rejeter() {
   local bead=${1:-} raison=${2:-} acteur=${3:-}
   [[ -n $bead && -n $acteur ]] || die "Usage: $PROGRAM_NAME rejeter <bead> <raison> <acteur>"
   field_ok "raison" "$raison"
+  operator_gesture_check "$acteur" "$OPERATOR_REF"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
   show_bead "$bead" >/dev/null
   "$GC_BIN" bd update "$bead" \
@@ -436,6 +449,7 @@ cmd_rejeter() {
     --set-metadata "gc.proposal_reject_reason=$raison" \
     --set-metadata "gc.proposal_response_at=$(now_iso)" \
     --set-metadata "gc.proposal_response_actor=$acteur" \
+    "${OPERATOR_REF_ARGS[@]}" \
     --append-notes "PROPOSITION REJETÉE par $acteur — $raison" \
     >/dev/null || die "Beads write failed for $bead."
   printf 'REJETÉE: %s — %s\n' "$bead" "$raison"
@@ -445,12 +459,14 @@ cmd_reporter() {
   local bead=${1:-} heure=${2:-} acteur=${3:-}
   [[ -n $bead && -n $acteur ]] || die "Usage: $PROGRAM_NAME reporter <bead> <heure> <acteur>"
   field_ok "heure" "$heure"
+  operator_gesture_check "$acteur" "$OPERATOR_REF"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
   show_bead "$bead" >/dev/null
   "$GC_BIN" bd update "$bead" \
     --set-metadata "gc.proposal_report_until=$heure" \
     --set-metadata "gc.proposal_response_at=$(now_iso)" \
     --set-metadata "gc.proposal_response_actor=$acteur" \
+    "${OPERATOR_REF_ARGS[@]}" \
     --append-notes "PROPOSITION REPORTÉE par $acteur — jusqu'à $heure" \
     >/dev/null || die "Beads write failed for $bead."
   printf 'REPORTÉE: %s — jusqu'"'"'à %s\n' "$bead" "$heure"
@@ -462,6 +478,7 @@ cmd_resoudre() {
   field_ok "preuve" "$preuve"
   grep -qE '#[0-9]+|[0-9a-f]{7,40}' <<<"$preuve" \
     || die "la preuve « $preuve » ne nomme ni PR (#123) ni commit (sha) : une proposition ne se résout que sur preuve de merge."
+  operator_gesture_check "$acteur" "$OPERATOR_REF"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
   local bead_json state
   bead_json=$(show_bead "$bead")
@@ -480,6 +497,7 @@ cmd_resoudre() {
     --set-metadata "gc.proposal_resolved_by=$preuve" \
     --set-metadata "gc.proposal_response_at=$(now_iso)" \
     --set-metadata "gc.proposal_response_actor=$acteur" \
+    "${OPERATOR_REF_ARGS[@]}" \
     --append-notes "PROPOSITION RÉSOLUE par $acteur — $preuve" \
     >/dev/null || die "Beads write failed for $bead."
   printf 'RÉSOLUE: %s — %s\n' "$bead" "$preuve"
@@ -540,7 +558,24 @@ cmd_list() {
            ((.metadata // {})["gc.proposal_quoi"] // .title // "")] | @tsv'
 }
 
+OPERATOR_REF=""
+OPERATOR_REF_ARGS=()
+
 main() {
+  # --ref may sit anywhere: take it out before the positional arguments.
+  local -a args=()
+  while (($#)); do
+    if [[ $1 == --ref ]]; then
+      OPERATOR_REF=${2:-}
+      [[ -n $OPERATOR_REF ]] || die "--ref sans référence."
+      OPERATOR_REF_ARGS=(--set-metadata "gc.proposal_response_ref=$OPERATOR_REF")
+      shift 2 || shift
+    else
+      args+=("$1")
+      shift
+    fi
+  done
+  set -- "${args[@]}"
   local command=${1:-}
   [[ -n $command ]] || { usage >&2; return 2; }
   shift

@@ -90,7 +90,8 @@ class TheDoors(unittest.TestCase):
                       "labels": ["proposal"], "metadata": {"gc.proposal_state": "ouverte"}})
         path.write_text(json.dumps(beads, ensure_ascii=False), encoding="utf-8")
         try:
-            return bead, subprocess.run([env["COCKPIT_PROPOSAL_DOOR_BIN"], "rejeter", bead, REASON, "benjamin"],
+            return bead, subprocess.run([env["COCKPIT_PROPOSAL_DOOR_BIN"], "rejeter", bead, REASON, "benjamin",
+                                          "--ref", "cockpit:tailscale-verified"],
                                         env=env, capture_output=True, text=True, timeout=PATIENCE)
         except subprocess.TimeoutExpired:
             return bead, None

@@ -208,7 +208,7 @@ seed af-tool2 '{"id":"af-tool2","status":"open","metadata":{},"notes":"","labels
 ESCALATION_DOOR_NOW=$T_FIRST door benjamin af-tool2 "$(jq 'del(.motif)' <<<"$COMPLETE_REQUEST")" >/dev/null || fail "reroute should succeed"
 [[ $(jq -r '.metadata["gc.escalation_first_at"] // "none"' <<<"$(bead af-tool2)") == none ]] \
   || fail "a request rerouted to the Mayor never reached the operator: no first_at"
-ESCALATION_DOOR_NOW=$((T_FIRST + 5400)) door repondre af-first a --actor benjamin >/dev/null || fail "answer should succeed"
+ESCALATION_DOOR_NOW=$((T_FIRST + 5400)) door repondre af-first a --actor benjamin --ref session:test-session-01 >/dev/null || fail "answer should succeed"
 seed af-old "$(jq -nc '{id: "af-old", status: "open", notes: "", labels: [],
   metadata: {"gc.escalation_first_at": "2026-11-17T00:00:00Z", "gc.needs_benjamin": "vieille demande"}}')"
 TESTS_RUN=$((TESTS_RUN + 1))
@@ -273,7 +273,7 @@ grep -Fq "DOSSIER:" "$TEST_TMP/calls.log" && fail "the mail of a request without
 # --- repondre writes the chosen option, clears, and wakes the Mayor --------
 TESTS_RUN=$((TESTS_RUN + 1))
 : >"$TEST_TMP/calls.log"
-door repondre af-blocker a --actor benjamin >/dev/null || fail "repondre should succeed for a known option"
+door repondre af-blocker a --actor benjamin --ref session:test-session-01 >/dev/null || fail "repondre should succeed for a known option"
 written=$(bead af-blocker)
 [[ $(jq -r '.metadata["gc.escalation_response_option"]' <<<"$written") == a ]] \
   || fail "repondre did not write the chosen option"
@@ -307,7 +307,8 @@ fi
 TESTS_RUN=$((TESTS_RUN + 1))
 reset_beads
 seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
-door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null || fail "a complete request should be accepted"
+# A request off the closed list (J3): an agent may decide it.
+door benjamin af-blocker "$(jq 'del(.motif)' <<<"$COMPLETE_REQUEST")" >/dev/null || fail "a complete request should be accepted"
 before=$(bead af-blocker)
 if door repondre af-blocker a >/dev/null 2>&1; then
   fail "repondre with no actor must refuse instead of signing for Benjamin"
@@ -327,11 +328,41 @@ grep -Fq "Benjamin" "$TEST_TMP/calls.log" && fail "the wake-up mail of a session
 TESTS_RUN=$((TESTS_RUN + 1))
 reset_beads
 seed af-blocker '{"id":"af-blocker","status":"open","metadata":{},"notes":"","labels":[]}'
-door benjamin af-blocker "$COMPLETE_REQUEST" >/dev/null || fail "a complete request should be accepted"
+door benjamin af-blocker "$(jq 'del(.motif)' <<<"$COMPLETE_REQUEST")" >/dev/null || fail "a complete request should be accepted"
 GC_SESSION_NAME=worker-7 door repondre af-blocker a >/dev/null \
   || fail "repondre should fall back on the Gas City session name"
 [[ $(jq -r '.metadata["gc.escalation_response_actor"]' <<<"$(bead af-blocker)") == worker-7 ]] \
   || fail "repondre did not record the Gas City session that answered"
+
+# --- J3.4 (ADR-0036 point 5): a gesture in Benjamin's name cites where -----
+reset_beads
+seed af-own '{"id":"af-own","status":"open","metadata":{},"notes":"","labels":[]}'
+door benjamin af-own "$COMPLETE_REQUEST" >/dev/null || fail "a listed request should be accepted"
+before=$(bead af-own)
+TESTS_RUN=$((TESTS_RUN + 1))
+for actor in benjamin Benjamin benjamin-hurand; do
+  door repondre af-own a --actor "$actor" >/dev/null 2>&1 && fail "--actor $actor without --ref must refuse"
+done
+door repondre af-own a --actor benjamin --ref "il l'a dit" >/dev/null 2>&1 && fail "an unreadable --ref must refuse"
+door repondre af-own a --actor benjamin --ref session:abc >/dev/null 2>&1 && fail "a too short session id must refuse"
+door repondre af-own a --actor benjamin --ref github:https://example.com/x >/dev/null 2>&1 && fail "a non-GitHub url must refuse"
+[[ $(bead af-own) == "$before" ]] || fail "a refused gesture wrote onto the bead"
+TESTS_RUN=$((TESTS_RUN + 1))
+door repondre af-own a --actor mayor >/dev/null 2>&1 && fail "an agent must not answer a request on the closed list"
+BEADS_ACTOR=po-factory-vm door repondre af-own a >/dev/null 2>&1 && fail "a session must not answer a request on the closed list"
+[[ $(bead af-own) == "$before" ]] || fail "a refused agent answer wrote onto the bead"
+TESTS_RUN=$((TESTS_RUN + 1))
+REF="github:https://github.com/saymyname-app/agent-factory/pull/898#issuecomment-123456"
+door repondre af-own a --ref "$REF" --actor benjamin-hurand >/dev/null || fail "a referenced gesture must be accepted, flags in any order"
+written=$(bead af-own)
+[[ $(jq -r '.metadata["gc.escalation_response_ref"]' <<<"$written") == "$REF" ]] || fail "the reference must be recorded"
+[[ $(jq -r '.metadata["gc.escalation_response_actor"]' <<<"$written") == benjamin ]] || fail "his logins are recorded as benjamin"
+[[ $(jq -r '.metadata["gc.decided_by"] // "none"' <<<"$written") == none ]] || fail "his answer is not a delegated decision"
+TESTS_RUN=$((TESTS_RUN + 1))
+reset_beads
+seed af-own '{"id":"af-own","status":"open","metadata":{},"notes":"","labels":[]}'
+door benjamin af-own "$COMPLETE_REQUEST" >/dev/null || fail "a listed request should be accepted"
+door repondre af-own a --actor benjamin --ref cockpit:tailscale-verified >/dev/null || fail "the Cockpit's reference must be accepted"
 
 # --- list (read-only CLI) ---------------------------------------------------
 TESTS_RUN=$((TESTS_RUN + 1))

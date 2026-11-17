@@ -71,10 +71,26 @@ class ProposalDoorTest(unittest.TestCase):
             "PROPOSAL_DOOR_NOW": "1790000000",
         }
 
-    def door(self, *args, check=False):
+    def door(self, *args, check=False, ref="session:proposal-door-test"):
+        # ADR-0036 point 5 (J3): a gesture as benjamin cites where he made it.
+        if ref and "benjamin" in args:
+            args = args + ("--ref", ref)
         return subprocess.run(
             (str(SCRIPT),) + args, env=self.env, text=True, capture_output=True, check=check
         )
+
+    def test_a_gesture_as_benjamin_without_reference_is_refused_and_writes_nothing(self):
+        self.seed("af-x", {"id": "af-x", "status": "open", "metadata": {}, "notes": "", "labels": ["proposal"]})
+        before = self.bead("af-x")
+        for verb in (("accepter", "af-x", "benjamin"), ("rejeter", "af-x", "Hors périmètre", "benjamin"),
+                     ("reporter", "af-x", "demain 09:00", "benjamin")):
+            result = self.door(*verb, ref=None)
+            self.assertNotEqual(0, result.returncode, verb)
+            self.assertIn("--ref", result.stderr)
+        self.assertEqual(before, self.bead("af-x"))
+        self.door("accepter", "af-x", "benjamin", check=True)
+        self.assertEqual("session:proposal-door-test", self.bead("af-x")["metadata"]["gc.proposal_response_ref"])
+        self.door("reporter", "af-x", "demain 09:00", "mayor", check=True, ref=None)
 
     def seed(self, bead_id, payload):
         (self.bead_dir / f"{bead_id}.json").write_text(json.dumps(payload), encoding="utf-8")

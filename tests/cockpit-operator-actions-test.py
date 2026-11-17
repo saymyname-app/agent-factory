@@ -270,7 +270,7 @@ class OperatorActionsSeamTest(unittest.TestCase):
 
         calls = self.read_calls(self.escalation_calls_file)
         # The click is Benjamin's own gesture: the Cockpit names him (af-zkdvur).
-        self.assertIn(["repondre", "af-rep1", "b", "--actor", "benjamin"], calls)
+        self.assertIn(["repondre", "af-rep1", "b", "--actor", "benjamin", "--ref", "cockpit:tailscale-verified"], calls)
 
         bead = self.read_bead("af-rep1")
         self.assertEqual("none", bead["metadata"]["gc.needs_benjamin"])
@@ -307,7 +307,7 @@ class OperatorActionsSeamTest(unittest.TestCase):
         self.assertEqual("benjamin", bead["metadata"]["gc.proposal_response_actor"])
 
         calls = self.read_calls(self.proposal_calls_file)
-        self.assertIn(["accepter", "af-prop1", "benjamin"], calls)
+        self.assertIn(["accepter", "af-prop1", "benjamin", "--ref", "cockpit:tailscale-verified"], calls)
 
     # ------------------------------------------------------------------
     # After an action that wrote, the list is right at once (2026-10-07:
@@ -386,7 +386,7 @@ class OperatorActionsSeamTest(unittest.TestCase):
         bead = self.read_bead("af-prop3")
         self.assertEqual("demain 10h", bead["metadata"]["gc.proposal_report_until"])
         calls = self.read_calls(self.proposal_calls_file)
-        self.assertIn(["reporter", "af-prop3", "demain 10h", "benjamin"], calls)
+        self.assertIn(["reporter", "af-prop3", "demain 10h", "benjamin", "--ref", "cockpit:tailscale-verified"], calls)
 
     def test_proposition_action_without_confirm_writes_nothing(self):
         self.write_beads([proposal_bead("af-prop4", "ajouter un filtre", "gagne du temps", OPTIONS_WITH_LETTERS, "2026-09-30T08:00:00Z")])
