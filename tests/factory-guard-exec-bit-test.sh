@@ -59,9 +59,13 @@ exit 1
 STUB
 chmod +x "$TMP/bin/gh"
 
+# The exec-bit check lives in `invariants`, the guard's first section, which
+# always runs; a zero budget reports every later section as not checked and
+# stops there (af-gh3cxi: five full runs of all sixteen sections overran 120 s
+# at loadavg 44 when they still read the live Beads/GitHub state).
 guard() {
   FACTORY_ROOT="$TMP/city" GC_BIN="$TMP/bin/gc" GH_BIN="$TMP/bin/gh" \
-    PATH="$TMP/bin:$PATH" "$GUARD" "$@" 2>&1 || true
+    FACTORY_GUARD_BUDGET_SECONDS=0 PATH="$TMP/bin:$PATH" "$GUARD" "$@" 2>&1 || true
 }
 
 # --- baseline: everything executable, guard reports it and repairs nothing --
