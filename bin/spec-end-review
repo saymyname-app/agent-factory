@@ -574,7 +574,7 @@ def raise_stop(convoy: Convoy, stop: dict[str, Any]) -> bool:
             {"option": "Laisser la revue de fin arrêtée",
              "consequence": "Le convoi reste ouvert, non livré ; cette demande ne revient pas."},
         ],
-        "langue": language.stdout.strip(), "bloquant": True,
+        "langue": language.stdout.strip(), "bloquant": True, "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
     }
     proc = run([str(ESCALATION_TOOL), "benjamin", bead_id, json.dumps(payload, ensure_ascii=False)])
     if proc.returncode != 0:

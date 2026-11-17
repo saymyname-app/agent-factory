@@ -66,7 +66,7 @@ class RedRepairHarness(first.ConvoyAdvanceHarness):
             "pourquoi": "Aucun commit à fusionner, aucune porte de clôture.",
             "que_faire": [{"option": "Corriger par maintenance sur main",
                            "consequence": "Le ticket reprend après la fusion."}],
-            "langue": "fr", "bloquant": True,
+            "langue": "fr", "bloquant": True, "motif": "d01",  # as bin/ticket-exit raises it (J3)
         }
         self.run_ok(ESCALATION, "benjamin", self.REPAIR, json.dumps(request))
         self.run_ok(STATE, "park", CONVOY, self.REPAIR, "--cause", "operator_request", "--detail", request["quoi"])

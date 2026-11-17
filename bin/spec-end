@@ -440,7 +440,7 @@ def raise_requests(convoy_id: str, state: dict[str, Any], refused: list[dict[str
             continue
         ids = [item["id"] for item in items]
         request = item_request(ticket["id"], items)
-        payload = json.dumps({**request, "langue": operator_language(), "bloquant": True}, ensure_ascii=False)
+        payload = json.dumps({**request, "langue": operator_language(), "bloquant": True, "motif": "d01"}, ensure_ascii=False)  # ADR-0037: frozen D01, routing kept until its extinction (J3)
         proc = run([str(ESCALATION_TOOL), "benjamin", ticket["id"], payload])
         if proc.returncode != 0:
             raise Refusal(f"la porte d'escalade a refusé la demande sur {ticket['id']} : {detail_of(proc)}")

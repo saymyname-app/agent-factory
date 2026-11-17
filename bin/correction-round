@@ -606,11 +606,7 @@ def operator_request(ticket: dict[str, Any], stop: dict[str, Any], why: str | No
             {"option": "Laisser le ticket arrêté",
              "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
         ],
-        "langue": language.stdout.strip(), "bloquant": True,
-        # J3 (ADR-0036): the Mayor raises it only when he arbitrated that the
-        # decision is a product one; the count or fidelity alone is not on
-        # the closed list and goes back to him.
-        **({"motif": "intention-produit"} if why else {}),
+        "langue": language.stdout.strip(), "bloquant": True, "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
     }
     proc = run([str(ESCALATION_TOOL), "benjamin", ticket["id"], json.dumps(payload, ensure_ascii=False)])
     if proc.returncode != 0:

@@ -17,7 +17,9 @@
 #                            irreversible, admin (ADR-0016's list),
 #                            intention-produit, seuils, b1, outcome (what
 #                            ADR-0036 keeps for him), inclassable (a
-#                            decision that does not know its box).
+#                            decision that does not know its box); and,
+#                            until 11/12/2026, d01 (the frozen D01
+#                            machinery of ADR-0037, counted hors liste).
 #   Mayor                  -- everything else. A `benjamin` request without
 #                            a listed motif is not refused: it is rerouted
 #                            to the Mayor, who decides it (ADR-0036 point
@@ -164,6 +166,13 @@ BEAD_ID_RE='^[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+(\.[A-Za-z0-9]+)*$'
 # inclassable: « une décision qui ne sait pas dans quelle case elle tombe
 # va à Benjamin ».
 MOTIFS_BENJAMIN=" exposition destruction sortie irreversible admin intention-produit seuils b1 outcome inclassable "
+# Transitional, not on the closed list: the frozen D01 machinery of
+# ADR-0037 (convoy-advance, correction-round, code-review, ticket-exit,
+# ticket-evaluation, outcome-evaluation, spec-end, spec-end-review) keeps
+# the route its contracts were written for until its extinction on
+# 11/12/2026. Dormant since convoy-advance was paused (16/11); `mesure`
+# counts it hors liste. Remove it with the D01 components.
+MOTIFS_TRANSITOIRES=" d01 "
 
 log() { printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2; }
 die() { log "ERROR: $1"; exit 1; }
@@ -244,14 +253,16 @@ emit_request() {  # route motif bead quoi pourquoi lettered_que_faire_json bloqu
     route_args+=(--set-metadata "gc.escalation_mayor_reason=$quoi"
       --append-notes "HORS LISTE ADR-0036 (motif « ${motif:-aucun} ») → Mayor : $quoi")
   fi
+  # The route's own fields first: gc.needs_benjamin leads the write, as it
+  # always has.
   "$GC_BIN" bd update "$bead" \
+    "${route_args[@]}" \
     --set-metadata "gc.escalation_route=$route" \
     --set-metadata "gc.escalation_motif=${motif:-none}" \
     --set-metadata "gc.escalation_pourquoi=$pourquoi" \
     --set-metadata "gc.escalation_que_faire=$que_faire_json" \
     --set-metadata "gc.escalation_bloquant=$bloquant" \
     --set-metadata "gc.escalation_horodatage=$horodatage" \
-    "${route_args[@]}" \
     "${lien_args[@]}" \
     >/dev/null || die "Beads write failed for $bead."
   options_summary=$(jq -r '
@@ -285,8 +296,8 @@ NEXT: decide it -- escalation-door repondre $bead <lettre> --actor <you> (record
   printf 'REROUTED (mayor, hors liste ADR-0036, motif « %s »): %s — %s\n' "${motif:-aucun}" "$bead" "$quoi"
 }
 
-motif_listed() {  # $1 = motif
-  [[ -n $1 && $MOTIFS_BENJAMIN == *" $1 "* ]]
+motif_listed() {  # $1 = motif -> routes to the operator
+  [[ -n $1 && ( $MOTIFS_BENJAMIN == *" $1 "* || $MOTIFS_TRANSITOIRES == *" $1 "* ) ]]
 }
 
 benjamin_payload() {  # bead payload

@@ -610,19 +610,16 @@ def operator_request(args: argparse.Namespace) -> dict[str, Any]:
     if not args.request:
         raise Refusal("sortie « demande opérateur » sans demande (--request) : quoi, pourquoi, que_faire")
     given = read_json_file(args.request, "demande opérateur")
-    if not isinstance(given, dict) or set(given) - {"quoi", "pourquoi", "que_faire", "motif"}:
-        raise Refusal("demande opérateur mal formée (attendu : quoi, pourquoi, que_faire, motif facultatif)")
+    if not isinstance(given, dict) or set(given) - {"quoi", "pourquoi", "que_faire"}:
+        raise Refusal("demande opérateur mal formée (attendu : quoi, pourquoi, que_faire)")
     options = given.get("que_faire")
     if not isinstance(options, list) or not options or not all(isinstance(option, dict) for option in options):
         raise Refusal("demande : champ « que_faire » absent ou vide (attendu : une liste d'options)")
     for index, option in enumerate(options, 1):
         request_line(option.get("option"), f"option {index}")
         request_line(option.get("consequence"), f"conséquence de l'option {index}")
-    # J3 (ADR-0036): only a motif of the closed list reaches the operator;
-    # escalation-door hands any other request to the Mayor.
-    motif = {"motif": request_line(given["motif"], "motif")} if "motif" in given else {}
     return {"quoi": request_line(given.get("quoi"), "quoi"), "pourquoi": request_line(given.get("pourquoi"), "pourquoi"),
-            "que_faire": options, **motif}
+            "que_faire": options}
 
 
 def planning_exception_request(args: argparse.Namespace, ticket: Ticket) -> dict[str, Any]:
@@ -720,7 +717,7 @@ def record_planning_exception(args: argparse.Namespace, request: dict[str, Any])
 
 
 def escalate(ticket_id: str, request: dict[str, Any]) -> None:
-    payload = json.dumps({**request, "langue": operator_language(), "bloquant": True}, ensure_ascii=False)
+    payload = json.dumps({**request, "langue": operator_language(), "bloquant": True, "motif": "d01"}, ensure_ascii=False)  # ADR-0037: frozen D01, routing kept until its extinction (J3)
     proc = run([str(ESCALATION_TOOL), "benjamin", ticket_id, payload])
     if proc.returncode != 0:
         raise Refusal(f"la porte d'escalade a refusé la demande : {detail_of(proc)}")

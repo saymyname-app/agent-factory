@@ -965,7 +965,7 @@ def operator_language() -> str:
 
 
 def escalate(ticket_id: str, request: dict[str, Any], what: str) -> None:
-    payload = {**request, "langue": operator_language(), "bloquant": True}
+    payload = {**request, "langue": operator_language(), "bloquant": True, "motif": "d01"}  # ADR-0037: frozen D01, routing kept until its extinction (J3)
     proc = run([str(ESCALATION_TOOL), "benjamin", ticket_id, json.dumps(payload, ensure_ascii=False)])
     if proc.returncode != 0:
         raise Refusal(f"{what} mais la porte d'escalade a refusé sa remontée : {detail_of(proc)}")

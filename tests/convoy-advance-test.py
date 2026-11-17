@@ -1307,7 +1307,7 @@ esac
 
         mails = self.log("mail")
         self.assertEqual(1, len(mails), mails)
-        self.assertEqual("mayor", mails[0][1])  # J3: a factory incident is the Mayor's (ADR-0036)
+        self.assertEqual("human", mails[0][1])
 
     def test_the_same_anomaly_seen_on_several_passes_raises_one_incident(self):
         self.edit(T1, status="closed")

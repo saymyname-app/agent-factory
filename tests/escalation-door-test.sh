@@ -167,6 +167,12 @@ out=$(door benjamin af-own "$(jq '.motif = "exposition"' <<<"$COMPLETE_REQUEST")
   || fail "the motif must be recorded on the bead"
 grep -Fq 'mail send human' "$TEST_TMP/calls.log" || fail "a listed motif must mail Benjamin"
 
+# The frozen D01 machinery (ADR-0037) keeps its route until its extinction.
+TESTS_RUN=$((TESTS_RUN + 1))
+seed af-d01 '{"id":"af-d01","status":"open","metadata":{},"notes":"","labels":[]}'
+out=$(door benjamin af-d01 "$(jq '.motif = "d01"' <<<"$COMPLETE_REQUEST")") || fail "d01 must be accepted"
+[[ $out == "ESCALATED (benjamin, d01)"* ]] || { echo "$out" >&2; fail "d01 must keep the route to Benjamin"; }
+
 TESTS_RUN=$((TESTS_RUN + 1))
 if door benjamin af-own "$(jq '.motif = "deux mots"' <<<"$COMPLETE_REQUEST")" >/dev/null 2>&1; then
   fail "a motif of more than one word must be refused"

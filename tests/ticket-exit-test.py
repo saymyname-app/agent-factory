@@ -309,9 +309,7 @@ class TicketExitTest(unittest.TestCase):
         proc = self.run_cmd(ESCALATION_TOOL, "list")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         needs = proc.stdout.split("Pending proposals")[0].splitlines()[1:]
-        # Section headers (closed beads, rerouted to the Mayor -- J3) are not requests.
-        return [line.strip() for line in needs
-                if line.strip() and "(none)" not in line and not line.rstrip().endswith(":")]
+        return [line.strip() for line in needs if line.strip() and "(none)" not in line]
 
     def advance(self):
         proc = self.run_cmd(ADVANCE_TOOL, CONVOY)
@@ -878,14 +876,6 @@ class TicketExitTest(unittest.TestCase):
         self.assert_parked_with_descendants("operator_request")
         self.assertEqual("operator_request", self.shown()["exit"]["exit"])
         self.assertEqual([f"{T2} — {self.REQUEST['quoi']}"], self.escalation_list())
-        mails = [json.loads(line) for line in self.write_log.read_text().splitlines() if line.startswith('["mail"')]
-        # J3 (ADR-0036): an author's request with no motif of the closed list
-        # is the Mayor's to decide; it stays on the list until he does.
-        self.assertEqual([["mail", "mayor", f"Décision déléguée à prendre (ADR-0036): {T2}"]], mails)
-
-    def test_operator_request_with_a_listed_motif_reaches_the_operator(self):
-        request = {**self.REQUEST, "motif": "admin"}
-        self.exited("--exit", "operator_request", "--request", self.file("request.json", request))
         mails = [json.loads(line) for line in self.write_log.read_text().splitlines() if line.startswith('["mail"')]
         self.assertEqual([["mail", "human", f"NEEDS BENJAMIN: {T2}"]], mails)
 

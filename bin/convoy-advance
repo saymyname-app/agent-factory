@@ -1051,7 +1051,7 @@ def incident_request(convoy: Convoy) -> dict[str, Any]:
             {"option": "Laisser le convoi arrêté",
              "consequence": "Aucun ticket de ce convoi ne démarre ; l'incident reste dans cette liste."},
         ],
-        "langue": operator_language(),
+        "langue": operator_language(), "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
         "bloquant": True,
     }
 
@@ -2661,7 +2661,7 @@ def grouped_request(convoy: Convoy, origins: dict[str, list[str]]) -> tuple[dict
         "pourquoi": one_line(f"Plus aucun ticket du convoi {convoy.id} ne démarre ni ne fusionne sans ta réponse"),
         "que_faire": [lift, {"option": "Laisser ces tickets parqués",
                              "consequence": "Rien ne démarre ; le convoi reste ouvert, cette demande ne revient pas."}],
-        "langue": operator_language(),
+        "langue": operator_language(), "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
         "bloquant": True,
     }
     text = "\n".join([
@@ -3700,7 +3700,7 @@ def tdd_stop_request(ticket: dict[str, Any]) -> str:
             {"option": "Laisser le ticket arrêté",
              "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
         ],
-        "langue": operator_language(),
+        "langue": operator_language(), "motif": "d01",  # ADR-0037: frozen D01, routing kept until its extinction (J3)
         "bloquant": True,
     }, ensure_ascii=False)
 
