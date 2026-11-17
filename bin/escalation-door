@@ -77,7 +77,11 @@
 #                                              without one resets the link
 #                                              of the request before.
 #                              On success the door letters the options (a,
-#                              b, c, ...), writes them with a timestamp and
+#                              b, c, ...), stamps gc.escalation_first_at the
+#                              first time <bead> reaches the operator (never
+#                              rewritten afterwards: the latency counts from
+#                              the first request, not from a repeat), writes
+#                              them with a timestamp and
 #                              the blocking flag on <bead>, clears any
 #                              pending Mayor-first state, and mails the
 #                              escalation recipient ($GC_ESCALATION_RECIPIENT,
@@ -132,6 +136,16 @@
 #                              journal reads). Prefer `repondre` when
 #                              there is an answer to record. Reopens a
 #                              parked-blocked <bead> like `repondre`.
+#   mesure [--jours N]         Read-only JSON over the last N days (default
+#                              7, Europe/Paris days): requests that reached
+#                              the operator per day (by gc.escalation_first_at),
+#                              how many of them carry no motif of the closed
+#                              list (« hors liste », the old ones before J3),
+#                              how many requests the door rerouted to the
+#                              Mayor, and the median latency to an answer.
+#                              The thresholds of FACTORY_OBJECTIVE.md read
+#                              it: at most 1 a day, 0 hors liste, median
+#                              under 2 h (af-q55qqx, J3).
 #   list                       Read-only: print the NEEDS BENJAMIN list
 #                              (every bead, whatever its status, carrying
 #                              an active gc.needs_benjamin; closed ones in
@@ -242,6 +256,10 @@ emit_request() {  # route motif bead quoi pourquoi lettered_que_faire_json bloqu
       --set-metadata "gc.escalation_mayor_reason=none"
       --set-metadata "gc.escalation_mayor_overdue_at=none"
       --append-notes "NEEDS BENJAMIN ($motif): $quoi")
+    local first_at
+    first_at=$(jq -r '.metadata["gc.escalation_first_at"] // ""' <<<"$ISSUE")
+    [[ -n $first_at && $first_at != none ]] \
+      || route_args+=(--set-metadata "gc.escalation_first_at=$horodatage")
   else
     # A page already running keeps its clock; a new one starts it.
     local paged_at
@@ -560,6 +578,49 @@ cmd_clear() {
   printf 'CLEARED: decision on %s%s\n' "$bead" "$reopen_note"
 }
 
+cmd_mesure() {
+  local jours=7
+  if [[ ${1:-} == --jours ]]; then
+    jours=${2:-}
+    [[ $jours =~ ^[1-9][0-9]*$ ]] || die "Usage: $PROGRAM_NAME mesure [--jours N]"
+  elif [[ -n ${1:-} ]]; then
+    die "Usage: $PROGRAM_NAME mesure [--jours N]"
+  fi
+  local reached rerouted since
+  since=$(( $(now_epoch) - jours * 86400 ))
+  reached=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_first_at --json 2>/dev/null) \
+    || die "Could not list the requests that reached $OPERATOR_NAME."
+  rerouted=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_route --json 2>/dev/null) \
+    || die "Could not list the rerouted requests."
+  # Paris day of each first request: TZ database, not a fixed offset.
+  local days
+  days=$(jq -r --argjson since "$since" '(if type == "array" then . else [.] end)[]
+      | (.metadata["gc.escalation_first_at"] // "") | select(. != "" and . != "none")
+      | select(fromdateiso8601 >= $since)' <<<"${reached:-[]}" \
+    | while IFS= read -r at; do TZ=Europe/Paris date -d "$at" +%F; done | sort | uniq -c \
+    | jq -Rn '[inputs | capture("^ *(?<n>[0-9]+) (?<jour>.+)$") | {jour, demandes: (.n | tonumber)}]')
+  jq -n --argjson since "$since" --argjson jours "$jours" --argjson par_jour "$days" \
+    --arg listed "$MOTIFS_BENJAMIN" \
+    --argjson reached "${reached:-[]}" --argjson rerouted "${rerouted:-[]}" '
+    def rows($x): ($x | if type == "array" then . else [.] end);
+    def at($k): (.metadata[$k] // "") | if . == "" or . == "none" then null else fromdateiso8601 end;
+    ($listed | split(" ") | map(select(. != ""))) as $motifs
+    | [rows($reached)[] | select((at("gc.escalation_first_at") // 0) >= $since)] as $r
+    | [$r[] | select(at("gc.escalation_response_at") != null)
+        | (at("gc.escalation_response_at") - at("gc.escalation_first_at")) / 60
+        | select(. >= 0)] | sort as $lat
+    | {jours: $jours,
+       demandes: ($r | length),
+       par_jour: $par_jour,
+       max_par_jour: ([$par_jour[].demandes] | max // 0),
+       hors_liste: ([$r[] | select((.metadata["gc.escalation_motif"] // "") as $m | ($motifs | index($m)) == null)] | length),
+       renvoyees_au_mayor: ([rows($rerouted)[] | select(.metadata["gc.escalation_route"] == "mayor")
+                             | select((at("gc.escalation_horodatage") // 0) >= $since)] | length),
+       repondues: ($lat | length),
+       latence_mediane_min: (if ($lat | length) == 0 then null
+                             else ($lat[(($lat | length) - 1) / 2 | floor] + $lat[($lat | length) / 2 | floor]) / 2 | round end)}'
+}
+
 cmd_list() {
   local needs_json needs_count closed_count proposals_count
   # af-1al0t1: every status, not only open/in_progress -- a question on a
@@ -628,6 +689,7 @@ main() {
     sweep) cmd_sweep "$@" ;;
     clear) cmd_clear "$@" ;;
     list) cmd_list "$@" ;;
+    mesure) cmd_mesure "$@" ;;
     *) usage >&2; return 2 ;;
   esac
 }
