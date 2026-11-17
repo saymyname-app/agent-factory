@@ -1,0 +1,6 @@
+{
+ "contract": "agent-factory-token-cost-weights/v1",
+ "why": "bin/factory-weekly weighs tokens to split the week's cost between product and Factory (FACTORY_OBJECTIVE.md principle 1). Relative weights, one per kind of token, not a price: a share needs no currency, and the subscriptions bill no token (af-q55qqx.2).",
+ "source": "Ratios of the providers' published list prices, 17/11/2026: a cached read costs a tenth of an input token, a cache write 1.25 input tokens, an output token 5 input tokens. Change a ratio only with its new source.",
+ "weights": {"input": 1, "cache_write": 1.25, "cache_read": 0.1, "output": 5}
+}

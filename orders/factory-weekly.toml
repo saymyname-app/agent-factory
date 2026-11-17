@@ -1,0 +1,9 @@
+# af-q55qqx.2 (plan J2): the weekly table of FACTORY_OBJECTIVE.md for the
+# last complete ISO week, written to var/weekly/<week>.{json,md}. Monday
+# morning, so the week it reports is complete.
+[order]
+description = "Weekly zero-token table of the FACTORY_OBJECTIVE.md thresholds for last week into var/weekly/: product slices per working day, lead time bead -> dev, maintenance share of PRs, requests to Benjamin, product cost share; a measure without a source is null and named"
+trigger = "cron"
+schedule = "30 6 * * 1"
+exec = "/home/benja/agent-factory/bin/order-pause gate factory-weekly -- /home/benja/agent-factory/bin/factory-weekly --write"
+timeout = "600s"

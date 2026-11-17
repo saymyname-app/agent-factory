@@ -117,6 +117,7 @@ mechanisms: consult `decisions/PRE_REFACTOR.md` before relying on them.
 | Record a new ADR: its catalogue entry, then the regeneration | `context-index/entries/` (one `NNNN-<slug>.md` Need/Read file per ADR, as `0288-why-a-serialized-ticket-graph-is-refused.md`; widen the range in `0280-structural-decisions.md`), then `../bin/generate-docs-catalogue`; the shape of an ADR: `decisions/ADR-0031-serialized-graph-refused.md` |
 | Pause or resume an order of the Factory without a PR (who, when, words); what is paused | `FACTORY_TOOLS.md` (order-pause), `../bin/order-pause` |
 | A Factory fix: its defect class, where else the defect is, the three lines of its pull request, recurrences by class | `DEFECT_CLASSES.md` (the register: invariant, control, occurrences known and open), `DELIVERY.md` (« Where else? »: `../bin/factory-fix-preflight --class <code>`, the lines `Catégorie :`, `Où ailleurs :`, `Contrôle de catégorie :` that `pr-autopilot` reads, `python3 ../lib/defect_classes.py count --since <date>`) |
+| The weekly table of the Factory's objective (slices, lead time, maintenance share, requests to Benjamin, cost share) and how to read `.gc/usage.jsonl` | `FACTORY_TOOLS.md` (`factory-weekly`), `../FACTORY_OBJECTIVE.md` |
 
 ## Authority and minimal retrieval
 
