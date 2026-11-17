@@ -123,7 +123,7 @@ step back to you with the reason:
 
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step workspace
-gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Ticket $TICKET pris."
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Ticket $TICKET pris."
 ```
 
 **If at any step you cannot go on**, never end in free text. Take the Ticket
@@ -236,7 +236,7 @@ and would fail on the observation that makes it false:
 
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step red
-gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Rouge prouvé et gelé."
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Rouge prouvé et gelé."
 ```"""
 
 [steps.check]
@@ -308,7 +308,7 @@ Commit, then have the code proven at the tip of your branch:
 
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step code
-gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Code prouvé à la pointe."
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Code prouvé à la pointe."
 ```"""
 
 [steps.check]
@@ -365,7 +365,7 @@ capture.
 
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step demonstration
-gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Ligne de démonstration capturée."
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Ligne de démonstration capturée."
 ```"""
 
 [steps.check]
@@ -406,7 +406,7 @@ the merge into the integration branch follow, by code.
 
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" gate "$CONVOY" "$TICKET" --step exit
-gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Sortie de ticket enregistrée."
+gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Sortie de ticket enregistrée."
 ```"""
 
 [steps.check]
@@ -433,7 +433,7 @@ TICKET=$(gc convoy status {{convoy_id}} --json | jq -r '.children[0].id')
 CONVOY=$("$FACTORY_ROOT/bin/ticket-author" locate "$TICKET" | jq -r '.convoy')
 "$FACTORY_ROOT/bin/ticket-author" release "$CONVOY" "$TICKET" || true
 if [ -n "${GC_BEAD_ID:-}" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Drain acknowledged."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Drain acknowledged."
 fi
 gc runtime drain-ack
 ```

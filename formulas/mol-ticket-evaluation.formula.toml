@@ -192,9 +192,9 @@ run it again. Do not write the evaluation state any other way.
 **5. Close:**
 
 ```bash
-gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Ticket Evaluation of $TICKET recorded."
+gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "Ticket Evaluation of $TICKET recorded."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$EVALUATION_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Ticket Evaluation of $TICKET recorded."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Ticket Evaluation of $TICKET recorded."
 fi
 ```
 

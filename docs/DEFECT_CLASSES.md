@@ -621,6 +621,21 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   d'écriture tournent sans confinement avec le jeton propriétaire. Les deux
   relèvent de J11 (configuration et identité par rôle), af-q55qqx.
 
+## H — Historique d'un ticket écrasé par une écriture
+
+- Invariant : Une écriture sur un bead existant ajoute à ses notes
+  (`--append-notes`), elle ne les remplace jamais (`--notes`) ; seul
+  `bd create --notes` reste permis, un bead neuf n'ayant rien à perdre.
+- Contrôle : `python3 tests/bead-notes-append-test.py`,
+  `bash tests/deliver-close-test.sh`
+- Occurrences : af-2cuvon (le 11/11 puis le 17/11/2026, la fermeture
+  d'af-icbz5h par `bin/deliver-close` a remplacé toutes ses notes par le
+  motif de fermeture ; même écriture dans `bin/factory-delivery-guard`,
+  `bin/factory-watchdog`, `bin/factory-session-loop-guard`, l'ouverture de
+  PR de `mol-do-work` et `mol-polecat-commit`, la fermeture des étapes de
+  toutes les formules et la règle d'AGENTS.md), corrigé ici.
+- Ouvertes : aucune connue.
+
 ## A — Autre
 
 - Invariant : Aucun invariant commun : une PR rangée ici dit pourquoi elle

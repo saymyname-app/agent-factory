@@ -41,9 +41,9 @@ recorded review, not a tool outage.
 Close the review bead and this step with gc.outcome=pass only after record
 succeeds; otherwise fail with the error:
 ```bash
-gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Fidelity verdict recorded for $SPEC."
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "Fidelity verdict recorded for $SPEC."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Fidelity verdict recorded for $SPEC."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Fidelity verdict recorded for $SPEC."
 fi
 ```
 """

@@ -208,9 +208,9 @@ other way.
 **9. Close:**
 
 ```bash
-gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Outcome Evaluation of $SPEC_CONVOY recorded."
+gc bd update "$EVALUATION_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "Outcome Evaluation of $SPEC_CONVOY recorded."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$EVALUATION_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Outcome Evaluation of $SPEC_CONVOY recorded."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Outcome Evaluation of $SPEC_CONVOY recorded."
 fi
 ```
 
