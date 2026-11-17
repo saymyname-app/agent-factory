@@ -79,9 +79,8 @@ For a change:
   failed). `gc bd close --reason` leaves no `gc.outcome`: the dispatcher reads
   `missing_outcome`, retries, hard-fails and skips the rest (af-ptx7).
 - **One escalation contract.** For a decision only Benjamin can make
-  (ADR-0036's closed list), use `bin/escalation-door benjamin` with its
-  `motif`; its human route owns state and notification. Without a listed
-  motif the door reroutes the request to the Mayor, who decides it. Other blockers use
+  (ADR-0036 list), use `bin/escalation-door` with its `motif`; its
+  human route owns state and notification. Other blockers use
   `bin/escalation-door mayor`. Never set `gc.needs_benjamin` manually or
   create an unnotified `human` gate.
   Keep working on eligible items; failed formula steps retain `gc.outcome=fail`.
