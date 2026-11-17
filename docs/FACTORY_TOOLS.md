@@ -2319,7 +2319,7 @@ par le Cockpit) et `var/weekly/<semaine>.md` (le tableau).
 | `slices_per_working_day` | PR fusionnées sur la branche produit (`promotion_branch.from`, `dev`) des rigs de chaque descripteur de projet autre que l'usine (`gh`), divisées par les jours lundi–vendredi |
 | `lead_time_median_hours`, `lead_time_p85_hours` | création du bead → fusion de ces PR ; le bead est le premier id connu (préfixes de `.beads/routes.jsonl`) de la branche, puis du titre |
 | `maintenance_share` | PR de l'usine fusionnées sur `main` / toutes les PR fusionnées |
-| `human_requests_max_per_day` | courriers `NEEDS BENJAMIN:` d'`escalation-door` vers `human` (`mail.sent` de `.gc/events.jsonl`), pire jour de Paris ; une relance compte, elle le sollicite |
+| `human_requests_max_per_day` | courriers `NEEDS BENJAMIN:` d'`escalation-door` vers `human` (`mail.sent` de `.gc/events.jsonl` et des archives que gc a tournées depuis le début de la semaine, dédoublonnés par `seq`), pire jour de Paris ; une relance compte, elle le sollicite |
 | `product_cost_share` | tokens des transcripts Claude (`~/.claude/projects`, dédoublonnés par id de message) et Codex (`~/.codex/sessions`, événements `token_count`, Mayor compris), pondérés par `config/token-cost-weights.json` ; un transcript est du produit quand il nomme plus souvent les chemins, dépôts et ids de beads du produit que ceux de l'usine |
 
 Pas `.gc/usage.jsonl` : Gas City (amont) l'écrit « au moins une fois » par

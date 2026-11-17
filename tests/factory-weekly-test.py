@@ -2,6 +2,7 @@
 """bin/factory-weekly computes the FACTORY_OBJECTIVE.md table from live
 records, deduplicated and attributed, and says what it cannot measure
 (af-q55qqx.2). Fakes stand for gh and gc; transcripts and events are files."""
+import gzip
 import json
 import os
 import subprocess
@@ -72,7 +73,14 @@ class FactoryWeeklyTest(unittest.TestCase):
             {"type": "mail.sent", "ts": "2026-11-12T11:00:00+01:00", "payload": {"message": {"to": "human", "subject": "ESCALATION: reaper"}}},
             {"type": "mail.sent", "ts": "2026-11-17T09:00:00+01:00", "payload": {"message": {"to": "human", "subject": "NEEDS BENJAMIN: af-5"}}},
         ]
+        for seq, e in enumerate(events, 1):
+            e["seq"] = seq
         write(os.path.join(root, ".gc/events.jsonl"), "".join(json.dumps(e) + "\n" for e in events))
+        # Rotated during the week: one request of its own, and the first live one again (same seq).
+        rotated = [{"type": "mail.sent", "seq": 0, "ts": "2026-11-10T09:00:00+01:00",
+                    "payload": {"message": {"to": "human", "subject": "NEEDS BENJAMIN: af-0"}}}, events[0]]
+        with gzip.open(os.path.join(root, ".gc/events.jsonl.archive-20261111T000000Z-seq-0-1.gz"), "wt") as fh:
+            fh.write("".join(json.dumps(e) + "\n" for e in rotated))
         bins = os.path.join(self.tmp.name, "bin")
         write(os.path.join(bins, "gh"), FAKE_GH, 0o755)
         write(os.path.join(bins, "gc"), FAKE_GC, 0o755)
@@ -113,9 +121,11 @@ class FactoryWeeklyTest(unittest.TestCase):
         self.assertEqual(100, m["lead_time_p85_hours"]["value"])
         self.assertEqual("ko", m["lead_time_p85_hours"]["status"])
         self.assertEqual(0.6, m["maintenance_share"]["value"])
-        # Two requests to the human on 11/11 (Paris); the mayor's and the reaper's are not requests.
+        # Two requests to the human on 11/11 (Paris); the mayor's and the reaper's are not requests;
+        # the rotated archive adds 10/11 and repeats nothing.
         self.assertEqual(2, m["human_requests_max_per_day"]["value"])
-        self.assertEqual(3, m["human_requests_max_per_day"]["detail"]["requests"])
+        self.assertEqual(4, m["human_requests_max_per_day"]["detail"]["requests"])
+        self.assertEqual(1, m["human_requests_max_per_day"]["detail"]["per_day"]["2026-11-10"])
         # Product: 10 + 5*100 + 0.1*100 = 520 once (the duplicate and the 01/11 message left out),
         # plus 520 named by its product bead id. Factory: Claude 520 + Codex 10 + 0.1*100 + 5*20 = 640.
         self.assertEqual(1040, m["product_cost_share"]["detail"]["product"])

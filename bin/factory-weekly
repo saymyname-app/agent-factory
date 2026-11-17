@@ -42,6 +42,7 @@ Usage: factory-weekly [--week YYYY-Www] [--json] [--write]
 """
 import argparse
 import glob
+import gzip
 from pathlib import Path
 import json
 import os
@@ -131,18 +132,30 @@ def percentile(values, p):
 
 def human_requests(start, end):
     days = Counter()
-    with open(os.path.join(ROOT, ".gc/events.jsonl"), "rb") as fh:
-        for line in fh:
-            if b'"mail.sent"' not in line or b"NEEDS BENJAMIN" not in line:
-                continue
-            try:
-                ev = json.loads(line)
-                msg = ev["payload"]["message"]
-                at = ts(ev["ts"])
-            except (ValueError, KeyError, TypeError):
-                continue
-            if msg.get("to") == "human" and str(msg.get("subject", "")).startswith("NEEDS BENJAMIN") and start <= at < end:
-                days[datetime.fromtimestamp(at, PARIS).date().isoformat()] += 1
+    # gc rotates the log into events.jsonl.archive-<UTC time of rotation>-...gz:
+    # an archive rotated after the week began may hold some of it. Their seq
+    # ranges overlap, hence the dedup by seq.
+    files, seen = [os.path.join(ROOT, ".gc/events.jsonl")], set()
+    for archive in glob.glob(os.path.join(ROOT, ".gc/events.jsonl.archive-*.gz")):
+        rotated = re.search(r"archive-(\d{8}T\d{6}Z)", archive)
+        if rotated and datetime.strptime(rotated[1], "%Y%m%dT%H%M%S%z").timestamp() >= start:
+            files.append(archive)
+    for path in files:
+        with (gzip.open if path.endswith(".gz") else open)(path, "rb") as fh:
+            for line in fh:
+                if b'"mail.sent"' not in line or b"NEEDS BENJAMIN" not in line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                    msg = ev["payload"]["message"]
+                    at = ts(ev["ts"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+                if ev.get("seq") in seen and ev.get("seq") is not None:
+                    continue
+                seen.add(ev.get("seq"))
+                if msg.get("to") == "human" and str(msg.get("subject", "")).startswith("NEEDS BENJAMIN") and start <= at < end:
+                    days[datetime.fromtimestamp(at, PARIS).date().isoformat()] += 1
     return days
 
 
