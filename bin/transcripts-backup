@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# transcripts-backup -- keep the agents' transcripts past their tools' purge
+# (af-q55qqx.2, plan J2).
+#
+# Claude Code deletes a transcript 30 days after its last change (its
+# default `cleanupPeriodDays`); on factory-vm the oldest left on 17/11/2026
+# dated from 15/10. The weekly table (bin/factory-weekly), the analyses and
+# the delivery evidence read them. Run daily by orders/transcripts-backup.toml.
+#
+# Copies only the transcripts, `*.jsonl` under ~/.claude/projects and
+# ~/.codex/sessions: never the credentials beside them (.credentials.json,
+# auth.json) nor any other file. The copy is never deleted with its source;
+# it stays RETENTION_DAYS after its last change, then goes. The archive is
+# readable by its owner only (0700), on the same host as its source.
+#
+# Usage: transcripts-backup [--dry-run]
+# Env: TRANSCRIPTS_BACKUP_DEST (default ~/factory-archive/transcripts),
+#      TRANSCRIPTS_BACKUP_RETENTION_DAYS (default 90),
+#      TRANSCRIPTS_BACKUP_MIN_FREE_GB (default 10: refuse, exit 1, below it).
+set -euo pipefail
+
+dest=${TRANSCRIPTS_BACKUP_DEST:-$HOME/factory-archive/transcripts}
+days=${TRANSCRIPTS_BACKUP_RETENTION_DAYS:-90}
+min_free_gb=${TRANSCRIPTS_BACKUP_MIN_FREE_GB:-10}
+dry=()
+case "${1:-}" in
+  "") ;;
+  --dry-run) dry=(--dry-run) ;;
+  *) echo "usage: transcripts-backup [--dry-run]" >&2; exit 2 ;;
+esac
+
+mkdir -p "$dest"
+chmod 700 "$dest" "$(dirname "$dest")"
+free_kb=$(df -Pk "$dest" | awk 'NR == 2 {print $4}')
+if (( free_kb < min_free_gb * 1024 * 1024 )); then
+  echo "transcripts-backup: $((free_kb / 1024 / 1024)) GB free under $dest, less than $min_free_gb: nothing copied" >&2
+  exit 1
+fi
+
+copied=0
+for pair in "claude-projects:$HOME/.claude/projects" "codex-sessions:$HOME/.codex/sessions"; do
+  name=${pair%%:*} src=${pair#*:}
+  [[ -d $src ]] || continue
+  mkdir -p "$dest/$name"
+  # Only what changed within the retention: an older source is not copied
+  # to be expired again the same night.
+  n=$(cd "$src" && find . -type f -name '*.jsonl' -mtime -"$days" -print0 \
+        | rsync -a "${dry[@]}" --from0 --files-from=- --out-format='%n' . "$dest/$name/" | grep -c '\.jsonl$' || true)
+  copied=$((copied + n))
+done
+
+expired=0
+if [[ ${#dry[@]} -eq 0 ]]; then
+  expired=$(find "$dest" -type f -name '*.jsonl' -mtime +"$days" -print -delete | wc -l)
+  find "$dest" -mindepth 1 -type d -empty -delete
+fi
+echo "transcripts-backup: $copied copied or updated, $expired expired after $days days, under $dest"

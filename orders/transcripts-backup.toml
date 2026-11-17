@@ -1,0 +1,9 @@
+# af-q55qqx.2 (plan J2): copy the agents' transcripts (*.jsonl of
+# ~/.claude/projects and ~/.codex/sessions) to ~/factory-archive/transcripts
+# before Claude Code's 30-day purge; 90-day retention, no credential copied.
+[order]
+description = "Daily zero-token copy of the agents' transcripts (*.jsonl only, never credentials) to ~/factory-archive/transcripts, 0700, kept 90 days after their last change, refused under 10 GB free"
+trigger = "cron"
+schedule = "15 3 * * *"
+exec = "/home/benja/agent-factory/bin/order-pause gate transcripts-backup -- /home/benja/agent-factory/bin/transcripts-backup"
+timeout = "1800s"
