@@ -146,9 +146,9 @@ the file and run it again. Do not write the review state any other way.
 **6. Close:**
 
 ```bash
-gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "End code review of $SPEC_CONVOY recorded."
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "End code review of $SPEC_CONVOY recorded."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "End code review of $SPEC_CONVOY recorded."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "End code review of $SPEC_CONVOY recorded."
 fi
 ```
 

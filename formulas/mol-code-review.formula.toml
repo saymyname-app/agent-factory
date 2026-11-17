@@ -235,9 +235,9 @@ other way.
 **4. Close:**
 
 ```bash
-gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Code review of $TICKET recorded."
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "Code review of $TICKET recorded."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Code review of $TICKET recorded."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Code review of $TICKET recorded."
 fi
 ```
 

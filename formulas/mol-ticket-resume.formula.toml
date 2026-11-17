@@ -176,9 +176,9 @@ evaluation, the merge and the ticket-end gate follow, by code.
 
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" release "$CONVOY" "$TICKET" || true
-gc bd update "$RESUME_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Resume of $TICKET ($CAUSE) done."
+gc bd update "$RESUME_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "Resume of $TICKET ($CAUSE) done."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$RESUME_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Resume of $TICKET ($CAUSE) done."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Resume of $TICKET ($CAUSE) done."
 fi
 gc runtime drain-ack
 ```

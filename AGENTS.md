@@ -75,7 +75,7 @@ For a change:
 - Stop/restart only per `docs/RUNBOOK_STOP_AND_RESTART.md`.
 - Discoveries outside scope become separate Beads work, not silent scope expansion.
 - **Close a formula step with its outcome:** `gc bd update <step-id>
-  --set-metadata gc.outcome=pass --status=closed --notes "..."` (`fail` if it
+  --set-metadata gc.outcome=pass --status=closed --append-notes "..."` (`fail` if it
   failed). `gc bd close --reason` leaves no `gc.outcome`: the dispatcher reads
   `missing_outcome`, retries, hard-fails and skips the rest (af-ptx7).
 - **One escalation contract.** For a decision only Benjamin can make
