@@ -2938,6 +2938,7 @@ def acceptance_request(convoy: Convoy, page: str) -> dict[str, Any]:
              "consequence": "Le produit est lancé au commit du dossier ; rien n'est accepté ni fusionné sans votre réponse."},
         ],
         "langue": operator_language(),
+        "motif": "outcome",  # ADR-0036: accepting an Outcome is his (J3)
         # A result ready to judge blocks no chantier: « Quand tu veux »
         # (Spec af-fgcw0d user story 8; the cockpit reads it so, F2.7).
         "bloquant": False,
@@ -3381,6 +3382,7 @@ def non_conforme_request(convoy: Convoy, stop: dict[str, Any], page: str) -> dic
              "consequence": "Rien n'est fusionné dans la branche protégée ; la branche d'intégration reste comme source."},
         ],
         "langue": operator_language(),
+        "motif": "outcome",  # ADR-0036: accepting an Outcome is his (J3)
         "bloquant": True,
         "lien": page,
     }

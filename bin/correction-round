@@ -607,6 +607,10 @@ def operator_request(ticket: dict[str, Any], stop: dict[str, Any], why: str | No
              "consequence": "Rien de ce ticket ne fusionne ; les tickets qui l'attendent ne démarrent pas."},
         ],
         "langue": language.stdout.strip(), "bloquant": True,
+        # J3 (ADR-0036): the Mayor raises it only when he arbitrated that the
+        # decision is a product one; the count or fidelity alone is not on
+        # the closed list and goes back to him.
+        **({"motif": "intention-produit"} if why else {}),
     }
     proc = run([str(ESCALATION_TOOL), "benjamin", ticket["id"], json.dumps(payload, ensure_ascii=False)])
     if proc.returncode != 0:

@@ -582,8 +582,11 @@ grep -q "flagged ticket af-t9 without a next step" <<<"$out" || { echo "$out" >&
 stall_bead=$(grep -l '\[watchdog\] ticket sans suite : af-t9' "$BEADS_DIR"/*.json | head -1)
 jq -e '.[0].metadata["gc.source"] == "factory-watchdog" and .[0].metadata["gc.ticket"] == "af-t9"' "$stall_bead" >/dev/null \
   || { cat "$stall_bead" >&2; fail "the ticket incident lost its create metadata"; }
-jq -e '.[0].metadata["gc.needs_benjamin"] | startswith("Incident d'"'"'usine : ticket af-t9 sans suite")' "$stall_bead" >/dev/null \
-  || { cat "$stall_bead" >&2; fail "the ticket without a next step is not on the operator's list"; }
+# J3 (ADR-0036): a defect of the Factory's code is the Mayor's to route to
+# maintenance, never Benjamin's -- the door reroutes it, options kept.
+jq -e '(.[0].metadata["gc.needs_benjamin"] // "none") == "none" and .[0].metadata["gc.escalation_route"] == "mayor"
+       and (.[0].metadata["gc.escalation_mayor_reason"] | startswith("Incident d'"'"'usine : ticket af-t9 sans suite"))' "$stall_bead" >/dev/null \
+  || { cat "$stall_bead" >&2; fail "the ticket without a next step was not handed to the Mayor"; }
 grep -q '^mail send' "$MAIL" || fail "the operator was not mailed about the ticket without a next step"
 
 reset_logs

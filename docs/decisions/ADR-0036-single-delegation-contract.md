@@ -16,8 +16,10 @@ décide enregistré et un rapport groupé une fois par jour ; un geste au nom
 de Benjamin n'est accepté que s'il est authentifié.
 
 Mechanism (interprétation agent) : les points 1 à 5 ci-dessous. Le code des
-portes (`escalation-door`, `proposal-door`) sera adapté à l'étape J3 du
-plan (ADR-0037) ; d'ici là, la règle s'applique par les portes existantes.
+portes (`escalation-door`, `proposal-door`) est adapté à l'étape J3 du
+plan (ADR-0037, `af-q55qqx.1`) : le point 1 est le champ `motif` de
+`escalation-door benjamin` (hors liste, la demande va au Mayor) ; le point 3
+est écrit par `escalation-door repondre` pour tout acteur autre que Benjamin.
 
 ## Contexte
 

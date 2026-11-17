@@ -170,7 +170,10 @@ class RequestDoors(unittest.TestCase):
             self.assert_refused(proc, field, ESCALATION_DOOR)
             written = {k: v for k, v in self.metadata("af-req").items() if k in REQUEST_KEYS}
             self.assertEqual({}, written, f"{ESCALATION_DOOR} wrote an incomplete request ({field})")
-        proc = self.run_door(ESCALATION_DOOR, "benjamin", "af-req", self.request(self.COMPLETE))
+        # A night backup that failed and only a host gesture restarts: admin,
+        # on ADR-0036's closed list (J3); without a motif it would go to the Mayor.
+        listed = json.dumps({**json.loads(self.request(self.COMPLETE)), "motif": "admin"}, ensure_ascii=False)
+        proc = self.run_door(ESCALATION_DOOR, "benjamin", "af-req", listed)
         self.assertEqual(0, proc.returncode, proc.stderr)
         recorded = self.metadata("af-req")
         self.assertEqual("La sauvegarde de cette nuit a échoué", recorded["gc.needs_benjamin"])
@@ -210,7 +213,9 @@ class RequestDoors(unittest.TestCase):
         proc = self.run_door(*reslice, "--reason", "Le découpage débloque la livraison")
         self.assertNotEqual(0, proc.returncode, "the reslice changes acceptance criteria: it is refused")
         recorded = self.metadata("af-conv")
-        self.assertTrue(recorded.get("gc.needs_benjamin"), f"{GRAPH_PUBLISH} recorded no request: {proc.stderr}")
+        # J3 (ADR-0036): a reslice is a planning decision, delegated -- the
+        # door records the request for the Mayor, not on Benjamin's list.
+        self.assertEqual("mayor", recorded.get("gc.escalation_route"), f"{GRAPH_PUBLISH} recorded no request: {proc.stderr}")
         self.assertTrue(recorded.get("gc.escalation_pourquoi"))
         options = json.loads(recorded["gc.escalation_que_faire"])
         self.assertGreaterEqual(len(options), 1)

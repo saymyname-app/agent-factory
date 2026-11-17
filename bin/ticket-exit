@@ -610,16 +610,19 @@ def operator_request(args: argparse.Namespace) -> dict[str, Any]:
     if not args.request:
         raise Refusal("sortie « demande opérateur » sans demande (--request) : quoi, pourquoi, que_faire")
     given = read_json_file(args.request, "demande opérateur")
-    if not isinstance(given, dict) or set(given) - {"quoi", "pourquoi", "que_faire"}:
-        raise Refusal("demande opérateur mal formée (attendu : quoi, pourquoi, que_faire)")
+    if not isinstance(given, dict) or set(given) - {"quoi", "pourquoi", "que_faire", "motif"}:
+        raise Refusal("demande opérateur mal formée (attendu : quoi, pourquoi, que_faire, motif facultatif)")
     options = given.get("que_faire")
     if not isinstance(options, list) or not options or not all(isinstance(option, dict) for option in options):
         raise Refusal("demande : champ « que_faire » absent ou vide (attendu : une liste d'options)")
     for index, option in enumerate(options, 1):
         request_line(option.get("option"), f"option {index}")
         request_line(option.get("consequence"), f"conséquence de l'option {index}")
+    # J3 (ADR-0036): only a motif of the closed list reaches the operator;
+    # escalation-door hands any other request to the Mayor.
+    motif = {"motif": request_line(given["motif"], "motif")} if "motif" in given else {}
     return {"quoi": request_line(given.get("quoi"), "quoi"), "pourquoi": request_line(given.get("pourquoi"), "pourquoi"),
-            "que_faire": options}
+            "que_faire": options, **motif}
 
 
 def planning_exception_request(args: argparse.Namespace, ticket: Ticket) -> dict[str, Any]:

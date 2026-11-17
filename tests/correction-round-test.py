@@ -482,7 +482,9 @@ class CorrectionRoundTest(unittest.TestCase):
         proc = self.run_cmd(ESCALATION_TOOL, "list")
         self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
         needs = proc.stdout.split("Pending proposals")[0].splitlines()[1:]
-        return [line.strip() for line in needs if line.strip() and "(none)" not in line]
+        # Section headers (closed beads, rerouted to the Mayor -- J3) are not requests.
+        return [line.strip() for line in needs
+                if line.strip() and "(none)" not in line and not line.rstrip().endswith(":")]
 
     def merge(self):
         """The merge control: one pass of the real bin/spec-integration."""

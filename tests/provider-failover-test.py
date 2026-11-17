@@ -726,7 +726,8 @@ class EndToEnd(unittest.TestCase):
         bead_id = state["total_exhaustion"]["bead"]
         self.assertTrue(bead_id)
         self.assertTrue(any(c.startswith("bd create Total provider exhaustion") for c in self.calls()))
-        self.assertTrue(any(c.startswith(f"mail send human --notify -s NEEDS BENJAMIN: {bead_id}")
+        # J3 (ADR-0016 §7, ADR-0036): every pool down is a scheduling event, never Benjamin's: the door hands it to the Mayor.
+        self.assertTrue(any(c.startswith(f"mail send mayor --notify -s Décision déléguée à prendre (ADR-0036): {bead_id}")
                             for c in self.calls()))
         status = json.loads(self.run_tool("status", "--json").stdout)
         self.assertTrue(status["total_exhaustion"]["active"])
