@@ -631,5 +631,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   #670, #707 ; af-8hdaf1 (`bin/pr-autopilot` : la lecture de tout
   l'historique coupée sous charge suspendait la clôture des PR fusionnées et
   le renvoi des PR en conflit, que la lecture des beads ouverts, déjà faite,
-  suffisait à décider ; garde-fou `bash tests/pr-autopilot-cut-history-test.sh`).
+  suffisait à décider ; garde-fou `bash tests/pr-autopilot-cut-history-test.sh`) ;
+  af-gh3cxi (`tests/factory-guard-exec-bit-test.sh` lançait cinq fois les
+  seize sections du garde pour en vérifier une seule, la première ; il dépassait
+  120 s sous charge 44 tant que ces sections lisaient l'état réel, corrigé
+  par #793 ; le test s'arrête désormais à `invariants`).
 - Ouvertes : aucune connue.
