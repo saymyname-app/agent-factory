@@ -762,7 +762,12 @@ def convoy_advance_close_lock() -> Iterator[None]:
 
 
 def now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    """The time code writes on an event, to the second. $CONVOY_STATE_NOW
+    (seconds since the epoch) holds it for a test that needs one event at a
+    later second than another (retry_after_lift) without waiting for the
+    wall clock to turn (af-b6p87s)."""
+    held = os.environ.get("CONVOY_STATE_NOW")
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(held) if held else None))
 
 
 def stamp_seconds(stamp: str) -> int:
