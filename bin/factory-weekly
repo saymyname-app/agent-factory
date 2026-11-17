@@ -54,12 +54,13 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
+from account_home import account_home  # noqa: E402
 
 ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
 GC = os.environ.get("GC_BIN", "gc")
 GH = os.environ.get("GH_BIN", "gh")
-CLAUDE = os.environ.get("FACTORY_WEEKLY_CLAUDE") or os.path.expanduser("~/.claude/projects")
-CODEX = os.environ.get("FACTORY_WEEKLY_CODEX") or os.path.expanduser("~/.codex/sessions")
+CLAUDE = os.environ.get("FACTORY_WEEKLY_CLAUDE") or os.path.join(account_home(), ".claude/projects")
+CODEX = os.environ.get("FACTORY_WEEKLY_CODEX") or os.path.join(account_home(), ".codex/sessions")
 PARIS = ZoneInfo("Europe/Paris")
 CONTRACT = "agent-factory-weekly-measure/v1"
 FACTORY_PROJECT = "agent-factory"
