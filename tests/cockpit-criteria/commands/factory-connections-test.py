@@ -169,8 +169,13 @@ class FactoryConnections(unittest.TestCase):
                         <= max(load_before, load_after) + 2.0,
                         f"the load said ({load.group(2)}) is not the load average of the host "
                         f"({load_before:.2f} before the page was read, {load_after:.2f} after)")
-        self.assertLessEqual(abs(int(load.group(1)) - 100 * number(load.group(2)) / cores), 1,
-                             "the processor's percentage is not its load over its cores")
+        # Both figures are rounded from the same load: the percentage to the
+        # unit (half a point off), the load said to a tenth (0.05 off, so
+        # 5 / cores points once over the cores).
+        rounding = 0.5 + 100 * 0.05 / cores + 1e-9
+        self.assertLessEqual(abs(int(load.group(1)) - 100 * number(load.group(2)) / cores), rounding,
+                             f"the processor's percentage ({load.group(1)} %) is not its load "
+                             f"({load.group(2)}) over its {cores} cores")
 
         usage = shutil.disk_usage(pwd.getpwuid(os.getuid()).pw_dir)
         disk = re.search(r"Disque\s+(\d+) %.*?(\d+(?:,\d)?) Go utilisés sur (\d+(?:,\d)?) Go", machine)
