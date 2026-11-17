@@ -134,9 +134,9 @@ file and run it again. Do not write the review state any other way.
 **4. Close:**
 
 ```bash
-gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Graph review of $DRAFT recorded."
+gc bd update "$REVIEW_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "Graph review of $DRAFT recorded."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$REVIEW_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Graph review of $DRAFT recorded."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Graph review of $DRAFT recorded."
 fi
 ```
 

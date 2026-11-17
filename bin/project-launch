@@ -447,16 +447,6 @@ def verify_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
     temporary = Path(tempfile.gettempdir()).resolve()
     if not target.is_absolute() or not copy_folder(target, temporary) or target.is_symlink():
         raise RuntimeError(f"unexpected product worktree path: {worktree}")
-    registered = False
-    # A removed product repository (a deleted ticket worktree) registers
-    # nothing: only the owner sidecar below can still vouch for the copy.
-    if Path(repo_root).exists():
-        listed = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
-                                text=True, capture_output=True)
-        if listed.returncode:
-            raise RuntimeError(f"cannot verify product worktree: {listed.stderr.strip()}")
-        registered = any(block.splitlines()[0] == f"worktree {target}"
-                         for block in listed.stdout.strip().split("\n\n") if block)
     owner = Path(f"{worktree}.owner")
     owned = False
     if launch_id and commit and owner.is_file():
@@ -465,6 +455,20 @@ def verify_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
                 "launch_id": launch_id, "repo_root": repo_root, "commit": commit}
         except (OSError, ValueError):
             pass
+    registered = False
+    # A removed product repository (a deleted ticket worktree) registers
+    # nothing: only the owner sidecar can still vouch for the copy. So does
+    # one git can no longer read, being removed at this instant: Essai's
+    # product is launched from the copy of the cockpit that owns it, which
+    # the stop of that cockpit removes (af-u7df4z).
+    if Path(repo_root).exists():
+        listed = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
+                                text=True, capture_output=True)
+        if listed.returncode and not owned:
+            raise RuntimeError(f"cannot verify product worktree: {listed.stderr.strip()}")
+        registered = not listed.returncode and any(
+            block.splitlines()[0] == f"worktree {target}"
+            for block in listed.stdout.strip().split("\n\n") if block)
     if target.exists() and not (registered or owned):
         raise RuntimeError(f"unverified product worktree kept: {worktree}")
     return registered, owner if owned else None
@@ -494,7 +498,8 @@ def remove_worktree(repo_root: str, worktree: str, launch_id: str | None = None,
             subprocess.run(["git", "-C", repo_root, "worktree", "unlock", worktree], capture_output=True)
         result = subprocess.run(["git", "-C", repo_root, "worktree", "prune"],
                                 capture_output=True, text=True)
-        if result.returncode:
+        # A repository git cannot read registers no copy to prune.
+        if result.returncode and registered:
             raise RuntimeError(f"worktree was not released: {worktree}: {result.stderr.strip()}")
     if Path(worktree).exists():
         raise RuntimeError(f"worktree was not released: {worktree}")
@@ -813,18 +818,26 @@ def stop_record(record: dict, legacy: bool) -> str | None:
 
     group = record.get("process_group")
     launch_id = record.get("launch_id")
+    unverified = None
     if worktree:
         try:
             verify_worktree(repo_root, worktree, launch_id, record.get("commit"))
         except RuntimeError as exc:
-            return str(exc)
+            unverified = str(exc)
     if launch_id:
+        # The processes carrying the launch's mark are its own, whatever its
+        # copy: a copy that cannot be verified is kept, never its product
+        # (af-u7df4z).
         stopped = terminate_owned(launch_id)
+        if unverified:
+            return unverified
         if stopped and worktree:
             # A descendant may drop the marker but still hold this verified copy.
             stopped = all(terminate(pid) for pid in worktree_processes(worktree))
         if (group and group_members(int(group))) or (worktree and worktree_processes(worktree)):
             stopped = False
+    elif unverified:
+        return unverified
     elif legacy:
         # Old records had no launch marker. A PID may now belong to another
         # process; only stop processes still inside the verified worktree.

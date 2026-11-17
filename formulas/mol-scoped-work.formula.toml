@@ -74,7 +74,7 @@ gc bd update "$WORK_BEAD_ID" --claim
 gc bd show "$WORK_BEAD_ID"
 gc bd show "$WORK_BEAD_ID" --json | jq '.[0].metadata'
 gc mail inbox
-gc bd update load-context --set-metadata gc.outcome=pass --status=closed --notes "context loaded"
+gc bd update load-context --set-metadata gc.outcome=pass --status=closed --append-notes "context loaded"
 ```
 """
 metadata = { "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
@@ -95,7 +95,7 @@ beads handle fail-fast skipping, close this bead with `gc.outcome=fail|pass`,
 and allow teardown to proceed.
 
 ```bash
-gc bd update body --set-metadata gc.outcome=pass --status=closed --notes "body scope complete"
+gc bd update body --set-metadata gc.outcome=pass --status=closed --append-notes "body scope complete"
 ```
 """
 metadata = { "gc.kind" = "scope", "gc.scope_name" = "worktree", "gc.scope_role" = "body" }
@@ -120,7 +120,7 @@ if [ "$BODY_OUTCOME" = "fail" ]; then
   "$FACTORY_ROOT/bin/escalation-door" mayor "${WORK_BEAD_ID:-body}" \
     "mol-scoped-work body scope failed for ${WORK_BEAD_ID:-this convoy}" || exit 1
 fi
-gc bd update notify-failure --set-metadata gc.outcome=pass --status=closed --notes "checked body outcome: ${BODY_OUTCOME:-unknown}"
+gc bd update notify-failure --set-metadata gc.outcome=pass --status=closed --append-notes "checked body outcome: ${BODY_OUTCOME:-unknown}"
 ```
 """
 metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "teardown" }
@@ -153,7 +153,7 @@ if [ -z "$WORKTREE" ]; then
 fi
 cd "$WORKTREE"
 {{setup_command}}
-gc bd update workspace-setup --set-metadata gc.outcome=pass --status=closed --notes "worktree ready"
+gc bd update workspace-setup --set-metadata gc.outcome=pass --status=closed --append-notes "worktree ready"
 ```
 """
 metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "setup", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
@@ -173,7 +173,7 @@ Run the configured checks before implementation.
 {{typecheck_command}}
 {{lint_command}}
 {{test_command}}
-gc bd update preflight-tests --set-metadata gc.outcome=pass --status=closed --notes "preflight checks passed"
+gc bd update preflight-tests --set-metadata gc.outcome=pass --status=closed --append-notes "preflight checks passed"
 ```
 """
 metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
@@ -193,7 +193,7 @@ as needed and keep the branch scoped to this work.
 When the change is committed, close this step explicitly:
 
 ```bash
-gc bd update implement --set-metadata gc.outcome=pass --status=closed --notes "change implemented and committed"
+gc bd update implement --set-metadata gc.outcome=pass --status=closed --append-notes "change implemented and committed"
 ```
 """
 metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
@@ -216,7 +216,7 @@ git diff origin/{{base_branch}}...HEAD
 {{build_command}}
 {{test_command}}
 git status
-gc bd update self-review --set-metadata gc.outcome=pass --status=closed --notes "self-review passed"
+gc bd update self-review --set-metadata gc.outcome=pass --status=closed --append-notes "self-review passed"
 ```
 """
 metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
@@ -257,7 +257,7 @@ gc bd update "${WORK_BEAD_ID:-submit}" \
   --set-metadata "gc.delivery_status=waiting" \
   --set-metadata "gc.work_branch=$BRANCH" \
   --set-metadata "gc.work_base_branch={{base_branch}}" >/dev/null 2>&1 || true
-gc bd update submit --set-metadata gc.outcome=pass --status=closed --notes "opened $PR_URL against {{base_branch}}"
+gc bd update submit --set-metadata gc.outcome=pass --status=closed --append-notes "opened $PR_URL against {{base_branch}}"
 ```
 """
 metadata = { "gc.scope_ref" = "body", "gc.scope_role" = "member", "gc.on_fail" = "abort_scope", "gc.continuation_group" = "main", "gc.session_affinity" = "require" }
@@ -285,7 +285,7 @@ if [ -n "$WORKTREE" ] && [ -d "$WORKTREE" ]; then
   git worktree remove --force "$WORKTREE" || rm -rf "$WORKTREE"
 fi
 gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
-gc bd update cleanup-worktree --set-metadata gc.outcome=pass --status=closed --notes "worktree removed"
+gc bd update cleanup-worktree --set-metadata gc.outcome=pass --status=closed --append-notes "worktree removed"
 ```
 """
 metadata = { "gc.kind" = "cleanup", "gc.scope_ref" = "body", "gc.scope_role" = "teardown" }

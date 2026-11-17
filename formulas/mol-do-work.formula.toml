@@ -398,7 +398,7 @@ prevents `mol-do-work` wrapper beads from remaining ready after the real work
 is complete.
 ```bash
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$WORK_BEAD_ID" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Target $WORK_BEAD_ID completed. Commit: ${COMMIT:-none}."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Target $WORK_BEAD_ID completed. Commit: ${COMMIT:-none}."
 fi
 ```
 
@@ -453,7 +453,7 @@ else
       --set-metadata "gc.delivery_contract=pr-ci-merged-v1" \
       --set-metadata "gc.delivery_status=waiting" \
       --unset-metadata work_dir \
-      --notes "PR opened: $PR_URL. Work remains in_progress until merge and exact-head required CI are proven."
+      --append-notes "PR opened: $PR_URL. Work remains in_progress until merge and exact-head required CI are proven."
   else
     gc bd update "$WORK_BEAD_ID" --unset-metadata work_dir
     echo "push-and-pr: branch pushed but no PR was opened (gh unavailable or failed) — open one by hand: $BRANCH -> $BASE_BRANCH" >&2
@@ -512,7 +512,7 @@ session:
 
 ```bash
 if [ -n "${GC_BEAD_ID:-}" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Drain acknowledged."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Drain acknowledged."
 fi
 gc runtime drain-ack
 ```

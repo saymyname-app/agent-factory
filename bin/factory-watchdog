@@ -360,7 +360,7 @@ Detected by factory-watchdog. Only a human can re-authenticate (gh auth login -h
       | jq -r '(.[0].id // empty)')
     if [ -n "$existing" ]; then
       gc bd update "$existing" --set-metadata gc.outcome=pass --status=closed \
-        --notes "gh auth recovered; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
+        --append-notes "gh auth recovered; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
         && did "auto-resolved recovered gh auth bead $existing"
     fi
   fi
@@ -420,7 +420,7 @@ Detected by factory-watchdog from $rig_name's gc:control-quarantined beads. Obse
       existing_title=$(gc bd show "$existing_id" --json 2>/dev/null | jq -r '(.[0].title // "")')
       if ! grep -Fxq "$existing_title" "$quarantine_active_titles" 2>/dev/null; then
         gc bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
-          --notes "no new control-step quarantine in this group for ${QUARANTINE_WINDOW_HOURS}h; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
+          --append-notes "no new control-step quarantine in this group for ${QUARANTINE_WINDOW_HOURS}h; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
           && did "auto-resolved recovered control-quarantine bead $existing_id"
       fi
     # open only: an alert already taken for repair is closed by its repair, not by this sweep.
@@ -503,7 +503,7 @@ Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is st
       grep -Fxq "$existing_title" "$stall_active" 2>/dev/null && continue
       "$ESCALATION_DOOR" clear "$existing_id" >/tmp/edoor-out.log 2>&1 \
         && gc bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
-          --notes "the ticket moves again; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
+          --append-notes "the ticket moves again; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
         && did "auto-resolved ticket without a next step $existing_id"
     # open only: an alert already taken for repair is closed by its repair, not by this sweep.
     done < <(gc bd list --status open --title-contains "$STALL_PREFIX" --json 2>/dev/null | jq -r '.[] | [.id, .title] | @tsv')

@@ -123,9 +123,9 @@ at your tip, and code decides.
 
 ```bash
 "$FACTORY_ROOT/bin/ticket-author" release "$CONVOY" "$TICKET" || true
-gc bd update "$CORRECTION_BEAD" --set-metadata gc.outcome=pass --status=closed --notes "Correction round of $TICKET done."
+gc bd update "$CORRECTION_BEAD" --set-metadata gc.outcome=pass --status=closed --append-notes "Correction round of $TICKET done."
 if [ -n "${GC_BEAD_ID:-}" ] && [ "$GC_BEAD_ID" != "$CORRECTION_BEAD" ]; then
-  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --notes "Correction round of $TICKET done."
+  gc bd update "$GC_BEAD_ID" --set-metadata gc.outcome=pass --status=closed --append-notes "Correction round of $TICKET done."
 fi
 gc runtime drain-ack
 ```
