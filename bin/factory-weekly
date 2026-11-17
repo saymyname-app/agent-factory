@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""factory-weekly -- the weekly table of FACTORY_OBJECTIVE.md (af-q55qqx.2, J2).
+
+Computes, for one ISO week (Monday 00:00 to Monday 00:00, Paris), the
+thresholds of FACTORY_OBJECTIVE.md that have a live source, from records that
+already exist on this host. Read-only on everything but its own output; L0,
+zero token.
+
+  slices_per_working_day   product pull requests merged into the product
+                           branch (`promotion_branch.from`, i.e. `dev`) of
+                           every rig of a non-Factory project descriptor,
+                           divided by the Monday-Friday days of the week
+  lead_time_median_hours   bead creation -> merge of those pull requests; the
+  lead_time_p85_hours      bead is the first known bead id of the head branch,
+                           then of the title (nearest-rank percentile)
+  maintenance_share        Factory pull requests merged into main / all merged
+                           pull requests (Factory + product)
+  human_requests_max_per_day  escalation-door requests mailed to the human
+                           ("NEEDS BENJAMIN:" mail.sent in .gc/events.jsonl),
+                           worst Paris day; re-asks count, as they reach him
+  product_cost_share       token cost of the week attributed to product work,
+                           over all of it. Tokens come from the transcripts
+                           (Claude ~/.claude/projects, assistant messages
+                           deduplicated by id; Codex ~/.codex/sessions,
+                           token_count events), weighted by the versioned
+                           config/token-cost-weights.json. A transcript is
+                           product work when it names product paths more
+                           and bead ids (prefix of a product rig in
+                           .beads/routes.jsonl) more often than Factory ones;
+                           neither -> unattributed, counted as not product.
+
+Not .gc/usage.jsonl: Gas City writes it at least once per fact and its own
+reader (`gc costs`) deduplicates by idempotency_key; it misses the sessions gc
+does not ingest (the Mayor on Codex since 15/09/2026, interactive sessions)
+and cannot tell product from Factory (its run ids are purged wisps).
+
+A measure without a source is null, status "unmeasured", with its reason.
+Contract of the JSON: agent-factory-weekly-measure/v1 (read by the Cockpit).
+
+Usage: factory-weekly [--week YYYY-Www] [--json] [--write]
+  default week: the last complete one. --write: var/weekly/<week>.{json,md}.
+"""
+import argparse
+import glob
+from pathlib import Path
+import json
+import os
+import re
+import subprocess
+import sys
+from collections import Counter
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
+GC = os.environ.get("GC_BIN", "gc")
+GH = os.environ.get("GH_BIN", "gh")
+CLAUDE = os.environ.get("FACTORY_WEEKLY_CLAUDE") or os.path.expanduser("~/.claude/projects")
+CODEX = os.environ.get("FACTORY_WEEKLY_CODEX") or os.path.expanduser("~/.codex/sessions")
+PARIS = ZoneInfo("Europe/Paris")
+CONTRACT = "agent-factory-weekly-measure/v1"
+FACTORY_PROJECT = "agent-factory"
+FACTORY_PATHS = [b"agent-factory/bin/", b"agent-factory/lib/", b"agent-factory/docs/", b"agent-factory/tests/",
+                 b"agent-factory/.gc/", b"agent-factory-maint/", b"agent-factory-po/", b"saymyname-app/agent-factory"]
+
+
+def bead_ids(prefixes):
+    return re.compile(rb"\b(?:%s)-[a-z0-9]{3,}" % b"|".join(re.escape(p.encode()) for p in prefixes))
+
+
+def ts(value):
+    value = re.sub(r"(\.\d{1,6})\d*", r"\1", value.replace("Z", "+00:00"))
+    return datetime.fromisoformat(value).timestamp()
+
+
+def run(cmd):
+    out = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=180)
+    if out.returncode:
+        raise RuntimeError(f"{' '.join(cmd[:3])} failed (rc {out.returncode}): {out.stderr.strip()[:200]}")
+    return out.stdout
+
+
+def projects():
+    """Factory repo, product (repo, base branch) pairs, every bead prefix, and
+    what names product or Factory work in a transcript: paths, repositories
+    and bead ids of each side (a rig's prefix comes from .beads/routes.jsonl)."""
+    factory, products, paths = None, [], []
+    routes = [json.loads(line) for line in Path(ROOT, ".beads/routes.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    product_rigs = set()
+    for path in sorted(glob.glob(os.path.join(ROOT, "config/project-descriptors/*.json"))):
+        desc = json.loads(Path(path).read_text(encoding="utf-8"))
+        if desc.get("project_id") == FACTORY_PROJECT:
+            factory = desc["knowledge_repo"]
+            continue
+        for rig in desc.get("rigs", []):
+            url = run(["git", "-C", os.path.join(ROOT, "rigs", rig), "remote", "get-url", "origin"]).strip()
+            repo = re.sub(r"\.git$", "", url.split("github.com")[-1].lstrip(":/"))
+            products.append((repo, (desc.get("promotion_branch") or {}).get(rig, {}).get("from", "dev")))
+            paths += [f"rigs/{rig}".encode(), repo.split("/")[-1].encode()]
+            product_rigs.add(f"rigs/{rig}")
+    product_prefixes = [r["prefix"] for r in routes if r["path"] in product_rigs]
+    factory_prefixes = [r["prefix"] for r in routes if r["path"] not in product_rigs]
+    return {"factory": factory, "products": products, "prefixes": [r["prefix"] for r in routes],
+            "product": (paths, bead_ids(product_prefixes)), "factory_work": (FACTORY_PATHS, bead_ids(factory_prefixes))}
+
+
+def merged(repo, base, start, end):
+    since = datetime.fromtimestamp(start - 86400, PARIS).date().isoformat()
+    prs = json.loads(run([GH, "pr", "list", "-R", repo, "--state", "merged", "--base", base, "--limit", "1000",
+                          "--search", f"merged:>={since}", "--json", "number,title,headRefName,mergedAt"]) or "[]")
+    return [pr for pr in prs if start <= ts(pr["mergedAt"]) < end]
+
+
+def lead_hours(pr, prefixes):
+    pattern = re.compile(r"\b((?:%s)-[a-z0-9]{3,}(?:\.\d+)*)\b" % "|".join(map(re.escape, prefixes)))
+    for text in (pr["headRefName"], pr["title"]):
+        for bead in pattern.findall(text or ""):
+            try:
+                found = json.loads(run([GC, "bd", "show", bead, "--json"]))
+            except (RuntimeError, ValueError):
+                continue
+            found = found[0] if isinstance(found, list) else found
+            return (ts(pr["mergedAt"]) - ts(found["created_at"])) / 3600, bead
+    return None, None
+
+
+def percentile(values, p):
+    values = sorted(values)
+    return values[max(0, -(-len(values) * p // 100) - 1)]
+
+
+def human_requests(start, end):
+    days = Counter()
+    with open(os.path.join(ROOT, ".gc/events.jsonl"), "rb") as fh:
+        for line in fh:
+            if b'"mail.sent"' not in line or b"NEEDS BENJAMIN" not in line:
+                continue
+            try:
+                ev = json.loads(line)
+                msg = ev["payload"]["message"]
+                at = ts(ev["ts"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if msg.get("to") == "human" and str(msg.get("subject", "")).startswith("NEEDS BENJAMIN") and start <= at < end:
+                days[datetime.fromtimestamp(at, PARIS).date().isoformat()] += 1
+    return days
+
+
+def attribute(raw, sides):
+    product, factory = (sum(raw.count(m) for m in paths) + len(ids.findall(raw))
+                        for paths, ids in (sides["product"], sides["factory_work"]))
+    return "product" if product > factory else "factory" if factory else "unattributed"
+
+
+def token_costs(start, end, sides, weights):
+    cost = Counter()
+    for path in glob.glob(os.path.join(CLAUDE, "**", "*.jsonl"), recursive=True):
+        if os.path.getmtime(path) < start:
+            continue
+        raw, seen = Path(path).read_bytes(), {}
+        for line in raw.splitlines():
+            if b'"usage"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+                msg, at = rec["message"], ts(rec["timestamp"])
+                u = msg["usage"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            if rec.get("type") == "assistant" and start <= at < end:
+                seen[msg.get("id") or len(seen)] = (
+                    weights["input"] * (u.get("input_tokens") or 0) + weights["output"] * (u.get("output_tokens") or 0)
+                    + weights["cache_read"] * (u.get("cache_read_input_tokens") or 0)
+                    + weights["cache_write"] * (u.get("cache_creation_input_tokens") or 0))
+        cost[attribute(raw, sides)] += sum(seen.values())
+    for path in glob.glob(os.path.join(CODEX, "**", "*.jsonl"), recursive=True):
+        if os.path.getmtime(path) < start:
+            continue
+        raw, total = Path(path).read_bytes(), 0
+        for line in raw.splitlines():
+            if b'"token_count"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+                u, at = rec["payload"]["info"]["last_token_usage"], ts(rec["timestamp"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            if start <= at < end:
+                cached = u.get("cached_input_tokens") or 0
+                total += (weights["input"] * ((u.get("input_tokens") or 0) - cached) + weights["cache_read"] * cached
+                          + weights["output"] * (u.get("output_tokens") or 0))
+        cost[attribute(raw, sides)] += total
+    return cost
+
+
+def week_bounds(week):
+    if week:
+        monday = date.fromisocalendar(int(week[:4]), int(week[-2:]), 1)
+    else:
+        today = datetime.now(PARIS).date()
+        monday = today - timedelta(days=today.weekday() + 7)
+    start = datetime.combine(monday, datetime.min.time(), PARIS)
+    end = datetime.combine(monday + timedelta(days=7), datetime.min.time(), PARIS)
+    iso = monday.isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}", start.timestamp(), end.timestamp()
+
+
+def measure(week):
+    name, start, end = week_bounds(week)
+    out = {"contract": CONTRACT, "week": name, "generated_at": datetime.now(PARIS).isoformat(timespec="seconds"),
+           "start": datetime.fromtimestamp(start, PARIS).isoformat(), "end": datetime.fromtimestamp(end, PARIS).isoformat(),
+           "measures": {}}
+    m = out["measures"]
+
+    def put(key, value, target, cmp, why=None, **detail):
+        ok = None if value is None else (value >= target if cmp == ">=" else value <= target)
+        m[key] = {"value": None if value is None else round(value, 2), "target": target, "comparison": cmp,
+                  "status": "unmeasured" if value is None else "ok" if ok else "ko", "detail": detail}
+        if value is None:
+            m[key]["reason"] = why
+
+    sides = projects()
+    prefixes = sides["prefixes"]
+    product_prs = [dict(pr, repo=repo) for repo, base in sides["products"] for pr in merged(repo, base, start, end)]
+    factory_prs = merged(sides["factory"], "main", start, end)
+    workdays = sum(datetime.fromtimestamp(start + d * 86400 + 43200, PARIS).weekday() < 5 for d in range(7))
+    put("slices_per_working_day", len(product_prs) / workdays, 1, ">=", product_prs=len(product_prs), working_days=workdays)
+    leads = [h for h, _ in (lead_hours(pr, prefixes) for pr in product_prs) if h is not None]
+    why = "no product pull request merged this week" if not product_prs else "no bead found for the merged product pull requests"
+    put("lead_time_median_hours", percentile(leads, 50) if leads else None, 24, "<=", why, samples=len(leads))
+    put("lead_time_p85_hours", percentile(leads, 85) if leads else None, 72, "<=", why, samples=len(leads))
+    total = len(product_prs) + len(factory_prs)
+    put("maintenance_share", len(factory_prs) / total if total else None, 0.30, "<=", "no pull request merged",
+        factory_prs=len(factory_prs), product_prs=len(product_prs))
+    days = human_requests(start, end)
+    put("human_requests_max_per_day", max(days.values(), default=0), 1, "<=", requests=sum(days.values()), per_day=dict(sorted(days.items())))
+    weights = json.loads(Path(ROOT, "config/token-cost-weights.json").read_text(encoding="utf-8"))["weights"]
+    cost = token_costs(start, end, sides, weights)
+    spent = sum(cost.values())
+    put("product_cost_share", cost["product"] / spent if spent else None, 0.50, ">=", "no transcript usage this week",
+        **{k: round(cost[k]) for k in ("product", "factory", "unattributed")})
+    out["not_measured"] = {
+        "integration_branch_age": "not computed here (FACTORY_OBJECTIVE.md principle 2)",
+        "requests_in_closed_list": "escalations carry no ADR-0016 effect field yet (J3)",
+        "escaped_defects": "no record links a defect to the slice that let it through",
+        "windows_sessions": "sessions run on the Windows PC leave no transcript on this host",
+    }
+    return out
+
+
+LABELS = [("slices_per_working_day", "Tranches produit fusionnées sur dev par jour ouvré", "{:g}"),
+          ("lead_time_median_hours", "Délai bead → dev, médiane (h)", "{:g}"),
+          ("lead_time_p85_hours", "Délai bead → dev, p85 (h)", "{:g}"),
+          ("maintenance_share", "Part maintenance des PR", "{:.0%}"),
+          ("human_requests_max_per_day", "Sollicitations de Benjamin, pire jour", "{:g}"),
+          ("product_cost_share", "Part du coût sur le produit", "{:.0%}")]
+
+
+def markdown(out):
+    lines = [f"Semaine {out['week']} (Paris, {out['start'][:10]} → {out['end'][:10]})", "",
+             "| Seuil | Cible | Mesure | État |", "|---|---|---|---|"]
+    for key, label, fmt in LABELS:
+        m = out["measures"][key]
+        value = "—" if m["value"] is None else fmt.format(m["value"])
+        target = f"{m['comparison']} {fmt.format(m['target'])}"
+        state = {"ok": "OK", "ko": "KO", "unmeasured": f"non mesuré : {m.get('reason')}"}[m["status"]]
+        lines.append(f"| {label} | {target} | {value} | {state} |")
+    lines += ["", "Non mesuré : " + " ; ".join(f"{k} ({v})" for k, v in out["not_measured"].items())]
+    return "\n".join(lines) + "\n"
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog="factory-weekly", description="Weekly table of FACTORY_OBJECTIVE.md thresholds.")
+    parser.add_argument("--week", metavar="YYYY-Www", help="ISO week (default: the last complete one)")
+    parser.add_argument("--json", action="store_true", help="print the JSON contract instead of the Markdown table")
+    parser.add_argument("--write", action="store_true", help="also write var/weekly/<week>.json and .md")
+    args = parser.parse_args(argv)
+    if args.week and not re.fullmatch(r"\d{4}-W\d{2}", args.week):
+        parser.error("--week must read YYYY-Www")
+    out = measure(args.week)
+    text = markdown(out)
+    print(json.dumps(out, ensure_ascii=False, indent=1) if args.json else text, end="" if not args.json else "\n")
+    if args.write:
+        folder = os.path.join(ROOT, "var/weekly")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, out["week"] + ".json"), "w", encoding="utf-8") as fh:
+            json.dump(out, fh, ensure_ascii=False, indent=1)
+        with open(os.path.join(folder, out["week"] + ".md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
