@@ -35,7 +35,20 @@ merge_upstream() {
     && git config commit.gpgsign false && git pull -q origin main \
     && echo "$1" >> merged && git add -A && git commit -qm "$1" && git push -q origin HEAD:main )
 }
-run_guard() { FACTORY_ROOT="$TMP/repo" "$GUARD" "$@" 2>&1 || true; }
+# A stand-in systemctl: cockpit.service is active, every call is logged.
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/systemctl" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TMP/systemctl.log"
+exit 0
+STUB
+chmod +x "$TMP/bin/systemctl"; : > "$TMP/systemctl.log"
+run_guard() { PATH="$TMP/bin:$PATH" FACTORY_ROOT="$TMP/repo" "$GUARD" "$@" 2>&1 || true; }
+merge_file() {  # path content: someone else merges a change to that path
+  ( cd "$TMP/other" && git pull -q origin main && mkdir -p "$(dirname "$1")" \
+    && printf '%s\n' "$2" >> "$1" && git add -A && git commit -qm "$1" && git push -q origin HEAD:main )
+}
+restarts() { grep -c '^--user restart cockpit.service$' "$TMP/systemctl.log" 2>/dev/null || true; }
 
 # --- check-only reports and touches nothing --------------------------------
 merge_upstream first
@@ -63,6 +76,45 @@ grep -q "fast-forwarded the live root by 1 merged commit(s)" <<<"$out" \
 out=$(run_guard)
 grep -q "live-root-sync — running the merged 'main'" <<<"$out" \
   || { printf '%s\n' "$out" >&2; fail "guard did not report an up-to-date root"; }
+
+# --- the Cockpit restarts when, and only when, its own code moved ------------
+# af-q55qqx.7: on 2026-11-18 it ran a day without two merged fixes.
+merge_file docs/unrelated.md "not the cockpit"
+out=$(run_guard)
+grep -q "fast-forwarded the live root by 1 merged commit(s)" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "guard did not fast-forward the unrelated merge"; }
+[ "$(restarts)" = 0 ] || fail "an unrelated merge restarted the Cockpit"
+
+merge_file lib/cockpit/page.py "from helper import x"
+out=$(run_guard)
+grep -q "restarted cockpit.service to load the Cockpit code" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "a lib/cockpit merge did not restart the Cockpit"; }
+[ "$(restarts)" = 1 ] || fail "a lib/cockpit merge did not restart the Cockpit exactly once"
+
+merge_file lib/helper.py "x = 1"
+out=$(run_guard)
+[ "$(restarts)" = 2 ] || { printf '%s\n' "$out" >&2; fail "a change to a lib module the Cockpit imports did not restart it"; }
+
+merge_file lib/other.py "y = 1"
+run_guard >/dev/null
+[ "$(restarts)" = 2 ] || fail "a lib module the Cockpit does not import restarted it"
+
+merge_file bin/cockpit "# entry point"
+run_guard >/dev/null
+[ "$(restarts)" = 3 ] || fail "a bin/cockpit merge did not restart the Cockpit"
+
+# A Cockpit that systemd does not run stays stopped.
+cat > "$TMP/bin/systemctl" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TMP/systemctl.log"
+[ "\$2" = is-active ] && exit 3
+exit 0
+STUB
+merge_file lib/cockpit/page.py "again"
+out=$(run_guard)
+grep -q "cockpit.service not running: nothing to restart" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "guard did not report a stopped Cockpit"; }
+[ "$(restarts)" = 3 ] || fail "guard started a Cockpit that was not running"
 
 # --- a diverged root is reported, never forced ------------------------------
 echo local > local-only; git add -A; git commit -qm local
