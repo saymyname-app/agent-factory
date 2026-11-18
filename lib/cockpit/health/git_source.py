@@ -40,8 +40,10 @@ def head_revision(repo_dir, git_bin="git", timeout=10):
     (af-q55qqx.7)."""
     if not repo_dir:
         return None
+    import bounded_process  # lib/, on the path bin/cockpit sets
+
     try:
-        completed = subprocess.run(
+        completed = bounded_process.run(
             [git_bin, "-C", repo_dir, "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
