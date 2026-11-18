@@ -429,10 +429,12 @@ class StopDriver:
         # Sessions are stopped, their work is meant to stay assigned (spec:
         # "arrête les sessions en gardant leur bead et leur travail
         # assigné"): what the tracker shows once they are is read at the next
-        # ticks -- what's "perdu" is the work they were mid-ticket on.
+        # ticks -- what's "perdu" is the work they were mid-ticket on. They
+        # left when the supervisor stops listing them, not now: a reading
+        # begun between the order and the stop shows what they still held.
         for session in sessions:
             self._points.pop(session.get("session_id"), None)
-            self._left_at[session.get("session_id")] = now
+            self._left_at.pop(session.get("session_id"), None)
         self._perdu = sorted({s.get("bead_id") for s in sessions if s.get("bead_id")})
         self._stopped_at = now
         self._state = ARRET_FORCE
