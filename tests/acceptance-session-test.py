@@ -418,7 +418,8 @@ class AcceptanceSessionTest(packs.EvidencePackTest):
     def test_record_takes_one_of_the_three_issues_of_a_non_conforme_request_through_the_escalation_door(self):
         self.non_conforme()
 
-        status, answer = self.acc("record", "--repo", self.repo, "--response", "planification", "--actor", "benjamin")
+        status, answer = self.acc("record", "--repo", self.repo, "--response", "planification", "--actor", "benjamin",
+                                  "--ref", "session:acceptance-test-01")
 
         self.assertEqual((0, True, "planification"), (status, answer["ok"], answer["response"]), answer)
         metadata = self.metadata(CONVOY)
