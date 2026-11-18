@@ -97,6 +97,12 @@ def run_git(repo_dir, *args):
     )
 
 
+def head_of(repo_dir):
+    return subprocess.run(
+        ["git", "-C", str(repo_dir), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
 class GitFixture:
     """A disposable bare "origin" plus a local clone standing in for the
     live root — Testing Decisions' "faux clone git de projet" without a
@@ -244,6 +250,7 @@ class CockpitHealthZoneTest(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_version_behind_appears_and_disappears_without_push(self):
         self.set_beads([])
+        loaded = head_of(self.git.clone_dir)
         self.start_cockpit()
 
         self.git.advance_origin_by(3)
@@ -258,6 +265,11 @@ class CockpitHealthZoneTest(unittest.TestCase):
             "retard de" in l["text"] for l in self.health()["lines"]
         ) else None)
         self.assertNotIn("retard de 3 commit", self.home())
+
+        # The process still runs what it loaded at start, whatever the
+        # checkout did since (af-q55qqx.7).
+        self.assertNotEqual(loaded, head_of(self.git.clone_dir))
+        self.assertEqual(loaded, self.health()["revision"])
 
     # ------------------------------------------------------------------
     def test_supervisor_unreachable_appears_and_disappears(self):

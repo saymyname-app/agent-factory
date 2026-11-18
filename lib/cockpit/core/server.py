@@ -170,7 +170,11 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self._projects_payload(read_model.snapshot()))
             return
         if path == "/api/health":
-            self._send_json(self._compute_health(read_model))
+            payload = self._compute_health(read_model)
+            # The revision this process loaded at start, for a machine to
+            # compare with the live root (af-q55qqx.7); never shown as a line.
+            payload["revision"] = getattr(self.server, "loaded_revision", None)
+            self._send_json(payload)
             return
         if path.startswith("/api/actions/"):
             # T13, af-cx20q9 AC1: an action in GET is refused the same
