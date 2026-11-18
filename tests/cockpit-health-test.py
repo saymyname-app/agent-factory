@@ -250,7 +250,6 @@ class CockpitHealthZoneTest(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_version_behind_appears_and_disappears_without_push(self):
         self.set_beads([])
-        loaded = head_of(self.git.clone_dir)
         self.start_cockpit()
 
         self.git.advance_origin_by(3)
@@ -266,10 +265,9 @@ class CockpitHealthZoneTest(unittest.TestCase):
         ) else None)
         self.assertNotIn("retard de 3 commit", self.home())
 
-        # The process still runs what it loaded at start, whatever the
-        # checkout did since (af-q55qqx.7).
-        self.assertNotEqual(loaded, head_of(self.git.clone_dir))
-        self.assertEqual(loaded, self.health()["revision"])
+        # The revision is the code the process runs, not the watched
+        # checkout (af-q55qqx.7): the live root sets no COCKPIT_REPO_DIR.
+        self.assertEqual(head_of(Path(__file__).resolve().parent.parent), self.health()["revision"])
 
     # ------------------------------------------------------------------
     def test_supervisor_unreachable_appears_and_disappears(self):

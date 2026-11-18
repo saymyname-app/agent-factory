@@ -60,6 +60,9 @@ SOURCE_DISPLAY_NAMES = {
 SHUTDOWN_BUDGET_SECONDS = 5.0
 
 
+_CODE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+
 def build(config, clock=None):
     """Returns (server, pollers) — nothing is started yet."""
     if clock is None and config.clock_start:
@@ -192,7 +195,9 @@ def build(config, clock=None):
         factory_check_validity_seconds=config.factory_check_validity_seconds,
     )
     server.runs_view = config.runs_view
-    server.loaded_revision = head_revision(config.repo_dir, git_bin=config.git_bin)
+    # The code this process imported, not COCKPIT_REPO_DIR (opt-in, unset
+    # on the live root): a local rev-parse, no network.
+    server.loaded_revision = head_revision(_CODE_ROOT, git_bin=config.git_bin)
     server.provider_failover_bin = config.provider_failover_bin
     server.factory_maintain_bin = config.factory_maintain_bin
     server.proposal_door_bin = config.proposal_door_bin
