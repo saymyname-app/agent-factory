@@ -25,7 +25,7 @@ from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
 from cockpit.core.readmodel import ReadModel
 from cockpit.core.server import make_server
-from cockpit.health.git_source import count_commits_behind
+from cockpit.health.git_source import count_commits_behind, head_revision
 from cockpit.access.tailscale import build_key_expiry_request, key_expiry_epoch, read_status
 from cockpit.heartbeat.emitter import read_url_from_file
 from cockpit.notify.secrets import read_secrets_from_file
@@ -192,6 +192,7 @@ def build(config, clock=None):
         factory_check_validity_seconds=config.factory_check_validity_seconds,
     )
     server.runs_view = config.runs_view
+    server.loaded_revision = head_revision(config.repo_dir, git_bin=config.git_bin)
     server.provider_failover_bin = config.provider_failover_bin
     server.factory_maintain_bin = config.factory_maintain_bin
     server.proposal_door_bin = config.proposal_door_bin
