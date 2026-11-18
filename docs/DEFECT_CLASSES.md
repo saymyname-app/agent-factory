@@ -681,5 +681,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   af-gh3cxi (`tests/factory-guard-exec-bit-test.sh` lançait cinq fois les
   seize sections du garde pour en vérifier une seule, la première ; il dépassait
   120 s sous charge 44 tant que ces sections lisaient l'état réel, corrigé
-  par #793 ; le test s'arrête désormais à `invariants`).
+  par #793 ; le test s'arrête désormais à `invariants`) ;
+  af-lmjqkf (`mol-dog-stale-db`, formule vapor du pack bd/dolt : son chien
+  exécute l'étape telle que `gc bd formula show` l'affiche, sans rendre ses
+  variables, et Bash recevait `{{warn_threshold}}` littéral ; copie locale
+  dans `formulas/` aux seuils écrits en dur ; garde-fou
+  `bash tests/mol-dog-stale-db-formula-test.sh`, qui refuse aussi tout jeton
+  de gabarit dans une formule vapor de `formulas/`).
 - Ouvertes : aucune connue.
