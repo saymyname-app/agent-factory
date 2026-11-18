@@ -86,7 +86,7 @@
 #                              pending Mayor-first state, and mails the
 #                              escalation recipient ($GC_ESCALATION_RECIPIENT,
 #                              default human).
-#   repondre <bead> <lettre> [--actor <qui>]
+#   repondre <bead> <lettre> [--actor <qui>] [--ref <référence>]
 #                              Pure-code response: writes the chosen option
 #                              (comment + metadata: option, quand, acteur)
 #                              on <bead>. The acteur is --actor, else the
@@ -94,7 +94,12 @@
 #                              GC_SESSION_NAME or GC_AGENT; with none the
 #                              door refuses. --actor benjamin only on
 #                              Benjamin's own words or gesture (the Cockpit
-#                              click), never a delegated answer (af-zkdvur).
+#                              click), never a delegated answer (af-zkdvur),
+#                              and only with --ref citing where he said it
+#                              (lib/operator_gesture.sh, ADR-0036 point 5):
+#                              recorded as gc.escalation_response_ref. A
+#                              request on the closed list (route benjamin,
+#                              a listed motif) is answered by him alone.
 #                              Any other acteur is a delegated decision
 #                              (ADR-0036 point 3): gc.decided_by=<acteur>
 #                              and a comment « Décision déléguée (ADR-0036)
@@ -197,6 +202,8 @@ REQUEST_INCOMPLETE="requête incomplète"
 . "$ROOT/lib/request_fields.sh"
 # shellcheck source=lib/work_route_release.sh
 . "$ROOT/lib/work_route_release.sh"
+# shellcheck source=lib/operator_gesture.sh
+. "$ROOT/lib/operator_gesture.sh"
 
 usage() {
   awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'
@@ -376,21 +383,34 @@ is_parked_blocked() {  # $1 = bead JSON
 
 cmd_repondre() {
   local bead=${1:-} lettre=${2:-}
-  [[ -n $bead && -n $lettre ]] || die "Usage: $PROGRAM_NAME repondre <bead> <lettre> [--actor <qui>]"
+  [[ -n $bead && -n $lettre ]] || die "Usage: $PROGRAM_NAME repondre <bead> <lettre> [--actor <qui>] [--ref <référence>]"
   valid_bead_id "$bead" || die "'$bead' is not a Bead id."
-  local actor=${BEADS_ACTOR:-${GC_SESSION_NAME:-${GC_AGENT:-}}} qui
-  if [[ ${3:-} == --actor ]]; then
-    actor=${4:-}
-  elif [[ -n ${3:-} ]]; then
-    die "Usage: $PROGRAM_NAME repondre <bead> <lettre> [--actor <qui>]"
-  fi
+  local actor=${BEADS_ACTOR:-${GC_SESSION_NAME:-${GC_AGENT:-}}} qui ref=""
+  shift 2
+  while (($#)); do
+    case $1 in
+      --actor) actor=${2:-}; shift 2 || shift ;;
+      --ref) ref=${2:-}; shift 2 || shift ;;
+      *) die "Usage: $PROGRAM_NAME repondre <bead> <lettre> [--actor <qui>] [--ref <référence>]" ;;
+    esac
+  done
   [[ -n $actor && $actor != *[[:space:]]* ]] \
-    || die "qui répond ? --actor benjamin sur ses mots, sinon l'acteur de la session (--actor ou BEADS_ACTOR) ; rien n'est écrit."
+    || die "qui répond ? --actor benjamin --ref <où il l'a dit>, sinon l'acteur de la session (--actor ou BEADS_ACTOR) ; rien n'est écrit."
+  operator_gesture_check "$actor" "$ref"
+  operator_actor "$actor" && actor=benjamin
   qui=$actor
   [[ $actor == benjamin ]] && qui=$OPERATOR_NAME
   local issue que_faire_raw chosen option_texte now reopen_note=""
-  local -a reopen_args=() decided_args=()
+  local -a reopen_args=() decided_args=() ref_args=()
   issue=$(show_bead "$bead")
+  if [[ $actor != benjamin ]] && jq -e --arg listed "$MOTIFS_BENJAMIN" '
+      (.metadata["gc.escalation_route"] // "") == "benjamin"
+      and ((.metadata["gc.needs_benjamin"] // "none") | tostring) != "none"
+      and ((.metadata["gc.escalation_motif"] // "") as $m | $m != "" and ($listed | split(" ") | index($m)) != null)' \
+      <<<"$issue" >/dev/null; then
+    die "$bead attend une décision de $OPERATOR_NAME (motif $(jq -r '.metadata["gc.escalation_motif"]' <<<"$issue"), ADR-0036) : seul lui y répond (--actor benjamin --ref …) ; rien n'est écrit."
+  fi
+  [[ -z $ref ]] || ref_args=(--set-metadata "gc.escalation_response_ref=$ref")
   que_faire_raw=$(jq -r '.metadata["gc.escalation_que_faire"] // ""' <<<"$issue")
   [[ -n $que_faire_raw ]] || die "$bead ne porte aucune option enregistrée par escalation-door."
   jq -e 'type == "array" and length > 0' <<<"$que_faire_raw" >/dev/null 2>&1 \
@@ -415,6 +435,7 @@ cmd_repondre() {
     --set-metadata "gc.escalation_mayor_reason=none" \
     --set-metadata "gc.escalation_mayor_overdue_at=none" \
     "${decided_args[@]}" \
+    "${ref_args[@]}" \
     "${reopen_args[@]}" \
     --append-notes "RÉPONSE: $lettre — $option_texte$reopen_note" \
     >/dev/null || die "Beads write failed for $bead."
@@ -588,21 +609,26 @@ cmd_mesure() {
   fi
   local reached rerouted since
   since=$(( $(now_epoch) - jours * 86400 ))
-  reached=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_first_at --json 2>/dev/null) \
+  # The tracker's lists are files, never arguments: on the live tracker they
+  # exceed the kernel's argument limit (jq: Argument list too long, 18/11).
+  reached=$(mktemp) rerouted=$(mktemp)
+  # Expanded now: the RETURN trap runs once these locals are gone.
+  trap "rm -f -- '$reached' '$rerouted'; trap - RETURN" RETURN
+  "$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_first_at --json >"$reached" 2>/dev/null \
     || die "Could not list the requests that reached $OPERATOR_NAME."
-  rerouted=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_route --json 2>/dev/null) \
+  "$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_route --json >"$rerouted" 2>/dev/null \
     || die "Could not list the rerouted requests."
   # Paris day of each first request: TZ database, not a fixed offset.
   local days
   days=$(jq -r --argjson since "$since" '(if type == "array" then . else [.] end)[]
       | (.metadata["gc.escalation_first_at"] // "") | select(. != "" and . != "none")
-      | select(fromdateiso8601 >= $since)' <<<"${reached:-[]}" \
+      | select(fromdateiso8601 >= $since)' "$reached" \
     | while IFS= read -r at; do TZ=Europe/Paris date -d "$at" +%F; done | sort | uniq -c \
     | jq -Rn '[inputs | capture("^ *(?<n>[0-9]+) (?<jour>.+)$") | {jour, demandes: (.n | tonumber)}]')
   jq -n --argjson since "$since" --argjson jours "$jours" --argjson par_jour "$days" \
     --arg listed "$MOTIFS_BENJAMIN" \
-    --argjson reached "${reached:-[]}" --argjson rerouted "${rerouted:-[]}" '
-    def rows($x): ($x | if type == "array" then . else [.] end);
+    --slurpfile reached "$reached" --slurpfile rerouted "$rerouted" '
+    def rows($x): ($x[0] // [] | if type == "array" then . else [.] end);
     def at($k): (.metadata[$k] // "") | if . == "" or . == "none" then null else fromdateiso8601 end;
     ($listed | split(" ") | map(select(. != ""))) as $motifs
     | [rows($reached)[] | select((at("gc.escalation_first_at") // 0) >= $since)] as $r

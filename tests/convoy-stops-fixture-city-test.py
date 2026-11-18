@@ -559,7 +559,7 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
 
     def answer(self, bead_id, option):
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the request
-        self.run_ok(ESCALATION, "repondre", bead_id, option, "--actor", "operateur-test")
+        self.run_ok(ESCALATION, "repondre", bead_id, option, "--actor", "benjamin", "--ref", "session:test-operator-01")  # an Outcome is his alone (ADR-0036, J3)
 
     def item(self):
         return self.shown_ticket(self.ids["T4"])["tracked_items"][0]
@@ -1145,7 +1145,7 @@ class ConvoyStopsOnTheFixtureCity(Staged, publication.Harness):
         self.stopped_and_raised()
         stop = self.stop()
         self.env["ESCALATION_DOOR_NOW"] = "946684800"  # 2000-01-01: before the request
-        self.run_ok(ESCALATION, "repondre", self.convoy, "a", "--actor", "operateur-test")
+        self.run_ok(ESCALATION, "repondre", self.convoy, "a", "--actor", "benjamin", "--ref", "session:test-operator-01")  # an Outcome is his alone (ADR-0036, J3)
         before = self.state_path.read_bytes()
 
         answer = self.one_pass()

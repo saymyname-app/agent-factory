@@ -1431,7 +1431,7 @@ class TicketEvaluationTest(unittest.TestCase):
         handed["demonstration_line"].update(state="unobservable", cause="criterion", reason="aucun jeu n'a de CI absente")
         self.recorded(handed)
         self.settle()
-        answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, option, "--actor", "benjamin",
+        answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, option, "--actor", "benjamin", "--ref", "session:test-operator-01",
                                 env={"ESCALATION_DOOR_NOW": "4102444800"})  # after the parking
         self.assertEqual(0, answered.returncode, answered.stdout + answered.stderr)
         self.next_second()  # The lift after the parked round, at a later second (retry_after_lift).
@@ -1467,7 +1467,7 @@ class TicketEvaluationTest(unittest.TestCase):
         self.recorded(handed)
         self.settle()
         (request_line,) = self.escalation_list()
-        answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, "c", "--actor", "benjamin",
+        answered = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, "c", "--actor", "benjamin", "--ref", "session:test-operator-01",
                                 env={"ESCALATION_DOOR_NOW": "4102444800"})  # after the parking
         self.assertEqual(0, answered.returncode, answered.stdout + answered.stderr)
         self.next_second()  # The lift after the parked round, at a later second (retry_after_lift).
@@ -1498,7 +1498,7 @@ class TicketEvaluationTest(unittest.TestCase):
                "langue": "fr", "bloquant": True}
         put = self.run_cmd(ESCALATION_TOOL, "benjamin", SLICE, json.dumps(old, ensure_ascii=False))
         self.assertEqual(0, put.returncode, put.stdout + put.stderr)
-        refused = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, "c", "--actor", "benjamin")
+        refused = self.run_cmd(ESCALATION_TOOL, "repondre", SLICE, "c", "--actor", "benjamin", "--ref", "session:test-operator-01")
         self.assertNotEqual(0, refused.returncode, "the old request answers c")
 
         self.settle()

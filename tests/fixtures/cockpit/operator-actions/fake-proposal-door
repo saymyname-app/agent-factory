@@ -130,6 +130,10 @@ def cmd_reporter(args):
 def main():
     argv = sys.argv[1:]
     _log_call(argv)
+    # The real door takes --ref <référence> anywhere (ADR-0036 point 5, J3).
+    if "--ref" in argv:
+        at = argv.index("--ref")
+        argv = argv[:at] + argv[at + 2:]
     _fail_if_flagged()
     if not argv:
         sys.exit(2)

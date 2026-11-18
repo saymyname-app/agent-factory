@@ -31,6 +31,10 @@ from cockpit.projects.actions import AccepterError, accepter_chantier, pas_bon_v
 from cockpit.projects.outcome import TRIAL_ISSUES
 
 DEFAULT_ACTOR = "benjamin"
+# ADR-0036 point 5 (J3): a gesture in Benjamin's name cites where he made it.
+# Every action reaches a handler only after ActionGuard.check has matched the
+# Tailscale-User-Login of the request to his configured login.
+COCKPIT_REF = "cockpit:tailscale-verified"
 DOOR_TIMEOUT_SECONDS = 15
 # How long Essai waits for bin/acceptance-session: two attempts to start a
 # product, 30 s each, and the time to give up (docs/ACCEPTANCE_SESSION.md).
@@ -251,7 +255,8 @@ def build_action_handlers(
         lettre = _require(payload, "lettre")
         # The click is Benjamin's own, confirmed gesture: the door records
         # him as the one who answered (af-zkdvur).
-        run_door([escalation_door_bin, "repondre", bead_id, lettre, "--actor", "benjamin"])
+        run_door([escalation_door_bin, "repondre", bead_id, lettre, "--actor", "benjamin",
+                  "--ref", COCKPIT_REF])
         bead = _after_door(_show_bead, bd_bin, bead_id, timeout=door_timeout)
         metadata = bead.get("metadata") or {}
         option = metadata.get("gc.escalation_response_option", lettre)
@@ -272,7 +277,7 @@ def build_action_handlers(
         calls it after the two-step confirmation."""
         _require_confirm(payload)
         bead_id = _require(payload, "bead_id")
-        run_door([proposal_door_bin, "accepter", bead_id, acteur])
+        run_door([proposal_door_bin, "accepter", bead_id, acteur, "--ref", COCKPIT_REF])
         return {"ok": True, "bead_id": bead_id}
 
     def handle_rejeter_proposition(payload):
@@ -283,7 +288,7 @@ def build_action_handlers(
         _require_confirm(payload)
         bead_id = _require(payload, "bead_id")
         raison = _require(payload, "raison")
-        run_door([proposal_door_bin, "rejeter", bead_id, raison, acteur])
+        run_door([proposal_door_bin, "rejeter", bead_id, raison, acteur, "--ref", COCKPIT_REF])
         return {"ok": True, "bead_id": bead_id, "raison": raison}
 
     def handle_reporter_proposition(payload):
@@ -304,7 +309,7 @@ def build_action_handlers(
             heure = datetime.fromtimestamp(until, tz=PARIS).isoformat(timespec="minutes")
         else:
             heure = _require(payload, "heure")
-        run_door([proposal_door_bin, "reporter", bead_id, heure, acteur])
+        run_door([proposal_door_bin, "reporter", bead_id, heure, acteur, "--ref", COCKPIT_REF])
         result = {"ok": True, "bead_id": bead_id, "heure": heure}
         if option:
             result["display"] = "Proposition reportée jusqu’à %s" % (_hhmm_paris(heure) or heure)

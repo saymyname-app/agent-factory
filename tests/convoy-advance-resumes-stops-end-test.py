@@ -659,7 +659,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
             self.run_ok(STATE, "set-branch", CONVOY, ticket_id, "--branch", f"ticket/{ticket_id}")
             self.taken(ticket_id, f"author-{ticket_id}")
             self.planning_exception(ticket_id)
-            self.run_ok(ESCALATION, "repondre", ticket_id, "b", "--actor", "benjamin")
+            self.run_ok(ESCALATION, "repondre", ticket_id, "b", "--actor", "benjamin", "--ref", "session:test-operator-01")
             metadata = self.bead(ticket_id)["metadata"]
             tickets.append({
                 "ticket": ticket_id,
@@ -1354,7 +1354,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.env["ESCALATION_DOOR_NOW"] = "1767228840"  # 2026-01-01T00:54:00Z
         self.run_ok(ESCALATION, "benjamin", T1, json.dumps(exception))
         self.env["ESCALATION_DOOR_NOW"] = "1767254060"  # 2026-01-01T07:54:20Z
-        self.run_ok(ESCALATION, "repondre", T1, "c", "--actor", "benjamin")
+        self.run_ok(ESCALATION, "repondre", T1, "c", "--actor", "benjamin", "--ref", "session:test-operator-01")
         del self.env["ESCALATION_DOOR_NOW"]
         self.stopped_all_green_request()
 
@@ -1375,7 +1375,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
                                "a test that calls one is not a test of the tool.", raised=False)
         self.answered_before_its_stop_request()
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"  # the answer comes after the stop's request
-        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin", "--ref", "session:test-operator-01")
 
         answer = self.advance(CONVOY)
 
@@ -3093,7 +3093,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     def test_the_answer_a_to_an_evaluation_planning_exception_lifts_it_and_judges_the_item_proven_by_test(self):
         # Benjamin, 21/10/2026 about 16:55 Paris (af-ten1sp): « Preuve par le test ».
         self.evaluation_parked()
-        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin", "--ref", "session:test-operator-01")
 
         answer = self.advance(CONVOY)
 
@@ -3131,7 +3131,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
         self.evaluated({"states": {"demo": {"state": "unobservable", "cause": "criterion",
                                              "reason": "toujours invisible sur le produit lancé"}}})
         self.env["ESCALATION_DOOR_NOW"] = "4102444800"
-        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin")
+        self.run_ok(ESCALATION, "repondre", T1, "a", "--actor", "benjamin", "--ref", "session:test-operator-01")
 
         answer = self.advance(CONVOY)
 
@@ -3155,7 +3155,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
     def test_the_answer_c_to_an_evaluation_planning_exception_lifts_it_and_judges_nothing_proven(self):
         # af-npz9v1.38: evaluated again on the products launched again.
         self.evaluation_parked()
-        self.run_ok(ESCALATION, "repondre", T1, "c", "--actor", "benjamin")
+        self.run_ok(ESCALATION, "repondre", T1, "c", "--actor", "benjamin", "--ref", "session:test-operator-01")
 
         answer = self.advance(CONVOY)
 
@@ -3165,7 +3165,7 @@ class ConvoyAdvanceTest(first.ConvoyAdvanceHarness):
 
     def test_the_answer_b_to_an_evaluation_planning_exception_leaves_it_parked(self):
         self.evaluation_parked()
-        self.run_ok(ESCALATION, "repondre", T1, "b", "--actor", "benjamin")
+        self.run_ok(ESCALATION, "repondre", T1, "b", "--actor", "benjamin", "--ref", "session:test-operator-01")
 
         answer = self.advance(CONVOY)
 
