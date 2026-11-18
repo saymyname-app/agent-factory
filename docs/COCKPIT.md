@@ -85,6 +85,13 @@ le même fichier pid, et en `Restart=on-failure` : un plantage la relance.
 recharger le code : `systemctl --user restart cockpit`, plutôt que
 `bin/cockpit restart`, que systemd lit comme un arrêt voulu.
 
+Le code fusionné se charge seul (af-q55qqx.7, 18/11/2026) : quand
+`factory-guard` avance la racine live sur `origin/main` et que cette avance
+change `bin/cockpit`, `lib/cockpit/` ou un module de `lib/` que le Cockpit
+importe, il redémarre `cockpit.service`, s'il tourne. Une fusion sans rapport
+ne le redémarre pas ; un Cockpit arrêté reste arrêté. Preuve :
+`tests/factory-guard-live-root-sync-test.sh`.
+
 `cockpit-probe.timer` lance `bin/cockpit-probe` toutes les 5 minutes. La sonde
 demande `/` au port local (8173) et à l'adresse tailnet (`public_url`). Elle
 notifie Benjamin par Pushover une fois à chaque changement d'état, à la chute
