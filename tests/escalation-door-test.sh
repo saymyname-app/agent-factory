@@ -192,6 +192,37 @@ written=$(bead af-tool)
 grep -Fq 'bd comments add af-tool' "$TEST_TMP/calls.log" \
   || fail "an agent's answer must try the « Décision déléguée (ADR-0036) » comment"
 
+# --- J3: gc.escalation_first_at is written once, and mesure reads it -------
+reset_beads
+seed af-first '{"id":"af-first","status":"open","metadata":{},"notes":"","labels":[]}'
+T_FIRST=1794900000
+TESTS_RUN=$((TESTS_RUN + 1))
+ESCALATION_DOOR_NOW=$T_FIRST door benjamin af-first "$COMPLETE_REQUEST" >/dev/null || fail "first request should succeed"
+first=$(jq -r '.metadata["gc.escalation_first_at"]' <<<"$(bead af-first)")
+[[ $first == "$(date -u -d "@$T_FIRST" +%Y-%m-%dT%H:%M:%SZ)" ]] || fail "the first request must stamp gc.escalation_first_at ($first)"
+ESCALATION_DOOR_NOW=$((T_FIRST + 600)) door benjamin af-first "$COMPLETE_REQUEST" >/dev/null || fail "a repeat should succeed"
+[[ $(jq -r '.metadata["gc.escalation_first_at"]' <<<"$(bead af-first)") == "$first" ]] \
+  || fail "a repeat request must never rewrite gc.escalation_first_at"
+TESTS_RUN=$((TESTS_RUN + 1))
+seed af-tool2 '{"id":"af-tool2","status":"open","metadata":{},"notes":"","labels":[]}'
+ESCALATION_DOOR_NOW=$T_FIRST door benjamin af-tool2 "$(jq 'del(.motif)' <<<"$COMPLETE_REQUEST")" >/dev/null || fail "reroute should succeed"
+[[ $(jq -r '.metadata["gc.escalation_first_at"] // "none"' <<<"$(bead af-tool2)") == none ]] \
+  || fail "a request rerouted to the Mayor never reached the operator: no first_at"
+ESCALATION_DOOR_NOW=$((T_FIRST + 5400)) door repondre af-first a --actor benjamin >/dev/null || fail "answer should succeed"
+seed af-old "$(jq -nc '{id: "af-old", status: "open", notes: "", labels: [],
+  metadata: {"gc.escalation_first_at": "2026-11-17T00:00:00Z", "gc.needs_benjamin": "vieille demande"}}')"
+TESTS_RUN=$((TESTS_RUN + 1))
+m=$(ESCALATION_DOOR_NOW=$((T_FIRST + 7200)) door mesure) || fail "mesure should succeed"
+[[ $(jq -r '.demandes' <<<"$m") == 2 ]] || { echo "$m" >&2; fail "mesure must count the requests that reached the operator"; }
+[[ $(jq -r '.hors_liste' <<<"$m") == 1 ]] || { echo "$m" >&2; fail "mesure must count a request with no listed motif as hors liste"; }
+[[ $(jq -r '.renvoyees_au_mayor' <<<"$m") == 1 ]] || { echo "$m" >&2; fail "mesure must count the reroutes"; }
+[[ $(jq -r '.latence_mediane_min' <<<"$m") == 90 ]] || { echo "$m" >&2; fail "mesure must give the median latency from first_at"; }
+[[ $(jq -r '.max_par_jour' <<<"$m") == 2 ]] || { echo "$m" >&2; fail "mesure must count per Paris day"; }
+TESTS_RUN=$((TESTS_RUN + 1))
+m=$(ESCALATION_DOOR_NOW=$((T_FIRST + 30 * 86400)) door mesure --jours 7) || fail "mesure should succeed"
+[[ $(jq -r '.demandes' <<<"$m") == 0 ]] || { echo "$m" >&2; fail "mesure must leave out requests older than its window"; }
+door mesure --jours x >/dev/null 2>&1 && fail "mesure must refuse a bad window"
+
 # --- lien: the optional link of the dossier a request carries (T26) ---------
 # A request may carry the link of the dossier Benjamin reads to decide (the
 # « non conforme » request of a convoy carries its Evidence Pack). One line,
