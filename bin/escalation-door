@@ -609,21 +609,26 @@ cmd_mesure() {
   fi
   local reached rerouted since
   since=$(( $(now_epoch) - jours * 86400 ))
-  reached=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_first_at --json 2>/dev/null) \
+  # The tracker's lists are files, never arguments: on the live tracker they
+  # exceed the kernel's argument limit (jq: Argument list too long, 18/11).
+  reached=$(mktemp) rerouted=$(mktemp)
+  # Expanded now: the RETURN trap runs once these locals are gone.
+  trap "rm -f -- '$reached' '$rerouted'; trap - RETURN" RETURN
+  "$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_first_at --json >"$reached" 2>/dev/null \
     || die "Could not list the requests that reached $OPERATOR_NAME."
-  rerouted=$("$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_route --json 2>/dev/null) \
+  "$GC_BIN" bd list --all --limit 0 --has-metadata-key gc.escalation_route --json >"$rerouted" 2>/dev/null \
     || die "Could not list the rerouted requests."
   # Paris day of each first request: TZ database, not a fixed offset.
   local days
   days=$(jq -r --argjson since "$since" '(if type == "array" then . else [.] end)[]
       | (.metadata["gc.escalation_first_at"] // "") | select(. != "" and . != "none")
-      | select(fromdateiso8601 >= $since)' <<<"${reached:-[]}" \
+      | select(fromdateiso8601 >= $since)' "$reached" \
     | while IFS= read -r at; do TZ=Europe/Paris date -d "$at" +%F; done | sort | uniq -c \
     | jq -Rn '[inputs | capture("^ *(?<n>[0-9]+) (?<jour>.+)$") | {jour, demandes: (.n | tonumber)}]')
   jq -n --argjson since "$since" --argjson jours "$jours" --argjson par_jour "$days" \
     --arg listed "$MOTIFS_BENJAMIN" \
-    --argjson reached "${reached:-[]}" --argjson rerouted "${rerouted:-[]}" '
-    def rows($x): ($x | if type == "array" then . else [.] end);
+    --slurpfile reached "$reached" --slurpfile rerouted "$rerouted" '
+    def rows($x): ($x[0] // [] | if type == "array" then . else [.] end);
     def at($k): (.metadata[$k] // "") | if . == "" or . == "none" then null else fromdateiso8601 end;
     ($listed | split(" ") | map(select(. != ""))) as $motifs
     | [rows($reached)[] | select((at("gc.escalation_first_at") // 0) >= $since)] as $r

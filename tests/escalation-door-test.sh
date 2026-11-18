@@ -222,6 +222,14 @@ TESTS_RUN=$((TESTS_RUN + 1))
 m=$(ESCALATION_DOOR_NOW=$((T_FIRST + 30 * 86400)) door mesure --jours 7) || fail "mesure should succeed"
 [[ $(jq -r '.demandes' <<<"$m") == 0 ]] || { echo "$m" >&2; fail "mesure must leave out requests older than its window"; }
 door mesure --jours x >/dev/null 2>&1 && fail "mesure must refuse a bad window"
+# The live tracker's lists exceed the argument limit (18/11): files, not args.
+TESTS_RUN=$((TESTS_RUN + 1))
+pad=$(head -c 300000 /dev/zero | tr '\0' x)
+for n in 1 2 3 4 5 6 7 8; do
+  seed "af-big$n" "$(jq -nc --arg id "af-big$n" --arg pad "$pad" '{id: $id, status: "closed", notes: $pad, labels: [],
+    metadata: {"gc.escalation_first_at": "2026-01-01T00:00:00Z", "gc.escalation_route": "benjamin"}}')"
+done
+ESCALATION_DOOR_NOW=$((T_FIRST + 7200)) door mesure >/dev/null || fail "mesure must read a list larger than the argument limit"
 
 # --- lien: the optional link of the dossier a request carries (T26) ---------
 # A request may carry the link of the dossier Benjamin reads to decide (the
