@@ -304,25 +304,19 @@ def collect_live_snapshot() -> tuple[dict[str, dict[str, Any]], set[str]]:
     ])
     if not isinstance(prs, list):
         raise fo.ObservePolicyError("GitHub source must return a JSON array")
+    driven_branches: set[str] = set()
+    driven_numbers: set[str] = set()
+    for issue in active:
+        metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+        if metadata.get("gc.work_branch"):
+            driven_branches.add(str(metadata["gc.work_branch"]))
+        if metadata.get("gc.pr_number"):
+            driven_numbers.add(str(metadata["gc.pr_number"]))
     for pr in prs:
         if not isinstance(pr, dict) or pr.get("number") is None:
             continue
-        checks = pr.get("statusCheckRollup")
-        if isinstance(checks, list):
-            checks = sorted(checks, key=lambda item: json.dumps(item, sort_keys=True))
-        areas["delivery"][f"pr:{pr['number']}"] = {
-            "source": "github",
-            "repo": repo,
-            "state": pr.get("state"),
-            "draft": bool(pr.get("isDraft")),
-            "head": pr.get("headRefOid"),
-            "head_branch": pr.get("headRefName"),
-            "base_branch": pr.get("baseRefName"),
-            "checks": checks or [],
-            "closed_at": pr.get("closedAt"),
-            "merged_at": pr.get("mergedAt"),
-            "owner": None,
-        }
+        driven = pr.get("headRefName") in driven_branches or str(pr["number"]) in driven_numbers
+        areas["delivery"][f"pr:{pr['number']}"] = fo.pr_fact(pr, repo, driven)
 
     areas["delivery"]["git:agent-factory"] = {
         "source": "git",

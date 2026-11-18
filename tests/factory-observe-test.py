@@ -448,6 +448,64 @@ class LiveObservationTest(unittest.TestCase):
             self.assertEqual([0, 0, 2], codes)
             self.assertEqual(["factory-worker-af-fixture"], json.loads(run.stdout)["route_failures"])
 
+    def operator_pr(self, case, **changes):
+        pr = {
+            "number": 909,
+            "state": "OPEN",
+            "isDraft": False,
+            "headRefName": "fix/af-q55qqx.7-cockpit-revision",
+            "headRefOid": "a" * 40,
+            "baseRefName": "main",
+            "statusCheckRollup": [{"name": "Tests", "status": "IN_PROGRESS", "conclusion": ""}],
+            "closedAt": None,
+            "mergedAt": None,
+            **changes,
+        }
+        case.prs.write_text(json.dumps([pr]))
+
+    def test_a_pr_the_factory_does_not_drive_wakes_only_on_failure_and_merge(self):
+        with LiveToolCase() as case:
+            self.operator_pr(case)
+            case.run_live(1000)
+            unchanged = json.loads(case.run_live(1300).stdout)
+            self.operator_pr(case, headRefOid="b" * 40, statusCheckRollup=[
+                {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"name": "Lint", "status": "IN_PROGRESS", "conclusion": ""},
+            ])
+            checks_moved = json.loads(case.run_live(1600).stdout)
+            self.assertEqual(("none", "none"), (unchanged["action"], checks_moved["action"]))
+            self.assertEqual([], case.calls_matching(["mail", "send"]))
+
+            self.operator_pr(case, statusCheckRollup=[
+                {"name": "Tests", "status": "COMPLETED", "conclusion": "FAILURE"},
+            ])
+            failed = json.loads(case.run_live(1900).stdout)
+            self.operator_pr(case, state="MERGED", statusCheckRollup=[], closedAt="2026-11-18T20:30:00Z",
+                             mergedAt="2026-11-18T20:30:00Z")
+            merged = json.loads(case.run_live(2200).stdout)
+            self.assertEqual(["pr:909"], [event["id"] for event in failed["events"]])
+            self.assertTrue(failed["events"][0]["evidence"]["after"]["checks_failed"])
+            self.assertEqual(["pr:909"], [event["id"] for event in merged["events"]])
+            self.assertEqual("MERGED", merged["events"][0]["evidence"]["after"]["state"])
+            self.assertEqual(["mayor", "mayor"], [mail[2] for mail in case.calls_matching(["mail", "send"])])
+
+    def test_a_pr_on_a_held_beads_work_branch_still_wakes_on_each_check(self):
+        with LiveToolCase() as case:
+            held = json.loads(case.active.read_text())
+            held[0]["metadata"]["gc.work_branch"] = "fix/af-q55qqx.7-cockpit-revision"
+            case.active.write_text(json.dumps(held))
+            self.operator_pr(case)
+            case.run_live(1000)
+            self.operator_pr(case, statusCheckRollup=[
+                {"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            ])
+            passed = json.loads(case.run_live(1300).stdout)
+            self.assertEqual(["pr:909"], [event["id"] for event in passed["events"]])
+            self.assertEqual(
+                [{"name": "Tests", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+                passed["events"][0]["evidence"]["after"]["checks"],
+            )
+
     def test_a_failed_route_falls_back_to_mayor_when_its_worker_disappears(self):
         with LiveToolCase() as case:
             case.run_live(1000)
