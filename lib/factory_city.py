@@ -23,11 +23,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+from bounded_process import run as bounded_run
+
 
 def city_root(checkout: Path) -> Path:
     """The main checkout of CHECKOUT's repository, or CHECKOUT itself."""
     try:
-        proc = subprocess.run(
+        proc = bounded_run(
             ["git", "-C", str(checkout), "rev-parse", "--path-format=absolute",
              "--git-dir", "--git-common-dir"],
             capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL)
