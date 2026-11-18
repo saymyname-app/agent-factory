@@ -103,4 +103,7 @@ fi
 
 CMD=("$ROOT/bin/dispatch-door" "$BEAD_ID" --rig agent-factory --formula "$FORMULA")
 [ "$DRY_RUN" = "1" ] && CMD+=(--dry-run)
-exec env GC_BIN="$GC_BIN" FACTORY_ROOT="$ROOT" "${CMD[@]}"
+# FACTORY_ROOT is passed on only when the caller set it: from an agent's work
+# tree, this checkout is not the city, and dispatch-door finds the live one
+# itself (af-zry5xu).
+exec env GC_BIN="$GC_BIN" ${FACTORY_ROOT:+FACTORY_ROOT="$FACTORY_ROOT"} "${CMD[@]}"

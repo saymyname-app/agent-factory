@@ -110,6 +110,9 @@ MEMINFO_FILE="${DISPATCH_DOOR_MEMINFO_FILE:-/proc/meminfo}"
 MEM_MIN_KIB="${DISPATCH_DOOR_MEM_MIN_KIB:-1572864}"  # 1.5 GiB
 
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# The city gc is told about: from an agent's work tree, the live checkout
+# (lib/factory_city.py, af-zry5xu).
+CITY="${FACTORY_ROOT:-$(python3 "$SELF_DIR/../lib/factory_city.py" "$ROOT")}"
 # shellcheck source=lib/project_registry.sh
 . "$SELF_DIR/../lib/project_registry.sh"
 
@@ -274,7 +277,7 @@ else
   qualified_target="$RIG/$target"
 fi
 
-CMD=("$GC_BIN" --city "$ROOT" sling "$qualified_target" "$BEAD_ID" --on "$FORMULA" --reassign)
+CMD=("$GC_BIN" --city "$CITY" sling "$qualified_target" "$BEAD_ID" --on "$FORMULA" --reassign)
 if [ "$DRY_RUN" = "1" ]; then
   printf '%q ' "${CMD[@]}"
   printf '\n'
@@ -311,7 +314,7 @@ if [ -r "$MEMINFO_FILE" ]; then
   fi
 fi
 
-bead_json=$("$GC_BIN" --city "$ROOT" bd show "$BEAD_ID" --json) \
+bead_json=$("$GC_BIN" --city "$CITY" bd show "$BEAD_ID" --json) \
   || fail "could not read $BEAD_ID to check its labels before dispatch"
 if printf '%s' "$bead_json" | jq -e '(.[0].labels // []) | index("proposal") != null' >/dev/null 2>&1; then
   fail "$BEAD_ID is labelled proposal -- proposals are never dispatched, they are triaged at the next Planning Run"
@@ -360,7 +363,7 @@ if [ -n "$target_scope" ] && [ -f "$HOT_PATHS_FILE" ]; then
       done
     done
     if [ "${#touched_hot_paths[@]}" -gt 0 ]; then
-      held_json=$("$GC_BIN" --city "$ROOT" bd list --all --has-metadata-key gc.scope_paths --status in_progress --limit 0 --json 2>/dev/null) || held_json="[]"
+      held_json=$("$GC_BIN" --city "$CITY" bd list --all --has-metadata-key gc.scope_paths --status in_progress --limit 0 --json 2>/dev/null) || held_json="[]"
       jq -e 'type == "array"' >/dev/null 2>&1 <<<"$held_json" || held_json="[]"
       holders_tsv=$(jq -r --arg self "$BEAD_ID" '.[] | select(.id != $self) | [.id, (.metadata["gc.scope_paths"] // "")] | @tsv' <<<"$held_json")
       while IFS=$'\t' read -r holder_id holder_scope; do
@@ -394,7 +397,7 @@ fi
 
 "${CMD[@]}" || fail "gc sling failed routing $BEAD_ID to $qualified_target"
 
-"$GC_BIN" --city "$ROOT" bd update "$BEAD_ID" \
+"$GC_BIN" --city "$CITY" bd update "$BEAD_ID" \
   --set-metadata "gc.dispatched_via=dispatch-door" \
   --set-metadata "gc.dispatch_formula=$FORMULA" \
   --set-metadata "gc.dispatch_target=$qualified_target" \

@@ -256,11 +256,15 @@ from delivery_rules import (  # noqa: E402
     EVALUATION_STOPS, answer_lifts_planning_exception, green_seen_once, moves_a_proof, technical_repairs,
 )
 from factory_delivery_proof import delivery_readiness  # noqa: E402
+from factory_city import city_root  # noqa: E402
 
 
 PROGRAM = "convoy-advance"
 BIN = Path(__file__).resolve().parent
 ROOT = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+# The city gc is told about: from an agent's work tree, the live checkout
+# (lib/factory_city.py, af-zry5xu).
+CITY = Path(os.environ.get("FACTORY_ROOT") or city_root(BIN.parent))
 GC_BIN = os.environ.get("GC_BIN", "gc")
 STATE_BIN = BIN / "convoy-state"
 DOOR_BIN = BIN / "dispatch-door"
@@ -583,7 +587,7 @@ def parsed(proc: subprocess.CompletedProcess[str], what: str) -> Any:
 
 
 def gc_json(*args: str) -> Any:
-    proc = run([GC_BIN, "--city", str(ROOT), *args])
+    proc = run([GC_BIN, "--city", str(CITY), *args])
     if proc.returncode != 0:
         detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
         raise Refusal(f"gc {' '.join(args[:3])} a échoué : {detail[-300:]}")
@@ -1104,7 +1108,7 @@ def withdraw_incident(convoy: Convoy) -> dict[str, Any]:
     bead_id = convoy.incident["bead"]
     passed(run([str(ESCALATION_BIN), "clear", bead_id]), "escalation-door clear")
     if read_bead(bead_id).get("status") != "closed":
-        passed(run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
+        passed(run([GC_BIN, "--city", str(CITY), "bd", "close", bead_id, "--reason",
                     f"État redevenu valide : bin/convoy-advance a repris le convoi {convoy.id}."]), "gc bd close")
     passed(run([str(STATE_BIN), "clear-incident", convoy.id]), "convoy-state clear-incident")
     return {"bead": bead_id, "withdrawn": True}
@@ -1449,7 +1453,7 @@ def release_exact_returned_parking(convoy: Convoy, ticket: dict[str, Any]) -> li
     affected = [other["id"] for other in convoy.tickets
                 if (other.get("park") or {}).get("origin") == ticket["id"]]
     for ticket_id in [name for name in affected if name != ticket["id"]] + [ticket["id"]]:
-        passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", ticket_id,
+        passed(run([GC_BIN, "--city", str(CITY), "bd", "update", ticket_id,
                     "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket_id}")
     return sorted(affected)
 
@@ -1559,12 +1563,12 @@ def release_exact_c2b_parking(convoy: Convoy, ticket: dict[str, Any]) -> list[st
     affected = [other["id"] for other in convoy.tickets
                 if (other.get("park") or {}).get("origin") == ticket["id"]]
     for ticket_id in [name for name in affected if name != ticket["id"]]:
-        passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", ticket_id,
+        passed(run([GC_BIN, "--city", str(CITY), "bd", "update", ticket_id,
                     "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket_id}")
     raw_ticket = read_bead(ticket["id"])
     resume = metadata_record(raw_ticket, "gc.flow.resume")
     resume["entries"][-1]["cause"] = REPAIR_DELIVERED
-    passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", ticket["id"],
+    passed(run([GC_BIN, "--city", str(CITY), "bd", "update", ticket["id"],
                 "--set-metadata", f"gc.flow.resume={json.dumps(resume, ensure_ascii=False)}",
                 "--unset-metadata", "gc.flow.park"]), f"gc bd update {ticket['id']}")
     return sorted(affected)
@@ -1698,7 +1702,7 @@ def release_exact_c2b_evaluation(convoy: Convoy, ticket: dict[str, Any]) -> list
     affected = [other["id"] for other in convoy.tickets
                 if (other.get("park") or {}).get("origin") == ticket["id"]]
     for ticket_id in [name for name in affected if name != ticket["id"]] + [ticket["id"]]:
-        argv = [GC_BIN, "--city", str(ROOT), "bd", "update", ticket_id,
+        argv = [GC_BIN, "--city", str(CITY), "bd", "update", ticket_id,
                 "--unset-metadata", "gc.flow.park"]
         if ticket_id == ticket["id"]:
             exit_record = ticket["resume"]["entries"][-1]["exit"]
@@ -2146,7 +2150,7 @@ def launch_resume(convoy: Convoy, ticket_id: str, cause: str, rig: str, settings
         argv += ["--role", settings["resume"]["role"]]
     routed = run(argv)
     if routed.returncode != 0:
-        run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
+        run([GC_BIN, "--city", str(CITY), "bd", "close", bead_id, "--reason",
              "Reprise non routée par la porte de dispatch."])
         reason = (routed.stderr.strip() or routed.stdout.strip() or f"exit {routed.returncode}").splitlines()[-1]
         raise Deferred(reason) if routed.returncode == DOOR_DEFERRED else Refusal(reason)
@@ -2721,7 +2725,7 @@ def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any
             # the only record that names the exhausted tickets (af-g2ukoq).
             settle_grouped_lift(convoy, out)
             if read_bead(bead_id).get("status") != "closed":
-                passed(run([GC_BIN, "--city", str(ROOT), "bd", "close", bead_id, "--reason",
+                passed(run([GC_BIN, "--city", str(CITY), "bd", "close", bead_id, "--reason",
                             f"Le convoi {convoy.id} n'est plus fait que de tickets parqués."]), "gc bd close")
             state_write("clear-grouped-request", convoy.id)
             return {"bead": bead_id, "withdrawn": True}
@@ -2731,7 +2735,7 @@ def settle_grouped_request(convoy: Convoy, out: dict[str, Any]) -> dict[str, Any
         request, text, lifts = grouped_request(convoy, origins)
         if convoy.grouped:
             bead_id = convoy.grouped["bead"]
-            passed(run([GC_BIN, "--city", str(ROOT), "bd", "update", bead_id, "--append-notes", text]), "gc bd update")
+            passed(run([GC_BIN, "--city", str(CITY), "bd", "update", bead_id, "--append-notes", text]), "gc bd update")
             # The old record is still the only one that names the tickets.
             # Apply an answer that landed during this pass before replacing it.
             if settle_grouped_lift(convoy, out):
@@ -2881,10 +2885,10 @@ def publish_repair(convoy: Convoy, repair: dict[str, Any], label: str, reason: s
         raise Refusal("gc bd create n'a pas rendu l'identifiant du brouillon de révision")
 
     def abandon(reason: str) -> None:
-        run([GC_BIN, "--city", str(ROOT), "bd", "close", draft_id, "--reason",
+        run([GC_BIN, "--city", str(CITY), "bd", "close", draft_id, "--reason",
              f"révision refusée par la porte de patch : {one_line(reason, 200)}"])
 
-    prepared = run([GC_BIN, "--city", str(ROOT), "bd", "update", draft_id,
+    prepared = run([GC_BIN, "--city", str(CITY), "bd", "update", draft_id,
                     "--set-metadata", f"spec_id={spec_id}", "--set-metadata", f"revises_digest={revises}",
                     "--set-metadata", "gc.plane=planning"])
     if prepared.returncode != 0:

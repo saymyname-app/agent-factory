@@ -650,6 +650,23 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   toutes les formules et la règle d'AGENTS.md), corrigé ici.
 - Ouvertes : aucune connue.
 
+## W — Outil lancé depuis une copie de travail qui s'adresse à la copie au lieu de l'usine
+
+- Invariant : Un outil de `bin/` ou `lib/` qui nomme une ville à gc
+  (`gc --city`) prend FACTORY_ROOT, sinon `lib/factory_city.py` : depuis la
+  copie de travail d'un agent, c'est le dossier principal de l'usine, jamais
+  la copie, à qui manque le `city.provider.toml` généré.
+- Contrôle : `python3 tests/factory-city-test.py`,
+  `bash tests/factory-work-dispatch-test.sh`
+- Occurrences : af-zry5xu (le 17/11/2026, `bin/proposal-door` lancé par un
+  agent depuis sa copie af-x7xg4s a créé af-oa01l3 sans pouvoir le lancer :
+  `bin/factory-work-dispatch` passait sa propre copie en FACTORY_ROOT, et gc
+  n'y trouvait pas `city.provider.toml` ; même défaut dans
+  `bin/dispatch-door`, `bin/convoy-advance`, `lib/convoy_state.py`,
+  `bin/convoy-graph`, `bin/ticket-graph-publish`, `bin/project-standards`,
+  `lib/factory_build_gates.py`), corrigé ici.
+- Ouvertes : aucune connue.
+
 ## A — Autre
 
 - Invariant : Aucun invariant commun : une PR rangée ici dit pourquoi elle

@@ -12,6 +12,10 @@ import tempfile
 import runpy
 from pathlib import Path
 import tomllib
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from factory_city import city_root  # noqa: E402
 
 JAVA_RESERVED = set("""abstract assert boolean break byte case catch char class const continue default do
 double else enum extends final finally float for goto if implements import instanceof int
@@ -135,7 +139,8 @@ def _recurrence_unlocked(root, rig, load_descriptor):
         return (path, matches[0]) if len(matches) == 1 else None
 
     gc = os.environ.get("GC_BIN", "gc")
-    command = [gc, "--city", str(root), "bd"]
+    # From an agent's work tree, the live checkout (lib/factory_city.py, af-zry5xu).
+    command = [gc, "--city", str(city_root(root)), "bd"]
 
     def tracker(*args):
         proc = subprocess.run([*command, *args], capture_output=True, text=True)
