@@ -37,11 +37,12 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from factory_city import city_root  # noqa: E402
 from ticket_graph import critical_path, levels  # noqa: E402
 
 PROGRAM = "convoy-graph"
 GC_BIN = os.environ.get("GC_BIN") or "gc"
-CITY = os.environ.get("CONVOY_GRAPH_CITY") or str(Path(__file__).resolve().parents[1])
+CITY = os.environ.get("CONVOY_GRAPH_CITY") or str(city_root(Path(__file__).resolve().parents[1]))
 
 
 class Unreadable(Exception):

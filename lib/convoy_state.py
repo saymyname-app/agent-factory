@@ -177,6 +177,7 @@ LIB = str(Path(__file__).resolve().parent)
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
 import advance_pass
+from factory_city import city_root
 from delivery_rules import PROVEN_BY_TEST_OPTION, evaluation_proven_by_test, green_seen_once, moves_a_proof, review_replay_due
 
 # The two names serve annotations only, which are never evaluated here
@@ -192,8 +193,9 @@ GC_BIN = os.environ.get("GC_BIN", "gc")
 BIN = Path(__file__).resolve().parents[1] / "bin"  # this module is in lib/
 # The city is named to gc on every call: left to find it by itself, gc 1.4.1
 # starts one more command before each read, and the same `bd show` takes 2.5
-# times longer (af-2o6oyl). Same root as bin/convoy-advance.
-CITY = Path(os.environ.get("FACTORY_ROOT") or BIN.parent)
+# times longer (af-2o6oyl). Same city as bin/convoy-advance: from an agent's
+# work tree, the live checkout (lib/factory_city.py, af-zry5xu).
+CITY = Path(os.environ.get("FACTORY_ROOT") or city_root(BIN.parent))
 # Where the bounds of the flow are set (Spec §8): one file, read by every
 # command that applies one of them.
 SETTINGS = "config/delivery-flow.json"

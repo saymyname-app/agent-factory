@@ -73,6 +73,8 @@ import yaml
 
 PROGRAM = "ticket-graph-publish"
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+from factory_city import city_root  # noqa: E402
 
 # Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
 # override (af-d130xt).
@@ -1761,8 +1763,9 @@ def mayor_city() -> Path:
     caller's cwd: the now-retired Planning Run router ran on a `po/*`
     worktree by design (F18), where `gc` walking up from cwd finds no
     running city, and the Mayor silently stayed asleep after the A6 publish
-    (2026-09-29)."""
-    return Path(os.environ.get("FACTORY_ROOT") or ROOT)
+    (2026-09-29). From an agent's work tree, the live checkout
+    (lib/factory_city.py, af-zry5xu)."""
+    return Path(os.environ.get("FACTORY_ROOT") or city_root(ROOT))
 
 
 def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict[str, Any]:

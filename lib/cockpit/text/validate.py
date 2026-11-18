@@ -218,6 +218,40 @@ def speaks_plainly(value):
             and not _holds_internal_term(value.lower(), terms))
 
 
+# What :func:`rewrite` tidies once the identifiers are out of a text: a
+# word left alone before a stop (« voir », « sur »), brackets or quotes
+# left empty, spaces left before a stop or doubled.
+_POINTER = r"(?:\b(?:voir|cf\.)\s*)?"
+_DANGLING = re.compile(r"(?i)\b(?:voir|cf\.?|sur|de|du|des|pour|par|dans|avec|à)\s*(?=[;,:.)\]»]|$)")
+_EMPTY_PAIRS = re.compile(r"\(\s*\)|\[\s*\]|«\s*»|\(\s*[,;:]?\s*\)")
+_SPACE_BEFORE_STOP = re.compile(r"\s+([,.)\]])")
+_STOP_RUNS = re.compile(r"([;,:])\s*(?=[;,:.]|$)")
+
+
+def rewrite(label, value, max_length=MAX_LINE_LENGTH):
+    """``value`` made readable from its own words, or ``None`` when its
+    words do not allow it (af-x7xg4s): on one line, its identifiers taken
+    out, cut at a word before ``max_length`` with « … ». Nothing is
+    translated: a text that holds an internal term or is not in the
+    Operator Language stays ``None``, and so does one with nothing left.
+    The result passes :func:`violations`."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = " ".join(value.split())
+    for pattern in _IDENTIFIER_PATTERNS:
+        # The rest of a hyphenated name goes with it (« AF-main-protection »).
+        text = re.sub(_POINTER + pattern.pattern + r"(?:-\w+)*", "", text, flags=re.IGNORECASE)
+    for _ in range(3):
+        text = _EMPTY_PAIRS.sub("", _DANGLING.sub("", text))
+        text = _STOP_RUNS.sub("", _SPACE_BEFORE_STOP.sub(r"\1", " ".join(text.split())))
+    text = text.strip(" ;,:-—").lstrip(".")
+    if len(text) > max_length:
+        text = _DANGLING.sub("", text[:max_length - 1].rsplit(" ", 1)[0]).rstrip(" ;,:-—") + "…"
+    if not text or violations(label, text, max_length):
+        return None
+    return text
+
+
 def is_valid(label, value, max_length=MAX_LINE_LENGTH):
     return not violations(label, value, max_length=max_length)
 

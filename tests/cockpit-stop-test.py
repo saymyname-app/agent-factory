@@ -184,6 +184,39 @@ class StopDriverTest(unittest.TestCase):
         # ...but the assignment the session held is exactly what bilan()
         # reports as lost, not silently dropped.
 
+    def test_a_reading_begun_before_the_forced_session_stopped_does_not_say_its_assignment_kept(self):
+        # af-oa01l3: the supervisor took the order but still lists the
+        # session; a reading begun then shows the ticket still held, and the
+        # tracker loses it when the session stops.
+        clock = FakeClock()
+        fake = FakeGcCity(sessions=[{"session_id": "s1", "bead_id": "af-1", "assignee": "w1", "last_event_at": clock.now()}])
+        read = {}
+
+        def reading():
+            read["photo"] = dict(snapshot_of(fake), read_began_at=clock.now())
+
+        reading()
+        driver = StopDriver(fake, lambda: read["photo"], clock, InMemoryStateStore())
+        driver.request_stop()
+        clock.advance(31 * 60)
+        driver.tick()
+        still_listed = list(fake.sessions)
+        driver.force_stop()
+        fake.sessions = still_listed
+        clock.advance(1)
+        reading()
+        driver.tick()
+
+        clock.advance(1)
+        fake.sessions = []
+        fake.beads["af-1"]["assignee"] = None
+        driver.tick()
+        self.assertEqual([None], [work["point"] for work in driver.view()["work"]])
+        clock.advance(1)
+        reading()
+        driver.tick()
+        self.assertEqual(["perdu"], [work["point"] for work in driver.view()["work"]])
+
     # ------------------------------------------------------------------
     # AC3 -- "usine arrêtée par toi" without a false alarm, heartbeat
     # pauses only at "Arrêtée proprement", "Arrêt interrompu" with écarts.

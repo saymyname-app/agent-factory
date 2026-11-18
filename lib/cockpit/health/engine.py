@@ -157,6 +157,42 @@ def proposal_sans_champs_lines(sans_champs):
     ]
 
 
+def proposal_deferred_to_event_lines(deferred):
+    """af-x7xg4s: a proposal the operator put off until an event waits on
+    no one until it comes, and no code sees it come. One informative line
+    per event, in his words, so that it is never lost from sight."""
+    by_event = {}
+    for item in deferred or ():
+        by_event.setdefault(item.get("jusqua") or "", []).append(item)
+    lines = []
+    for event, items in sorted(by_event.items()):
+        count = len(items)
+        plural = "s" if count > 1 else ""
+        lines.append({
+            "kind": OK,
+            "text": "%d proposition%s reportée%s par toi jusqu'à « %s »." % (count, plural, plural, event),
+        })
+    return lines
+
+
+def answered_draft_lines(answered, now):
+    """af-x7xg4s: a Spec or a graph the operator answered waits on an
+    agent to apply his answer; one warning for all of them, dated from the
+    oldest answer -- never an identifier."""
+    items = list(answered or ())
+    if not items:
+        return []
+    count = len(items)
+    sinces = [item.get("since") for item in items if item.get("since") is not None]
+    suffix = " depuis %s" % _duration_fr(now - min(sinces)) if sinces else ""
+    plural = "s" if count > 1 else ""
+    return [{
+        "kind": WARN,
+        "text": "%d Spec%s ou graphe%s que tu as tranché%s attend%s qu'un agent applique ta réponse%s."
+        % (count, plural, plural, plural, "ent" if count > 1 else "", suffix),
+    }]
+
+
 def compute_health(
     now,
     commits_behind=None,
@@ -170,6 +206,8 @@ def compute_health(
     red_ci=(),
     maintenance_proposals=(),
     proposals_sans_champs=(),
+    proposals_deferred_to_event=(),
+    answered_drafts=(),
     extra_lines=(),
     supervisor_unreachable_after_seconds=SUPERVISOR_UNREACHABLE_AFTER_SECONDS,
     factory_stalled_after_seconds=FACTORY_STALLED_AFTER_SECONDS,
@@ -196,7 +234,9 @@ def compute_health(
     lines.extend(order_failure_lines(order_failures, now))
     lines.extend(red_ci_lines(red_ci, now))
     lines.extend(proposal_sans_champs_lines(proposals_sans_champs))
+    lines.extend(answered_draft_lines(answered_drafts, now))
     lines.extend(maintenance_proposal_lines(maintenance_proposals, now))
+    lines.extend(proposal_deferred_to_event_lines(proposals_deferred_to_event))
     # What the cockpit's own parts say about themselves (notifications,
     # heartbeat: spec .59, .98), already as health lines.
     lines.extend(extra_lines)

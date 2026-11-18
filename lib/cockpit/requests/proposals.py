@@ -84,10 +84,38 @@ def classe_of(bead):
     return DECISION
 
 
+REPORT_KEY = "gc.proposal_report_until"
+
+
+def deferred_to_event(bead):
+    """The words of ``bin/proposal-door reporter`` when they name an event
+    rather than a time (« prochaine session de planification … »), else
+    ``None``. A time is the builder's to compare with the clock; an event
+    no code can see come: the operator put the proposal off until it, so
+    it waits on him no more (af-x7xg4s, af-dcmnby) -- the health zone says
+    it, with his words, until he takes it back."""
+    from cockpit.requests.sources._util import parse_iso
+
+    words = ((bead or {}).get("metadata") or {}).get(REPORT_KEY)
+    if not isinstance(words, str) or not words.strip() or parse_iso(words) is not None:
+        return None
+    return " ".join(words.split())
+
+
 def is_open_decision(bead):
     """The inbox's condition (ADR-0029 points 2-4): a pending proposal of
-    class ``decision``."""
-    return is_pending(bead) and classe_of(bead) == DECISION
+    class ``decision``, not put off until an event."""
+    return is_pending(bead) and classe_of(bead) == DECISION and deferred_to_event(bead) is None
+
+
+def deferred_to_events(beads):
+    """Every pending decision proposal put off until an event:
+    ``[{"id", "jusqua"}]`` for the health zone."""
+    return [
+        {"id": bead.get("id") or "", "jusqua": deferred_to_event(bead)}
+        for bead in beads or ()
+        if is_pending(bead) and classe_of(bead) == DECISION and deferred_to_event(bead) is not None
+    ]
 
 
 def maintenance_in_progress(beads):

@@ -457,7 +457,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/factory-maintain-test.sh`,
   `bash tests/isolated-city-stop-guard-test.sh`,
   `bash tests/ci-apt-install-test.sh`,
-  `python3 tests/bounded-process-test.py BoundedProcessTest.test_an_exception_keeps_its_name_when_lines_move_around_it` — partiel : le premier
+  `python3 tests/bounded-process-test.py BoundedProcessTest.test_an_exception_keeps_its_name_when_lines_move_around_it`,
+  `python3 tests/cockpit-stop-test.py StopDriverTest.test_a_reading_begun_before_the_forced_session_stopped_does_not_say_its_assignment_kept` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor), et qu'un bead pris
   en réparation ou parqué répond encore à sa panne ; `alert-dedup-status`
@@ -525,7 +526,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `config/detached-process-exceptions.tsv` par son fichier et sa fonction
   (`#2` après la première d'une même fonction), jamais par son numéro de
   ligne : une ligne ajoutée ailleurs dans le fichier ne rougit plus un
-  travail sans rapport.
+  travail sans rapport. Le contrôle `cockpit-stop` refuse qu'après un arrêt
+  forcé le Cockpit dise une affectation gardée sur une lecture des tickets
+  commencée avant que le superviseur ait arrêté la session.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -589,7 +592,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   vieillie était tue dès que le bead qu'elle bloque, ou le convoi qui le
   suit, avait n'importe quelle demande sur la liste de Benjamin ; seule la
   demande portée par la porte, ou celle de ce bead ou de ce convoi qui nomme
-  la porte, la tait désormais).
+  la porte, la tait désormais) ; af-oa01l3 (après un arrêt forcé, le départ
+  d'une session était daté à l'ordre et non à l'arrêt : une lecture commencée
+  entre les deux disait « affectation gardée » d'un ticket perdu).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
@@ -643,6 +648,23 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bin/factory-watchdog`, `bin/factory-session-loop-guard`, l'ouverture de
   PR de `mol-do-work` et `mol-polecat-commit`, la fermeture des étapes de
   toutes les formules et la règle d'AGENTS.md), corrigé ici.
+- Ouvertes : aucune connue.
+
+## W — Outil lancé depuis une copie de travail qui s'adresse à la copie au lieu de l'usine
+
+- Invariant : Un outil de `bin/` ou `lib/` qui nomme une ville à gc
+  (`gc --city`) prend FACTORY_ROOT, sinon `lib/factory_city.py` : depuis la
+  copie de travail d'un agent, c'est le dossier principal de l'usine, jamais
+  la copie, à qui manque le `city.provider.toml` généré.
+- Contrôle : `python3 tests/factory-city-test.py`,
+  `bash tests/factory-work-dispatch-test.sh`
+- Occurrences : af-zry5xu (le 17/11/2026, `bin/proposal-door` lancé par un
+  agent depuis sa copie af-x7xg4s a créé af-oa01l3 sans pouvoir le lancer :
+  `bin/factory-work-dispatch` passait sa propre copie en FACTORY_ROOT, et gc
+  n'y trouvait pas `city.provider.toml` ; même défaut dans
+  `bin/dispatch-door`, `bin/convoy-advance`, `lib/convoy_state.py`,
+  `bin/convoy-graph`, `bin/ticket-graph-publish`, `bin/project-standards`,
+  `lib/factory_build_gates.py`), corrigé ici.
 - Ouvertes : aucune connue.
 
 ## A — Autre

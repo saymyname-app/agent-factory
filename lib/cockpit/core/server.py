@@ -498,6 +498,7 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
                     "verifie_a": r.verifie_a,
                     "incomplete": r.incomplete,
                     "missing_fields": r.missing_fields,
+                    "reecrits": r.reecrits,
                     "motifs": r.motifs,
                     "texte_origine": r.texte_origine,
                     "precisions": r.precisions,
@@ -1193,6 +1194,8 @@ class CockpitRequestHandler(BaseHTTPRequestHandler):
             red_ci=collectors.red_ci_items(beads),
             maintenance_proposals=collectors.maintenance_proposal_items(beads),
             proposals_sans_champs=collectors.proposal_sans_champs_items(beads),
+            proposals_deferred_to_event=collectors.proposal_deferred_to_event_items(beads),
+            answered_drafts=collectors.answered_draft_items(beads),
             extra_lines=self._project_health_lines(snapshot)
             + [
                 line

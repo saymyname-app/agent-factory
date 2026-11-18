@@ -347,7 +347,7 @@ def follow_stop(supervisor, stop: dict, home: str) -> None:
     suspended city leaves a session the work it holds, then it stops by
     itself (`drains_in_seconds`, by session; one not named never does, its
     ticket lost once it stops when `vanishes_when_drained` says so, held by no
-    one when `released_when_drained` does); a session stopped by force leaves
+    one when `released_when_drained` does); a session stopped by force stops,
     its ticket held by no one when `released_on_force_stop` says so; a resumed
     one sends them back, on what they held or as `reassigned_on_resume` says.
     The tracker is copied, as it changes, where `tracker` says."""
@@ -413,8 +413,13 @@ def follow_stop(supervisor, stop: dict, home: str) -> None:
         seen += len(writes)
         for write in writes:
             name = re.fullmatch(r"/v0/city/[^/]+/session/([^/]+)/stop", write.get("path") or "")
-            if write.get("method") == "POST" and name and name.group(1) in forced:
-                release(forced[name.group(1)])
+            if write.get("method") == "POST" and name:
+                # The ticket is released where the tickets are read before
+                # the session stops, as gc stops it (af-oa01l3).
+                if name.group(1) in forced:
+                    release(forced[name.group(1)])
+                    copy()
+                running(name.group(1), False)
         suspended = bool(supervisor._status["suspended"])
         if suspended != was:
             was = suspended
