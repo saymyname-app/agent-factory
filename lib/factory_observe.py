@@ -26,6 +26,7 @@ empty).
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 POLICY_CONTRACT = "agent-factory-observe-policy/v1"
@@ -189,6 +190,49 @@ def diff_snapshot(previous: dict[str, Any], current: dict[str, Any]) -> list[dic
                 kind = CHANGED
             facts.append({"area": area, "id": fact_id, "kind": kind, "before": before, "after": after})
     return facts
+
+
+# --- GitHub pull requests -------------------------------------------------
+
+# Same failed conclusions pr-autopilot reads in a check rollup.
+FAILED_CHECK_CONCLUSIONS = ("FAILURE", "ERROR", "TIMED_OUT")
+
+
+def pr_fact(pr: dict[str, Any], repo: str, driven: bool) -> dict[str, Any]:
+    """The observed fact of one GitHub PR.
+
+    A PR the Factory drives (its head branch or number is recorded on a held
+    Bead) keeps its head and every check, which its worker acts on. A PR it
+    does not drive -- an operator session's `fix/...` -- keeps only whether
+    it is open, merged or closed, and whether a check failed: a check that
+    starts, passes or is re-run, or a new push, is no change to it
+    (af-jnvjh5: seven Mayor wakes in a row for PR #909, nothing to do).
+    """
+    checks = pr.get("statusCheckRollup")
+    checks = checks if isinstance(checks, list) else []
+    fact: dict[str, Any] = {
+        "source": "github",
+        "repo": repo,
+        "state": pr.get("state"),
+        "head_branch": pr.get("headRefName"),
+        "base_branch": pr.get("baseRefName"),
+        "closed_at": pr.get("closedAt"),
+        "merged_at": pr.get("mergedAt"),
+        "owner": None,
+    }
+    if not driven:
+        fact["checks_failed"] = any(
+            isinstance(check, dict)
+            and (check.get("conclusion") or check.get("state")) in FAILED_CHECK_CONCLUSIONS
+            for check in checks
+        )
+        return fact
+    fact.update({
+        "draft": bool(pr.get("isDraft")),
+        "head": pr.get("headRefOid"),
+        "checks": sorted(checks, key=lambda item: json.dumps(item, sort_keys=True)),
+    })
+    return fact
 
 
 # --- role qualification ---------------------------------------------------

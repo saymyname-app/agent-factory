@@ -468,8 +468,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   (`# open only:`) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route
   unique au plus petit propriétaire présent, la preuve durable avant l'alerte,
-  sa clé stable de dédoublonnage, la conservation d'une demande humaine et le
-  relevé final à +2 h ; le troisième refuse qu'une sortie locale 0 compte comme
+  sa clé stable de dédoublonnage, la conservation d'une demande humaine, le
+  relevé final à +2 h, et qu'une PR que l'usine ne pilote pas (aucun ticket
+  tenu ne porte sa branche ni son numéro) ne réveille personne tant qu'aucune
+  vérification n'échoue et qu'elle n'est ni fusionnée ni fermée ; le troisième refuse qu'une sortie locale 0 compte comme
   armement sans relecture GitHub et tient la fusion directe au head, à CLEAN et
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
   directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
@@ -594,7 +596,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   demande portée par la porte, ou celle de ce bead ou de ce convoi qui nomme
   la porte, la tait désormais) ; af-oa01l3 (après un arrêt forcé, le départ
   d'une session était daté à l'ordre et non à l'arrêt : une lecture commencée
-  entre les deux disait « affectation gardée » d'un ticket perdu).
+  entre les deux disait « affectation gardée » d'un ticket perdu) ; af-jnvjh5 (le 18/11/2026,
+  `factory-observe live` a réveillé le Mayor sept fois de suite pour les
+  vérifications de #909, ouverte par une session opérateur, sans rien à
+  faire).
 - Ouvertes : aucune connue.
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
