@@ -37,8 +37,11 @@ from cockpit.core.beads_source import READ_TIMEOUT_SECONDS, flagged_args, read_b
 
 HISTORY_DAYS = 28
 SLICE_DAYS = 7
-# A failed read is asked again after at most this long (2 s before: with
-# reads failing on Dolt's own timeout, that was the storm).
+# A failed read is asked again after RETRY_FIRST_SECONDS, then twice as
+# long each time it fails again, up to RETRY_SECONDS: a source not ready at
+# start is read again soon, one that keeps failing is not asked every 2 s
+# (with reads failing on Dolt's own timeout, that was the storm).
+RETRY_FIRST_SECONDS = 2.0
 RETRY_SECONDS = 15.0
 # Each incremental read starts this long before the previous one did: a
 # bead written while it ran is read again, never missed.
@@ -127,6 +130,7 @@ class TrackerReader:
         self._last_forced_end = None
         self.results = {}
         self.calls = 0
+        self._failures = {"open": 0, "history": 0}
         # Open reads.
         self._open = self._flagged = self._open_at = self._open_latency = None
         self._next_open = 0.0
@@ -233,11 +237,12 @@ class TrackerReader:
             open_beads = _beads(self._read(["list"]))
             flagged = _beads(self._read(flagged_args()))
         except Exception:
-            self._next_open = self._mono() + min(self._open_seconds, RETRY_SECONDS)
+            self._next_open = self._mono() + self._retry("open", self._open_seconds)
             for name, _, _ in self._derived:
                 self._read_model.fail(name)
                 self.results[name] = False
             return
+        self._failures["open"] = 0
         self._open, self._flagged, self._open_at = open_beads, flagged, started
         self._open_latency = self._mono() - started
         self._next_open = self._mono() + self._open_seconds
@@ -251,6 +256,7 @@ class TrackerReader:
                 self._merge(self._read(["list", "--all", "--limit", "0", "--updated-after", _iso(after),
                                         "--updated-before", _iso(before)]))
                 self._slices.pop(0)
+                self._failures["history"] = 0
                 # The next slice right after: the open reads still come
                 # first when they are due.
                 self._next_history = self._mono()
@@ -265,13 +271,14 @@ class TrackerReader:
                 if MAP_LABEL in (bead.get("labels") or []) and bead.get("status") != "closed"
             }
         except Exception:
-            self._next_history = self._mono() + min(self._history_seconds, RETRY_SECONDS)
+            self._next_history = self._mono() + self._retry("history", self._history_seconds)
             if self._history_at is None:
                 for name, _, history in self._derived:
                     if history:
                         self._read_model.fail(name)
                         self.results[name] = False
             return False
+        self._failures["history"] = 0
         self._merge(changed)
         self._sessions.update((b["id"], b) for b in _beads(sessions) if b.get("issue_type") == SESSION_TYPE)
         self._children = children
@@ -280,6 +287,11 @@ class TrackerReader:
         self._next_history = self._mono() + self._history_seconds
         self._publish()
         return True
+
+    def _retry(self, step, interval):
+        """The wait before ``step`` is read again after one more failure."""
+        self._failures[step] += 1
+        return min(interval, RETRY_SECONDS, RETRY_FIRST_SECONDS * 2 ** (self._failures[step] - 1))
 
     def _merge(self, payload):
         for bead in _beads(payload):

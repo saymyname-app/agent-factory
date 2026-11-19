@@ -160,20 +160,21 @@ class TrackerReaderTest(unittest.TestCase):
         self.assertTrue(sources["projets"].poll_now())
         self.assertEqual(model.snapshot()["projets"]["value"], ["af-3"])
 
-    def test_a_failed_read_is_said_and_not_asked_again_at_once(self):
+    def test_a_failed_read_is_said_and_asked_again_ever_less_often(self):
         fake = FakeRead()
         fake.fail = True
         mono = [0.0]
-        reader, model, sources, _ = reader_with(fake, open_seconds=30, mono=lambda: mono[0])
+        reader, model, sources, _ = reader_with(fake, open_seconds=30, history_seconds=30, mono=lambda: mono[0])
         self.assertFalse(sources["beads"].poll_now())
         self.assertIsNotNone(model.snapshot()["beads"]["failed_at"])
-        calls = len(fake.calls)
-        mono[0] += 3  # the old pollers asked again after 2 s
-        reader._cycle([])
-        self.assertEqual(len(fake.calls), calls)
-        mono[0] += RETRY_SECONDS
-        reader._cycle([])
-        self.assertGreater(len(fake.calls), calls)
+        opens = []
+        for _ in range(12):  # one second at a time
+            mono[0] += 1
+            reader._cycle([])
+            opens.append(fake.calls.count(["list"]))
+        # Asked again after 2 s, then 4 s, then 8 s: never every 2 s again.
+        self.assertEqual([opens.index(n) + 1 for n in sorted(set(opens))][1:], [2, 6])
+        self.assertEqual(reader._retry("open", 30), RETRY_SECONDS, "never longer than RETRY_SECONDS")
 
     def test_a_view_is_dated_by_the_oldest_read_it_was_made_from(self):
         fake = FakeRead()
