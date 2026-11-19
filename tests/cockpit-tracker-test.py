@@ -74,6 +74,8 @@ class FakeRead:
             if "--updated-after" in args and "--include-ephemeral" not in args:
                 return list(self.changed)
             if "--updated-after" in args:
+                if getattr(self, "fail_sessions", False):
+                    raise RuntimeError("i/o timeout")
                 return []
             return []
         finally:
@@ -292,6 +294,20 @@ class TrackerReaderTest(unittest.TestCase):
         mono[0] += 120
         reader._cycle([])
         self.assertEqual(sessions(), 2)
+
+    def test_a_failing_read_of_the_ended_sessions_does_not_hold_the_history(self):
+        fake = FakeRead()
+        fake.fail_sessions = True
+        mono = [0.0]
+        reader, model, sources, _ = reader_with(fake, history_seconds=120, flagged_seconds=600, mono=lambda: mono[0])
+        sessions = lambda: sum(1 for c in fake.calls if "--include-ephemeral" in c)  # noqa: E731
+        for _ in range(4):
+            reader._cycle([])
+        self.assertEqual(model.snapshot()["projets"]["value"], ["af-3"], "the history is published without them")
+        for _ in range(4):
+            mono[0] += 120
+            reader._cycle([])
+        self.assertEqual(sessions(), 1, "asked again on their own rhythm, not at each history read")
 
     def test_the_freshest_copy_of_a_bead_wins(self):
         snapshot = TrackerSnapshot(

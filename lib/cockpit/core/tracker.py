@@ -332,8 +332,15 @@ class TrackerReader:
             changed = self._read(["list", "--all", "--limit", "0", "--updated-after", since])
             sessions = None
             if self._mono() >= self._next_sessions:
-                sessions = self._read(["list", "--all", "--limit", "0", "--include-ephemeral", "--updated-after",
-                                       _iso(self._sessions_cursor), "--has-metadata-key", SESSION_AGENT_KEY])
+                # Optional: they only name the agents of finished runs (Runs
+                # says them unknown without). On 19/11/2026 every read with
+                # --include-ephemeral ran into Dolt's i/o timeout, and the
+                # history, failed with it, was never published.
+                try:
+                    sessions = self._read(["list", "--all", "--limit", "0", "--include-ephemeral", "--updated-after",
+                                           _iso(self._sessions_cursor), "--has-metadata-key", SESSION_AGENT_KEY])
+                except Exception:
+                    self._next_sessions = self._mono() + self._flagged_seconds
             children = {
                 bead["id"]: _beads(self._read(["children", bead["id"]]))
                 for bead in self._open or []

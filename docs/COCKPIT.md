@@ -32,7 +32,9 @@ and **Validity window**.
     `escalation-door list` fail); in between the open list and the history
     keep them current (a bead that gains or loses the key is written, so
     read again). The ended sessions (`--include-ephemeral`) are read on that
-    same rhythm. While the history is first read the open beads wait for it,
+    same rhythm, and only if they can be: a failed read of them does not
+    hold the history (on 19/11/2026 every such read ran into Dolt's i/o
+    timeout); Runs then says their agents unknown. While the history is first read the open beads wait for it,
     60 s at most, and the beads asking Benjamin are read whole on the rhythm
     of the open beads (the history cannot keep them current yet). The views are derived once per cycle, and only when their
     beads changed. The history the other views need is a
