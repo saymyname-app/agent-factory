@@ -51,6 +51,7 @@ class FakeRead:
         self.open = [{"id": "af-1", "status": "open", "metadata": {}}]
         self.flagged = [{"id": "af-2", "status": "closed", "metadata": {"gc.needs_benjamin": "q"}}]
         self.history = [{"id": "af-3", "status": "closed", "metadata": {"gc.graph_digest": "d"}}]
+        self.changed = []
 
     def __call__(self, args, bd_bin="bd", timeout=0):
         with self.lock:
@@ -68,6 +69,8 @@ class FakeRead:
                 return list(self.flagged)
             if "--updated-before" in args:
                 return list(self.history)
+            if "--updated-after" in args and "--include-ephemeral" not in args:
+                return list(self.changed)
             if "--updated-after" in args:
                 return []
             return []
@@ -189,8 +192,15 @@ class TrackerReaderTest(unittest.TestCase):
         clock.t += 100
         reader._cycle([None])  # fresh open reads only: the history is 100 s old
         snapshot = model.snapshot()
-        self.assertEqual(snapshot["beads"]["read_at"], clock.t)
         self.assertEqual(snapshot["projets"]["read_at"], history_read_at)
+        # The tickets too: who still asks Benjamin is known as of that history.
+        self.assertEqual(snapshot["beads"]["read_at"], history_read_at)
+        mono[0] += 600
+        clock.t += 600
+        reader._cycle([None])  # the open beads, the history, the beads asking Benjamin: all read now
+        snapshot = model.snapshot()
+        self.assertEqual(snapshot["beads"]["read_at"], clock.t)
+        self.assertEqual(snapshot["projets"]["read_at"], clock.t)
 
     def test_a_view_whose_beads_did_not_change_is_dated_anew_not_derived_again(self):
         fake = FakeRead()
@@ -211,6 +221,32 @@ class TrackerReaderTest(unittest.TestCase):
         fake.open = fake.open + [{"id": "af-9", "status": "open", "metadata": {}}]
         reader._cycle([None])
         self.assertEqual(len(derived), 2)
+
+    def test_the_beads_asking_benjamin_are_read_whole_seldom_and_kept_current_by_the_history(self):
+        # The read of every bead carrying gc.needs_benjamin took 22 s on
+        # 19/11/2026: once every cycle, it kept a bd running at all times.
+        fake = FakeRead()
+        mono = [0.0]
+        reader, model, sources, _ = reader_with(fake, open_seconds=30, history_seconds=120, flagged_seconds=600,
+                                                mono=lambda: mono[0])
+        flagged = lambda: sum(1 for c in fake.calls if "gc.needs_benjamin" in c)  # noqa: E731
+        for _ in range(4):
+            reader._cycle([])
+        self.assertEqual(flagged(), 1)
+        self.assertEqual(model.snapshot()["beads"]["value"], ["af-1", "af-2"])
+        # Benjamin answered af-2 (the key leaves it), a new question on af-7:
+        # both written, so both read again by the history.
+        fake.changed = [{"id": "af-2", "status": "closed", "metadata": {}, "updated_at": "2026-11-19T12:00:00Z"},
+                        {"id": "af-7", "status": "closed", "metadata": {"gc.needs_benjamin": "q"},
+                         "updated_at": "2026-11-19T12:00:00Z"}]
+        for _ in range(10):  # five minutes
+            mono[0] += 30
+            reader._cycle([])
+        self.assertEqual(flagged(), 1, "not read whole again before its rhythm")
+        self.assertEqual(model.snapshot()["beads"]["value"], ["af-1", "af-7"])
+        mono[0] += 600
+        reader._cycle([])
+        self.assertEqual(flagged(), 2)
 
     def test_the_freshest_copy_of_a_bead_wins(self):
         snapshot = TrackerSnapshot(

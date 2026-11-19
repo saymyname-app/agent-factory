@@ -25,8 +25,14 @@ and **Validity window**.
     process.
   - `tracker.py` — the one reader of Beads (af-q55qqx.9): one thread, one
     `bd` at a time, for every view (`beads`, `projets`, `journal`, `runs`).
-    Each `COCKPIT_BEADS_POLL_SECONDS` (30 s): `bd list` and the beads still
-    carrying `gc.needs_benjamin`. The history the other views need is a
+    Each `COCKPIT_BEADS_POLL_SECONDS` (30 s): `bd list`. The beads still
+    carrying `gc.needs_benjamin`, whatever their status, are read whole each
+    `COCKPIT_TRACKER_FLAGGED_SECONDS` (600 s; that read alone took 22 s on
+    19/11/2026 and, every 30 s, kept a `bd` running at all times and made
+    `escalation-door list` fail); in between the open list and the history
+    keep them current (a bead that gains or loses the key is written, so
+    read again). The views are derived once per cycle, and only when their
+    beads changed. The history the other views need is a
     mirror of every bead updated within `COCKPIT_TRACKER_HISTORY_DAYS`
     (28): read once in 7-day slices (`--updated-after`/`--updated-before`),
     then each `COCKPIT_TRACKER_HISTORY_SECONDS` (by default the shorter of

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -72,6 +73,11 @@ class FactoryRecheck(unittest.TestCase):
         read_at = TIME_TO_THE_SECOND.findall(said)
         self.assertTrue(read_at, f"the section « {title} » does not say when it was read, to the second: « {said} »")
 
+        # The page says its times to the second: a recheck clicked within the
+        # second of the check it follows could not be told from it (seen on
+        # main, merge queue of #899, and on af-q55qqx.9 once the cockpit
+        # answered faster). Click in a later second.
+        time.sleep(1.1)
         frame = measure(address, PAGE, click=control["name"])[0]
         before = sections(frame)
         after_frame = frame["after"]

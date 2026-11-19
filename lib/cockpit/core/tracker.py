@@ -33,9 +33,16 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from cockpit.core.beads_source import READ_TIMEOUT_SECONDS, flagged_args, read_beads_json
+from cockpit.core.beads_source import NEEDS_BENJAMIN_KEY, READ_TIMEOUT_SECONDS, flagged_args, read_beads_json
 
 HISTORY_DAYS = 28
+# The beads still carrying gc.needs_benjamin whatever their status are read
+# whole this often; in between, the open beads and the history keep them
+# current (a bead that gains or loses the key is updated, so read again).
+# Measured 19/11/2026: that read alone takes 22 s on factory-vm; once every
+# 30 s it kept one bd running at all times and `escalation-door list`, which
+# makes the same read, failed.
+FLAGGED_SECONDS = 600.0
 SLICE_DAYS = 7
 # A failed read is asked again after RETRY_FIRST_SECONDS, then twice as
 # long each time it fails again, up to RETRY_SECONDS: a source not ready at
@@ -70,8 +77,11 @@ class TrackerSnapshot:
     # The ended sessions are known from the reader's start only.
     sessions_complete = False
 
-    def __init__(self, open_beads, flagged, history=None, sessions=None, children=None):
+    def __init__(self, open_beads, flagged, history=None, sessions=None, children=None, flagged_read_last=False):
         self._open = list(open_beads)
+        # On equal dates, the copy read last wins: the whole read of the
+        # beads asking Benjamin, or the history, whichever came after.
+        self._flagged_read_last = flagged_read_last
         self._flagged = list(flagged)
         self._history = dict(history or {})
         self._sessions = dict(sessions or {})
@@ -81,20 +91,25 @@ class TrackerSnapshot:
         return list(self._open)
 
     def flagged(self):
-        return list(self._flagged)
+        """Every bead whose freshest copy still carries ``gc.needs_benjamin``."""
+        return self.with_key(NEEDS_BENJAMIN_KEY)
 
     def with_key(self, key, ephemeral=False):
         """Every bead carrying ``key``, open or closed (within the history
-        window), the freshest copy of each; with ``ephemeral``, the ended
-        sessions too."""
-        rows = [*self._open, *self._flagged, *self._history.values()]
+        window), the freshest copy of each -- the open list's, else the
+        latest written; with ``ephemeral``, the ended sessions too."""
+        freshest = {bead["id"]: bead for bead in self._open}
+        history = list(self._history.values())
+        rows = [*history, *self._flagged] if self._flagged_read_last else [*self._flagged, *history]
         if ephemeral:
             rows += list(self._sessions.values())
-        out = {}
+        opened = set(freshest)
         for bead in rows:
-            if key in (bead.get("metadata") or {}):
-                out.setdefault(bead["id"], bead)
-        return list(out.values())
+            known = freshest.get(bead["id"])
+            if known is None or (bead["id"] not in opened
+                                 and (bead.get("updated_at") or "") >= (known.get("updated_at") or "")):
+                freshest[bead["id"]] = bead
+        return [bead for bead in freshest.values() if key in (bead.get("metadata") or {})]
 
     def children(self, bead_id):
         return list(self._children.get(bead_id) or [])
@@ -107,12 +122,14 @@ class TrackerReader:
 
     def __init__(self, read_model, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, open_seconds=30.0,
                  history_seconds=120.0, history_days=HISTORY_DAYS, slice_days=SLICE_DAYS,
+                 flagged_seconds=FLAGGED_SECONDS,
                  read=read_beads_json, wall=None, mono=time.monotonic):
         self._read_model = read_model
         self._bd_bin = bd_bin
         self._timeout = timeout
         self._open_seconds = open_seconds
         self._history_seconds = history_seconds
+        self._flagged_seconds = flagged_seconds
         self._history_days = history_days
         self._slice_days = slice_days
         self._read_fn = read
@@ -130,7 +147,7 @@ class TrackerReader:
         self._last_forced_end = None
         self.results = {}
         self.calls = 0
-        self._failures = {"open": 0, "history": 0}
+        self._failures = {"open": 0, "flagged": 0, "history": 0}
         # What changed since the views were last derived: a view whose beads
         # are the same is not derived again, only dated anew.
         self._open_version = self._history_version = 0
@@ -139,8 +156,9 @@ class TrackerReader:
         # Called once, the first time the open beads are published.
         self.on_first_open = None
         # Open reads.
-        self._open = self._flagged = self._open_at = self._open_latency = None
-        self._next_open = 0.0
+        self._open = self._open_at = self._open_latency = None
+        self._flagged = self._flagged_at = None
+        self._next_open = self._next_flagged = 0.0
         # History mirror.
         self._history, self._sessions, self._children = {}, {}, {}
         self._history_at = None
@@ -223,6 +241,9 @@ class TrackerReader:
             backfilling = bool(self._slices) and self._open is not None
             if forced or (self._mono() >= self._next_open and not backfilling):
                 self._step_open()
+            if not self._stop.is_set() and self._open is not None and (
+                    self._flagged is None or self._mono() >= self._next_flagged):
+                self._step_flagged()
             if not self._stop.is_set() and self._mono() >= self._next_history:
                 self._step_history()
             # Asked before the history was ever whole: finish it, so that
@@ -249,7 +270,6 @@ class TrackerReader:
         started = self._mono()
         try:
             open_beads = _beads(self._read(["list"]))
-            flagged = _beads(self._read(flagged_args()))
         except Exception:
             self._next_open = self._mono() + self._retry("open", self._open_seconds)
             for name, *_ in self._derived:
@@ -257,11 +277,29 @@ class TrackerReader:
                 self.results[name] = False
             return
         self._failures["open"] = 0
-        if (open_beads, flagged) != (self._open, self._flagged):
+        if open_beads != self._open:
             self._open_version += 1
-        self._open, self._flagged, self._open_at = open_beads, flagged, started
+        self._open, self._open_at = open_beads, started
         self._open_latency = self._mono() - started
         self._next_open = self._mono() + self._open_seconds
+        self._dirty = True
+
+    def _step_flagged(self):
+        started = self._mono()
+        try:
+            flagged = _beads(self._read(flagged_args()))
+        except Exception:
+            self._next_flagged = self._mono() + self._retry("flagged", self._flagged_seconds)
+            if self._flagged is None:
+                for name, *_ in self._derived:
+                    self._read_model.fail(name)
+                    self.results[name] = False
+            return
+        self._failures["flagged"] = 0
+        if flagged != self._flagged:
+            self._open_version += 1
+        self._flagged, self._flagged_at = flagged, started
+        self._next_flagged = self._mono() + self._flagged_seconds
         self._dirty = True
 
     def _step_history(self):
@@ -319,22 +357,29 @@ class TrackerReader:
                 self._history_version += 1
 
     def _publish(self):
-        if self._open is None:
+        if self._open is None or self._flagged is None:
             return
+        # What is known of the beads still asking Benjamin: as of their last
+        # whole read, or of the last read of the history since, which
+        # brings every bead written after it.
+        flagged_known = max(self._flagged_at, self._history_at) if self._history_at is not None else self._flagged_at
         snapshot = None
         for name, derive, history, refresh_seconds in self._derived:
             if history and self._history_at is None:
                 continue
-            oldest = min(self._open_at, self._history_at) if history else self._open_at
-            inputs = (self._open_version, self._history_version if history else None)
+            oldest = min(self._open_at, flagged_known, *((self._history_at,) if history else ()))
+            # The open beads, and the history (it keeps the beads asking
+            # Benjamin current between their whole reads).
+            inputs = (self._open_version, self._history_version)
             last = self._derived_from.get(name)
             if (last is not None and last[0] == inputs
                     and (refresh_seconds is None or self._mono() - last[1] < refresh_seconds)):
                 value = last[2]
             else:
                 if snapshot is None:
-                    snapshot = TrackerSnapshot(self._open, self._flagged, self._history, self._sessions,
-                                               self._children)
+                    snapshot = TrackerSnapshot(
+                        self._open, self._flagged, self._history, self._sessions, self._children,
+                        flagged_read_last=self._history_at is None or self._flagged_at > self._history_at)
                 try:
                     value = derive(snapshot)
                 except Exception:

@@ -78,6 +78,7 @@ class Config:
         self.tracker_history_seconds = float(env.get("COCKPIT_TRACKER_HISTORY_SECONDS") or min(
             self.projects_poll_seconds, self.journal_poll_seconds))
         self.tracker_history_days = float(env.get("COCKPIT_TRACKER_HISTORY_DAYS", "28"))
+        self.tracker_flagged_seconds = float(env.get("COCKPIT_TRACKER_FLAGGED_SECONDS", "600"))
         # How long one read of the journal may take before it counts as
         # failed: « Lecture en cours… » until then, unavailable after.
         self.journal_read_timeout_seconds = float(
