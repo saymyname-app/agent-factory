@@ -60,17 +60,24 @@ class Config:
             env.get("COCKPIT_GC_RECONNECT_SECONDS", str(RECONNECT_SECONDS))
         )
         self.bd_bin = env.get("COCKPIT_BD_BIN", "bd")
-        self.beads_poll_seconds = float(env.get("COCKPIT_BEADS_POLL_SECONDS", "20"))
+        # Every view of Beads comes from one reader, one ``bd`` at a time
+        # (cockpit.core.tracker, af-q55qqx.9): the open beads each
+        # ``beads_poll_seconds``; the history (beads updated within
+        # ``tracker_history_days``) each ``tracker_history_seconds``.
+        self.beads_poll_seconds = float(env.get("COCKPIT_BEADS_POLL_SECONDS", "30"))
         # "Projets" zone: the declared projects (one descriptor file each)
         # and how often their chantiers are recomputed from Beads.
         self.descriptors_dir = env.get(
             "COCKPIT_DESCRIPTORS_DIR", os.path.join(_REPO_ROOT, "config", "project-descriptors")
         )
-        self.projects_poll_seconds = float(env.get("COCKPIT_PROJECTS_POLL_SECONDS", "30"))
+        self.projects_poll_seconds = float(env.get("COCKPIT_PROJECTS_POLL_SECONDS", "120"))
         # « Rituels »: when each ritual last ran, read from this file at each
         # view of the page (bin/rituals-status reads the same file).
         self.rituals_file = env.get("COCKPIT_RITUALS_FILE", os.path.join(_REPO_ROOT, "docs", "rituals.toml"))
-        self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "60"))
+        self.journal_poll_seconds = float(env.get("COCKPIT_JOURNAL_POLL_SECONDS", "120"))
+        self.tracker_history_seconds = float(env.get("COCKPIT_TRACKER_HISTORY_SECONDS") or min(
+            self.projects_poll_seconds, self.journal_poll_seconds))
+        self.tracker_history_days = float(env.get("COCKPIT_TRACKER_HISTORY_DAYS", "28"))
         # How long one read of the journal may take before it counts as
         # failed: « Lecture en cours… » until then, unavailable after.
         self.journal_read_timeout_seconds = float(

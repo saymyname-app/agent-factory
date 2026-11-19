@@ -8,9 +8,9 @@ What is stored is the computed view as plain data (so ``/api/status`` and
 """
 from dataclasses import asdict
 
-from cockpit.core.beads_source import read_beads_json
+from cockpit.core.beads_source import DirectTracker
 from cockpit.projects.anomalies import convoy_closed_with_unmerged_child
-from cockpit.projects.beads import read_convoy_beads, read_map_children
+from cockpit.projects.beads import GRAPH_DIGEST_KEY
 from cockpit.projects.builder import build_historique_par_projet, build_projects
 from cockpit.projects.descriptors import load_descriptors
 from cockpit.projects.hors_chantier import HorsChantierItem, hors_chantier_par_projet
@@ -31,22 +31,23 @@ READ_TIMEOUT_SECONDS = 20
 
 
 def read_projects(descriptors_dir, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, clones_dir="", rig_repos=None,
-                  git_bin="git"):
+                  git_bin="git", tracker=None):
     """One complete read. Raises on any failed ``bd`` call: a partial view
     would show a project with chantiers missing as if it were whole.
     ``clones_dir`` / ``rig_repos``: where the promotion of an accepted
     chantier is read (:mod:`cockpit.projects.promu`); without them it is
-    unknown, said so, never taken for done."""
+    unknown, said so, never taken for done. ``tracker``: what the cockpit's
+    one reader holds (:mod:`cockpit.core.tracker`); without it, one ``bd``
+    call per question (:class:`~cockpit.core.beads_source.DirectTracker`)."""
+    tracker = tracker or DirectTracker(bd_bin, timeout)
     descriptors = load_descriptors(descriptors_dir)
     by_id = {}
-    for bead in read_beads_json(["list"], bd_bin=bd_bin, timeout=timeout) + read_convoy_beads(
-        bd_bin=bd_bin, timeout=timeout
-    ):
+    for bead in tracker.open() + tracker.with_key(GRAPH_DIGEST_KEY):
         if isinstance(bead, dict) and bead.get("id"):
             by_id.setdefault(bead["id"], bead)
     beads = list(by_id.values())
     children_by_map_id = {
-        bead["id"]: read_map_children(bead["id"], bd_bin=bd_bin, timeout=timeout)
+        bead["id"]: tracker.children(bead["id"])
         for bead in beads
         if MAP_LABEL in (bead.get("labels") or []) and bead.get("status") != "closed"
     }
@@ -55,7 +56,7 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, cl
     projects, sans_projet = build_projects(
         descriptors, beads, children_by_map_id, promotion_results=promotion_results, pack_reads=pack_reads
     )
-    targeting = read_targeting_beads(bd_bin=bd_bin, timeout=timeout)
+    targeting = read_targeting_beads(tracker=tracker)
     # A Spec closed without successor is read only here: the active
     # chantiers are built from what is open.
     closed = [bead for bead in targeting if bead.get("status") == "closed" and bead["id"] not in by_id]
@@ -73,12 +74,11 @@ def read_projects(descriptors_dir, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, cl
     return value
 
 
-def read_targeting_beads(bd_bin="bd", timeout=20):
+def read_targeting_beads(bd_bin="bd", timeout=20, tracker=None):
     """Every bead -- open or closed -- that targets a Roadmap Step: the
     Specs, which carry it as ``planning_run_target``."""
-    return [bead for bead in read_beads_json(["list", "--all", "--limit", "0", "--has-metadata-key", TARGET_KEY],
-                                             bd_bin=bd_bin, timeout=timeout)
-            if isinstance(bead, dict) and bead.get("id")]
+    tracker = tracker or DirectTracker(bd_bin, timeout)
+    return [bead for bead in tracker.with_key(TARGET_KEY) if isinstance(bead, dict) and bead.get("id")]
 
 
 def roadmap_chantiers(targeting, beads):

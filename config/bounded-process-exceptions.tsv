@@ -20,7 +20,6 @@
 2026-10-30	lib/cockpit/actions/trace.py:write_trace	Cockpit trace write is outside study B's open set.
 2026-10-30	lib/cockpit/actions/trace.py:ensure_journal_bead	Cockpit journal lookup is an existing single control-plane read.
 2026-10-30	lib/cockpit/actions/trace.py:ensure_journal_bead#2	Cockpit journal create is outside study B's open set.
-2026-10-30	lib/cockpit/core/beads_source.py:read_beads_json	Cockpit tracker read is an existing single control-plane command.
 2026-10-30	lib/cockpit/health/git_source.py:count_commits_behind	Cockpit Git fetch is outside study B's open set.
 2026-10-30	lib/cockpit/health/git_source.py:count_commits_behind#2	Cockpit Git revision read is an existing single command.
 2026-10-30	lib/cockpit/notify/pushover.py:encrypt_field	OpenSSL encryption is an existing single filter process.
@@ -36,8 +35,6 @@
 2026-11-16	lib/cockpit/factory/cleanup.py:_door	Cockpit Usine cleanup: one factory-maintain call, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.
 2026-11-16	lib/cockpit/factory/settings.py:_door	Cockpit Usine settings: one door call, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.
 2026-11-16	lib/cockpit/projects/roadmap.py:read_at_default_branch	Cockpit roadmap: one git show of the default branch, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.
-2026-11-16	lib/cockpit/runs/workflows.py:read_workflow_beads.ended_sessions	Cockpit runs: one tracker read of ended sessions, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.
-2026-11-16	lib/cockpit/runs/workflows.py:read_workflow_beads.read	Cockpit runs: one tracker read per metadata key, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.
 2026-11-16	lib/cockpit/text/validate.py:_operator_language	Proposal door: one operator-config read, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.
 2026-11-16	lib/cockpit/analyses/sources.py:_api	Cockpit Analyses: one GitHub API read, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.
 2026-11-16	tests/cockpit-criteria/commands/projects-roadmap-requires-test.py:ProjectsRoadmapRequires.test_the_roadmap_the_factory_delivers_has_d01_in_progress_requiring_c01_suite_and_stays_valid	Roadmap criterion: one project-roadmap validate, landed with the Cockpit (integration/af-fgcw0d, af-q55qqx J1) without passing this rule; moves to lib/bounded_process.py under backlog af-tkuu30.

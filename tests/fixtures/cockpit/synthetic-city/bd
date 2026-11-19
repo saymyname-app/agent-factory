@@ -104,7 +104,8 @@ def open_blockers(beads, bead):
 
 
 def cmd_list(args):
-    _, found = options(args, ("--status", "--title-contains", "--limit", "--has-metadata-key"))
+    _, found = options(args, ("--status", "--title-contains", "--limit", "--has-metadata-key", "--updated-after",
+                              "--updated-before"))
     with tracker() as beads:
         listed = list(beads)
     # The beads the tracker keeps apart (the sessions of the supervisor)
@@ -119,6 +120,12 @@ def cmd_list(args):
         listed = [b for b in listed if found["--title-contains"] in (b.get("title") or "")]
     if "--has-metadata-key" in found:
         listed = [b for b in listed if found["--has-metadata-key"] in (b.get("metadata") or {})]
+    # The history reads of the cockpit (cockpit.core.tracker): by the time a
+    # bead was last written; one that records none is always answered.
+    if "--updated-after" in found:
+        listed = [b for b in listed if not b.get("updated_at") or b["updated_at"] > found["--updated-after"]]
+    if "--updated-before" in found:
+        listed = [b for b in listed if not b.get("updated_at") or b["updated_at"] < found["--updated-before"]]
     sys.stdout.write(json.dumps(listed, ensure_ascii=False))
 
 
