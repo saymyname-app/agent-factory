@@ -192,6 +192,26 @@ class TrackerReaderTest(unittest.TestCase):
         self.assertEqual(snapshot["beads"]["read_at"], clock.t)
         self.assertEqual(snapshot["projets"]["read_at"], history_read_at)
 
+    def test_a_view_whose_beads_did_not_change_is_dated_anew_not_derived_again(self):
+        fake = FakeRead()
+        mono = [0.0]
+        clock = FakeClock()
+        reader, model, sources, _ = reader_with(fake, clock=clock, mono=lambda: mono[0])
+        derived = []
+        reader.add("journal", lambda t: derived.append(1) or len(derived), history=True)
+        for _ in range(3):
+            reader._cycle([None])
+        self.assertEqual(len(derived), 1, "derived once per cycle, not once per read")
+        mono[0] += 100
+        clock.t += 100
+        reader._cycle([None])
+        self.assertEqual(len(derived), 1)
+        self.assertEqual(model.snapshot()["journal"]["read_at"], clock.t - 100,
+                         "the history it comes from was read 100 s ago")
+        fake.open = fake.open + [{"id": "af-9", "status": "open", "metadata": {}}]
+        reader._cycle([None])
+        self.assertEqual(len(derived), 2)
+
     def test_the_freshest_copy_of_a_bead_wins(self):
         snapshot = TrackerSnapshot(
             [{"id": "a", "status": "open", "metadata": {"k": "new"}}], [],

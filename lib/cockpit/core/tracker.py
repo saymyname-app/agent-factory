@@ -131,6 +131,13 @@ class TrackerReader:
         self.results = {}
         self.calls = 0
         self._failures = {"open": 0, "history": 0}
+        # What changed since the views were last derived: a view whose beads
+        # are the same is not derived again, only dated anew.
+        self._open_version = self._history_version = 0
+        self._derived_from = {}
+        self._dirty = False
+        # Called once, the first time the open beads are published.
+        self.on_first_open = None
         # Open reads.
         self._open = self._flagged = self._open_at = self._open_latency = None
         self._next_open = 0.0
@@ -142,10 +149,13 @@ class TrackerReader:
 
     # --- declaration and life ------------------------------------------------
 
-    def add(self, name, derive, history=False):
+    def add(self, name, derive, history=False, refresh_seconds=None):
         """``derive(snapshot)`` -> the value of source ``name``; ``history``:
-        it needs the mirror, so it is published only once that is read."""
-        self._derived.append((name, derive, history))
+        it needs the mirror, so it is published only once that is read.
+        A view is derived again when its beads changed, or, with
+        ``refresh_seconds``, when its last derivation is that old (Projets
+        also reads the clones of the projects)."""
+        self._derived.append((name, derive, history, refresh_seconds))
         return TrackerSource(self, name)
 
     def start(self):
@@ -220,6 +230,10 @@ class TrackerReader:
             while forced and self._history_at is None and not self._stop.is_set():
                 if not self._step_history():
                     break
+            # Once per cycle, whatever was read in it.
+            if self._dirty:
+                self._dirty = False
+                self._publish()
             if forced:
                 with self._lock:
                     self._last_forced_end = self._mono()
@@ -238,15 +252,17 @@ class TrackerReader:
             flagged = _beads(self._read(flagged_args()))
         except Exception:
             self._next_open = self._mono() + self._retry("open", self._open_seconds)
-            for name, _, _ in self._derived:
+            for name, *_ in self._derived:
                 self._read_model.fail(name)
                 self.results[name] = False
             return
         self._failures["open"] = 0
+        if (open_beads, flagged) != (self._open, self._flagged):
+            self._open_version += 1
         self._open, self._flagged, self._open_at = open_beads, flagged, started
         self._open_latency = self._mono() - started
         self._next_open = self._mono() + self._open_seconds
-        self._publish()
+        self._dirty = True
 
     def _step_history(self):
         started, wall_started = self._mono(), self._wall()
@@ -273,19 +289,22 @@ class TrackerReader:
         except Exception:
             self._next_history = self._mono() + self._retry("history", self._history_seconds)
             if self._history_at is None:
-                for name, _, history in self._derived:
+                for name, _, history, _ in self._derived:
                     if history:
                         self._read_model.fail(name)
                         self.results[name] = False
             return False
         self._failures["history"] = 0
         self._merge(changed)
+        before = dict(self._sessions)
         self._sessions.update((b["id"], b) for b in _beads(sessions) if b.get("issue_type") == SESSION_TYPE)
+        if self._sessions != before or children != self._children:
+            self._history_version += 1
         self._children = children
         self._cursor = wall_started - OVERLAP_SECONDS
         self._history_at = started
         self._next_history = self._mono() + self._history_seconds
-        self._publish()
+        self._dirty = True
         return True
 
     def _retry(self, step, interval):
@@ -295,26 +314,41 @@ class TrackerReader:
 
     def _merge(self, payload):
         for bead in _beads(payload):
-            if bead.get("issue_type") != SESSION_TYPE:
+            if bead.get("issue_type") != SESSION_TYPE and self._history.get(bead["id"]) != bead:
                 self._history[bead["id"]] = bead
+                self._history_version += 1
 
     def _publish(self):
         if self._open is None:
             return
-        snapshot = TrackerSnapshot(self._open, self._flagged, self._history, self._sessions, self._children)
-        for name, derive, history in self._derived:
+        snapshot = None
+        for name, derive, history, refresh_seconds in self._derived:
             if history and self._history_at is None:
                 continue
             oldest = min(self._open_at, self._history_at) if history else self._open_at
-            try:
-                value = derive(snapshot)
-            except Exception:
-                self._read_model.fail(name)
-                self.results[name] = False
-                continue
+            inputs = (self._open_version, self._history_version if history else None)
+            last = self._derived_from.get(name)
+            if (last is not None and last[0] == inputs
+                    and (refresh_seconds is None or self._mono() - last[1] < refresh_seconds)):
+                value = last[2]
+            else:
+                if snapshot is None:
+                    snapshot = TrackerSnapshot(self._open, self._flagged, self._history, self._sessions,
+                                               self._children)
+                try:
+                    value = derive(snapshot)
+                except Exception:
+                    self._derived_from.pop(name, None)
+                    self._read_model.fail(name)
+                    self.results[name] = False
+                    continue
+                self._derived_from[name] = (inputs, self._mono(), value)
             at = self._read_model.now() - (self._mono() - oldest)
             self._read_model.ingest(name, value, at=at, latency=self._open_latency)
             self.results[name] = True
+        first, self.on_first_open = self.on_first_open, None
+        if first is not None:
+            first()
 
 
 class TrackerSource:

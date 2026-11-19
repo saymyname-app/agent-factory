@@ -83,6 +83,7 @@ def build(config, clock=None):
             reconnect_seconds=config.gc_reconnect_seconds,
         )
     ]
+    tracker = None
     if config.bd_bin:
         # One reader for every view of Beads, one ``bd`` at a time
         # (af-q55qqx.9): the four pollers it replaces kept seven to ten
@@ -103,7 +104,7 @@ def build(config, clock=None):
             rig_repos=read_rig_repos(config.rig_files_dir),
             git_bin=config.git_bin,
             tracker=t,
-        ), history=True))
+        ), history=True, refresh_seconds=config.projects_poll_seconds))
         read_model.register("journal", display_name="journal")
         pollers.append(tracker.add("journal", lambda t: read_journal(tracker=t), history=True))
         read_model.register("runs", display_name="runs")
@@ -217,7 +218,13 @@ def build(config, clock=None):
     city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work,
                                observer=session_trace.collect)
     read_model.register("sessions", display_name="agents au travail")
-    pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
+    sessions_poller = PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds)
+    pollers.append(sessions_poller)
+    if tracker is not None:
+        # The sessions are refused while the tickets are not read: read
+        # them again as soon as the tickets first are, not a rhythm later
+        # (a suspension asked at once would find them unread).
+        tracker.on_first_open = lambda: threading.Thread(target=sessions_poller.poll_now, daemon=True).start()
 
     def photo():
         return tickets_photo(read_model.snapshot().get("beads") or {})
