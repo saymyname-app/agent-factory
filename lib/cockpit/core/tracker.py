@@ -308,7 +308,11 @@ class TrackerReader:
         if flagged != self._flagged:
             self._open_version += 1
         self._flagged, self._flagged_at = flagged, started
-        self._next_flagged = self._mono() + self._flagged_seconds
+        # Until the history is whole it cannot keep this set current: read
+        # it whole on the rhythm of the open beads meanwhile (19/11/2026:
+        # a first reading of 14 min left the tickets « périmé »).
+        self._next_flagged = self._mono() + (
+            self._flagged_seconds if self._history_at is not None else self._open_seconds)
         self._dirty = True
 
     def _step_history(self):
@@ -354,6 +358,9 @@ class TrackerReader:
             self._history_version += 1
         self._children = children
         self._cursor = wall_started - OVERLAP_SECONDS
+        if self._history_at is None and self._flagged_at is not None:
+            # The history now keeps that set current: back to its own rhythm.
+            self._next_flagged = self._flagged_at + self._flagged_seconds
         self._history_at = started
         self._next_history = self._mono() + self._history_seconds
         self._dirty = True

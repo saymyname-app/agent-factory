@@ -33,7 +33,8 @@ and **Validity window**.
     keep them current (a bead that gains or loses the key is written, so
     read again). The ended sessions (`--include-ephemeral`) are read on that
     same rhythm. While the history is first read the open beads wait for it,
-    60 s at most. The views are derived once per cycle, and only when their
+    60 s at most, and the beads asking Benjamin are read whole on the rhythm
+    of the open beads (the history cannot keep them current yet). The views are derived once per cycle, and only when their
     beads changed. The history the other views need is a
     mirror of every bead updated within `COCKPIT_TRACKER_HISTORY_DAYS`
     (28): read once in 7-day slices (`--updated-after`/`--updated-before`),

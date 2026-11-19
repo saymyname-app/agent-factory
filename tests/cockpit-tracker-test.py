@@ -263,6 +263,20 @@ class TrackerReaderTest(unittest.TestCase):
         self.assertGreaterEqual(fake.calls.count(["list"]), 4)
         self.assertEqual(model.snapshot()["beads"]["read_at"] is None, False)
 
+    def test_the_tickets_stay_current_while_a_long_first_history_reading_goes_on(self):
+        fake = FakeRead()
+        fake.fail_slices = True
+        mono = [0.0]
+        clock = FakeClock()
+        reader, model, sources, _ = reader_with(fake, clock=clock, open_seconds=30, flagged_seconds=600,
+                                                mono=lambda: mono[0])
+        for _ in range(20):  # ten minutes without a whole history
+            reader._cycle([])
+            mono[0] += 30
+            clock.t += 30
+        self.assertLessEqual(clock.t - model.snapshot()["beads"]["read_at"], 90,
+                             "the tickets are dated by a read of the beads asking Benjamin minutes old")
+
     def test_the_ended_sessions_are_read_on_the_rhythm_of_the_beads_asking_benjamin(self):
         fake = FakeRead()
         mono = [0.0]
