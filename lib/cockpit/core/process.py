@@ -95,6 +95,7 @@ def build(config, clock=None):
             open_seconds=config.beads_poll_seconds,
             history_seconds=config.tracker_history_seconds,
             history_days=config.tracker_history_days,
+            flagged_seconds=config.tracker_flagged_seconds,
         )
         pollers.append(tracker.add("beads", lambda t: merge_operator_beads(t.open(), t.flagged())))
         read_model.register("projets", display_name="projets")
