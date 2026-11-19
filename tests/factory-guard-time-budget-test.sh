@@ -97,4 +97,30 @@ grep -q "^timing: " <<<"$out" && fail "(c) a fast run printed timing noise"
 grep -q "not checked (time budget" <<<"$out" && fail "(c) a fast run skipped sections"
 [ -d "$TMP/wt" ] && fail "(c) the stale worktree was not removed once gh answered MERGED"
 
+# --- (d) a branch equal to origin costs no process (af-abozjt) -------------
+# ~860 branches, nearly all equal to origin, each paid an awk and a git
+# rev-parse: work-backup took 117 s of the 150 s budget under load and every
+# section after it went unchecked. 300 such branches must add next to no git
+# call to a run.
+REAL_GIT=$(command -v git)
+mkdir -p "$TMP/countbin"
+cat > "$TMP/countbin/git" <<STUB
+#!/usr/bin/env bash
+echo x >> "$TMP/git-calls"
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$TMP/countbin/git"
+git_calls() {
+  : > "$TMP/git-calls"
+  PATH="$TMP/countbin:$PATH" FACTORY_ROOT="$TMP/repo" "$GUARD" --check-only --quiet >/dev/null 2>&1 || true
+  wc -l < "$TMP/git-calls"
+}
+before=$(git_calls)
+head=$(git rev-parse main)
+for i in $(seq 1 300); do echo "create refs/heads/same/$i $head"; done | git update-ref --stdin
+git push -q origin 'refs/heads/same/*:refs/heads/same/*'
+after=$(git_calls)
+[ $((after - before)) -lt 30 ] \
+  || fail "(d) 300 branches equal to origin added $((after - before)) git calls (was $before): a process per branch"
+
 echo "OK factory-guard time budget"

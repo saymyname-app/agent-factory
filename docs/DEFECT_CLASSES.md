@@ -71,7 +71,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_program_whose_trial_has_ended_though_its_folder_is_there`,
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_every_tool_that_runs_a_branch_s_commands_in_a_tree_of_its_own_holds_its_trial_lock`,
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_product_whose_test_reaper_was_killed_with_its_test`,
-  `python3 tests/project-launch-test.py ProjectLaunchTest.test_a_launch_ends_with_its_owner_while_its_product_repository_cannot_be_read`
+  `python3 tests/project-launch-test.py ProjectLaunchTest.test_a_launch_ends_with_its_owner_while_its_product_repository_cannot_be_read`,
+  `bash tests/factory-guard-time-budget-test.sh`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -124,7 +125,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lancement dont la copie ne peut être vérifiée : les processus marqués de
   son identité sont arrêtés quand même, et la copie dont git ne lit plus le
   dépôt source (en cours de retrait) est reconnue par son fichier de
-  propriété (af-u7df4z).
+  propriété (af-u7df4z). Le dernier tient le coût de la sauvegarde des
+  branches de `factory-guard` : une branche égale à origin n'y coûte aucun
+  processus (af-abozjt).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -160,7 +163,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   depuis la copie du Cockpit qui le possède, survivait quand le garde le
   lisait pendant que l'arrêt de ce Cockpit retirait la copie : git échouait,
   le garde partait sans rien tuer ; le faucheur de
-  `tests/cockpit-criteria-test.py` l'a trouvé, PR #899 et #901, 17/11).
+  `tests/cockpit-criteria-test.py` l'a trouvé, PR #899 et #901, 17/11) ;
+  af-abozjt (sous une charge de 15 à 35 sur 8 cœurs, la sauvegarde des
+  branches de `factory-guard` lançait un awk et un `git rev-parse` pour
+  chacune de ~860 branches, 117 s des 150 s du budget, et les sections
+  suivantes n'étaient plus vérifiées ; la liste des sessions de la ville
+  était relue une fois par rig).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

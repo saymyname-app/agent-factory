@@ -402,16 +402,25 @@ AT_RISK=0; PUSHED=0; WB_UNKNOWN=""
 # One round trip for every branch. A per-branch `git ls-remote` cost ~0.7 s
 # each; with ~200 local branches this section alone outlived the order's
 # 180 s timeout, so no section after it ran (2026-09-25..26).
+# And no process per branch either (af-abozjt): an awk and a `git rev-parse`
+# for each of ~860 branches, nearly all equal to origin, made this section 117 s
+# of the 150 s budget under a load of 15-35 on 8 cores (2026-11-19), so every
+# section after it went unchecked. The remote heads are read once into a
+# table, the local ones come with their SHA from for-each-ref, and a branch
+# equal to origin costs no process at all.
 REMOTE_HEADS=$(bounded 30 git ls-remote --heads origin 2>/dev/null); LS_RC=$?
 [ "$LS_RC" -ne 0 ] && REMOTE_HEADS=""
 # Unknown remote heads must not read as "no remote branch": skip, never push blind.
 timed_out "$LS_RC" && { WB_UNKNOWN=1; bad "work-backup — branches not checked (git ls-remote timed out)"; }
-while read -r b; do
+declare -A REMOTE_SHA=()
+while read -r sha ref; do
+  [ -n "$ref" ] && REMOTE_SHA["${ref#refs/heads/}"]=$sha
+done <<<"$REMOTE_HEADS"
+while read -r b local_sha; do
   [ -z "$b" ] && continue
   timed_out "$LS_RC" && break
   over_budget && { WB_UNKNOWN=1; skipped "work-backup — branch '$b' and any after it"; break; }
-  remote=$(awk -v r="refs/heads/$b" '$2 == r {print $1}' <<<"$REMOTE_HEADS")
-  local_sha=$(git rev-parse "$b")
+  remote=${REMOTE_SHA["$b"]:-}
   if [ -z "$remote" ]; then
     n=$(git rev-list --count origin/main.."$b" 2>/dev/null || echo 0)
     [ "${n:-0}" = "0" ] && continue
@@ -433,7 +442,7 @@ while read -r b; do
   else
     bad "could not back up '$b' to origin"
   fi
-done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
+done < <(git for-each-ref --format='%(refname:short) %(objectname)' refs/heads/)
 
 # --- 4b. work that exists only in the WORKING TREE ---------------------------
 # The check above compares refs/heads/ to origin, which is only half the
@@ -516,13 +525,17 @@ fi
 section rig-dispatch
 # shellcheck source=lib/project_registry.sh
 . "$ROOT/lib/project_registry.sh"
+# `gc rig status` reports "unknown (partial status)" whenever its runtime
+# probe times out, which silently hid a genuinely stopped dispatcher. The
+# session list is authoritative — use that instead. It is the whole city's,
+# so it is read once for every rig (af-abozjt: one read per rig cost up to
+# 15 s each under a loaded Dolt).
+RD_SESSIONS=""; RD_S_RC=""
 for rig in $(project_registry_rig_names "$ROOT/config/projects"); do
   [ -d "rigs/$rig" ] || continue
   over_budget && { skipped "rig:$rig and any rig after it"; break; }
-  # `gc rig status` reports "unknown (partial status)" whenever its runtime
-  # probe times out, which silently hid a genuinely stopped dispatcher. The
-  # session list is authoritative — use that instead.
-  sessions=$(bounded 15 gc session list 2>/dev/null); s_rc=$?
+  [ -z "$RD_S_RC" ] && { RD_SESSIONS=$(bounded 15 gc session list 2>/dev/null); RD_S_RC=$?; }
+  sessions=$RD_SESSIONS; s_rc=$RD_S_RC
   running=$(grep -c "$rig/core.control-dispatcher.*active" <<<"$sessions" || true)
   ready_out=$(cd "rigs/$rig" && bounded 30 gc bd ready 2>/dev/null); r_rc=$?
   ready=$(grep -c . <<<"$ready_out" || true)
