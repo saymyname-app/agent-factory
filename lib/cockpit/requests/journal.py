@@ -25,7 +25,7 @@ sent one yet or not (F, af-njwz8v; user story 158).
 """
 from dataclasses import asdict
 
-from cockpit.core.beads_source import read_beads_json
+from cockpit.core.beads_source import DirectTracker
 from cockpit.requests.builder import build_requests
 from cockpit.ui.journal.entries import JOURNAL_EVENT_KEY, JOURNAL_SOURCE_KEY, JournalEntry, journal_from_beads
 
@@ -39,22 +39,19 @@ TRACE_KEYS = ("gc.needs_benjamin", "gc.proposal_state", "gc.cockpit_action_quoi"
 READ_TIMEOUT_SECONDS = 20
 
 
-def read_journal(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
+def read_journal(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, tracker=None):
     """Raises on any failed ``bd`` call: a journal missing a kind of
-    resolution would read as "that never happened"."""
+    resolution would read as "that never happened". ``tracker``: what the
+    cockpit's one reader holds (:mod:`cockpit.core.tracker`); without it,
+    one ``bd`` call per key (:class:`~cockpit.core.beads_source.DirectTracker`)."""
+    tracker = tracker or DirectTracker(bd_bin, timeout)
     by_id = {}
     for key in TRACE_KEYS:
-        for bead in read_beads_json(
-            ["list", "--all", "--limit", "0", "--has-metadata-key", key], bd_bin=bd_bin, timeout=timeout
-        ):
-            if isinstance(bead, dict) and bead.get("id"):
-                by_id.setdefault(bead["id"], bead)
+        for bead in tracker.with_key(key):
+            by_id.setdefault(bead["id"], bead)
     sources = {
         str((bead.get("metadata") or {}).get(JOURNAL_SOURCE_KEY) or "").strip()
-        for bead in read_beads_json(
-            ["list", "--all", "--limit", "0", "--has-metadata-key", JOURNAL_SOURCE_KEY], bd_bin=bd_bin, timeout=timeout
-        )
-        if isinstance(bead, dict)
+        for bead in tracker.with_key(JOURNAL_SOURCE_KEY)
     }
     return {"entries": [asdict(entry) for entry in journal_from_beads(by_id.values())],
             "open": [{"quoi": request.quoi, "projet": request.projet, "depuis_quand": request.depuis_quand}

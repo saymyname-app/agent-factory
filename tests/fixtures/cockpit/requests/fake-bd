@@ -37,10 +37,25 @@ def _read_state():
         return json.load(fh)
 
 
+# The history the cockpit's one reader keeps (cockpit.core.tracker,
+# af-q55qqx.9): `list --all --limit 0 --updated-after T [--updated-before T]
+# [--include-ephemeral] [--has-metadata-key K]`. Dates are not modelled:
+# every bead is answered (carrying K when one is named).
+def _history_key(args):
+    if args[:4] != ["list", "--all", "--limit", "0"] or "--updated-after" not in args or args[-1:] != ["--json"]:
+        return None
+    return args[args.index("--has-metadata-key") + 1] if "--has-metadata-key" in args else ""
+
+
 args = sys.argv[1:]
 if args == ["list", "--json"]:
     beads = [b for b in _read_state() if b.get("status") != "closed"]
     sys.stdout.write(json.dumps(beads))
+    sys.exit(0)
+
+if _history_key(args) is not None:
+    key = _history_key(args)
+    sys.stdout.write(json.dumps([b for b in _read_state() if not key or key in (b.get("metadata") or {})]))
     sys.exit(0)
 
 if len(args) == 7 and args[:5] == ["list", "--all", "--limit", "0", "--has-metadata-key"] and args[6] == "--json":

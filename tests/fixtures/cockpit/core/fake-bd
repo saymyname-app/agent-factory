@@ -38,6 +38,12 @@ for _key in ("gc.proposal_state", "gc.cockpit_action_quoi", "gc.journal_event", 
         print(json.dumps([]))
         sys.exit(0)
 
+# The history the cockpit's one reader keeps (cockpit.core.tracker,
+# af-q55qqx.9), read by date -- empty here.
+if sys.argv[1:5] == ["list", "--all", "--limit", "0"] and "--updated-after" in sys.argv and sys.argv[-1] == "--json":
+    print(json.dumps([]))
+    sys.exit(0)
+
 sys.stderr.write(
     "fake bd (cockpit-core): no canned response for: bd %s\n" % " ".join(sys.argv[1:])
 )

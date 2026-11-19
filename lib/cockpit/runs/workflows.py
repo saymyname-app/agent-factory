@@ -102,9 +102,9 @@ What is not collected is said so, never filled in.
 import json
 import re
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
+from cockpit.core.beads_source import DirectTracker
 from cockpit.core.readmodel import PARIS
 from cockpit.projects.decisions import decisions_line
 from cockpit.projects.outcome import ABANDONED, ACCEPTED, MERGED, MERGING, VOIDED, read_outcome
@@ -173,40 +173,29 @@ FORMULA_ROLES = (("mol-ticket-author", "author"), ("mol-code-review", "reviewer"
 TOOLS, CONTROLS, SESSIONS, OTHERS = "tools", "controls", "sessions", "others"
 
 
-def read_workflow_beads(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS):
-    """Every bead a run is read from: one read per key of :data:`KEYS`,
-    merged by id. The reads run side by side: « revérifier maintenant »
-    waits for every source, and six reads one after the other made it wait
-    six times as long as the other sources."""
-    def read(key):
-        completed = subprocess.run(
-            [bd_bin, "list", "--all", "--limit", "0", "--has-metadata-key", key, "--json"],
-            capture_output=True, text=True, timeout=timeout, check=True,
-        )
-        return json.loads(completed.stdout) or []
-
-    def ended_sessions():
-        # The sessions the supervisor no longer lists: their beads, which
-        # the tracker keeps apart (ephemeral). A read that fails is said
-        # (:data:`SESSIONS_UNREAD`): their agents are unknown, never seen
-        # absent.
-        try:
-            completed = subprocess.run(
-                [bd_bin, "list", "--all", "--limit", "0", "--include-ephemeral", "--has-metadata-key", SESSION_AGENT,
-                 "--json"], capture_output=True, text=True, timeout=timeout, check=True,
-            )
-            return [b for b in json.loads(completed.stdout) or []
-                    if isinstance(b, dict) and b.get("issue_type") == SESSION]
-        except (OSError, subprocess.SubprocessError, ValueError):
-            return [{"id": SESSIONS_UNREAD, "issue_type": SESSIONS_UNREAD}]
-
+def read_workflow_beads(bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, tracker=None):
+    """Every bead a run is read from: the beads carrying a key of
+    :data:`KEYS`, merged by id. ``tracker``: what the cockpit's one reader
+    holds (:mod:`cockpit.core.tracker`); without it, one ``bd`` call per
+    key, one after the other (:class:`cockpit.core.beads_source.DirectTracker`)
+    -- never side by side again (af-q55qqx.9)."""
+    tracker = tracker or DirectTracker(bd_bin, timeout)
     seen = {}
-    with ThreadPoolExecutor(max_workers=len(KEYS) + 1) as pool:
-        sessions = pool.submit(ended_sessions)
-        for beads in [*pool.map(read, KEYS), sessions.result()]:
-            for bead in beads:
-                if isinstance(bead, dict) and bead.get("id"):
-                    seen[bead["id"]] = bead
+    for key in KEYS:
+        for bead in tracker.with_key(key):
+            seen[bead["id"]] = bead
+    # The sessions the supervisor no longer lists: their beads, which the
+    # tracker keeps apart (ephemeral). A read that fails, or a reader that
+    # holds them only from its start, is said (:data:`SESSIONS_UNREAD`):
+    # their agents are unknown, never seen absent.
+    try:
+        sessions = [b for b in tracker.with_key(SESSION_AGENT, ephemeral=True) if b.get("issue_type") == SESSION]
+        if not getattr(tracker, "sessions_complete", True):
+            sessions.append({"id": SESSIONS_UNREAD, "issue_type": SESSIONS_UNREAD})
+    except (OSError, subprocess.SubprocessError, ValueError):
+        sessions = [{"id": SESSIONS_UNREAD, "issue_type": SESSIONS_UNREAD}]
+    for bead in sessions:
+        seen[bead["id"]] = bead
     return list(seen.values())
 
 

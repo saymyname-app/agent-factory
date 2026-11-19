@@ -18,12 +18,13 @@ from cockpit.access.guard import ActionGuard, new_session_token
 from cockpit.actions.essai_relay import RelayService, TrialTarget, make_relay
 from cockpit.actions.registry import build_action_handlers
 from cockpit.analyses.sources import read_github
-from cockpit.core.beads_source import read_operator_beads
+from cockpit.core.beads_source import merge_operator_beads
 from cockpit.core.clock import ShiftedClock, SystemClock
 from cockpit.core.freshness import UNKNOWN
 from cockpit.core.gc_client import GcSsePoller
 from cockpit.core.polling_source import PollingSource
 from cockpit.core.readmodel import ReadModel
+from cockpit.core.tracker import TrackerReader
 from cockpit.core.server import make_server
 from cockpit.health.git_source import count_commits_behind, head_revision
 from cockpit.access.tailscale import build_key_expiry_request, key_expiry_epoch, read_status
@@ -36,7 +37,7 @@ from cockpit.stop.driver import StopDriver, tickets_photo
 from cockpit.stop.gc_city import GcCityReader
 from cockpit.projects.depots import read_depots, read_rig_repos
 from cockpit.projects.descriptors import load_descriptors
-from cockpit.projects.source import READ_TIMEOUT_SECONDS as PROJECTS_READ_TIMEOUT_SECONDS, outcome_of, read_projects
+from cockpit.projects.source import outcome_of, read_projects
 from cockpit.requests.assemble import assemble_from_snapshot
 from cockpit.requests.defects import DefectCounter
 from cockpit.requests.journal import read_journal
@@ -82,43 +83,32 @@ def build(config, clock=None):
             reconnect_seconds=config.gc_reconnect_seconds,
         )
     ]
+    tracker = None
     if config.bd_bin:
-        pollers.append(
-            PollingSource(
-                read_model,
-                "beads",
-                lambda: read_operator_beads(bd_bin=config.bd_bin, timeout=config.beads_read_timeout_seconds),
-                config.beads_poll_seconds,
-            )
+        # One reader for every view of Beads, one ``bd`` at a time
+        # (af-q55qqx.9): the four pollers it replaces kept seven to ten
+        # ``bd list`` running and starved Dolt, the cockpit and the Factory.
+        tracker = TrackerReader(
+            read_model,
+            bd_bin=config.bd_bin,
+            timeout=config.beads_read_timeout_seconds,
+            open_seconds=config.beads_poll_seconds,
+            history_seconds=config.tracker_history_seconds,
+            history_days=config.tracker_history_days,
         )
+        pollers.append(tracker.add("beads", lambda t: merge_operator_beads(t.open(), t.flagged())))
         read_model.register("projets", display_name="projets")
-        pollers.append(
-            PollingSource(
-                read_model,
-                "projets",
-                lambda: read_projects(
-                    config.descriptors_dir,
-                    bd_bin=config.bd_bin,
-                    timeout=max(PROJECTS_READ_TIMEOUT_SECONDS, config.beads_read_timeout_seconds),
-                    clones_dir=config.clones_dir,
-                    rig_repos=read_rig_repos(config.rig_files_dir),
-                    git_bin=config.git_bin,
-                ),
-                config.projects_poll_seconds,
-            )
-        )
+        pollers.append(tracker.add("projets", lambda t: read_projects(
+            config.descriptors_dir,
+            clones_dir=config.clones_dir,
+            rig_repos=read_rig_repos(config.rig_files_dir),
+            git_bin=config.git_bin,
+            tracker=t,
+        ), history=True, refresh_seconds=config.projects_poll_seconds))
         read_model.register("journal", display_name="journal")
-        pollers.append(
-            PollingSource(
-                read_model,
-                "journal",
-                lambda: read_journal(bd_bin=config.bd_bin, timeout=config.journal_read_timeout_seconds),
-                config.journal_poll_seconds,
-            )
-        )
+        pollers.append(tracker.add("journal", lambda t: read_journal(tracker=t), history=True))
         read_model.register("runs", display_name="runs")
-        pollers.append(PollingSource(read_model, "runs", lambda: read_workflow_beads(bd_bin=config.bd_bin),
-                                     config.journal_poll_seconds))
+        pollers.append(tracker.add("runs", lambda t: read_workflow_beads(tracker=t), history=True))
     if config.github_repo:
         # The CI and the pull requests of the declared repository, over the
         # last eight days: the period of the Analyses and the day before it.
@@ -228,7 +218,13 @@ def build(config, clock=None):
     city_reader = GcCityReader(config.gc_base_url, city=config.gc_city, held_work=held_work,
                                observer=session_trace.collect)
     read_model.register("sessions", display_name="agents au travail")
-    pollers.append(PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds))
+    sessions_poller = PollingSource(read_model, "sessions", city_reader.status, config.sessions_poll_seconds)
+    pollers.append(sessions_poller)
+    if tracker is not None:
+        # The sessions are refused while the tickets are not read: read
+        # them again as soon as the tickets first are, not a rhythm later
+        # (a suspension asked at once would find them unread).
+        tracker.on_first_open = lambda: threading.Thread(target=sessions_poller.poll_now, daemon=True).start()
 
     def photo():
         return tickets_photo(read_model.snapshot().get("beads") or {})

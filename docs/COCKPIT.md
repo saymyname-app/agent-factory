@@ -23,8 +23,28 @@ and **Validity window**.
   - `gc_client.py` — subscribes to the gc supervisor's SSE stream
     (`127.0.0.1:8372/v0/city/<city>/events/stream`); reconnects with backoff, never crashes the
     process.
-  - `beads_source.py`, `polling_source.py` — Beads (and future GitHub/
-    rituals) sources, each read on its own rhythm.
+  - `tracker.py` — the one reader of Beads (af-q55qqx.9): one thread, one
+    `bd` at a time, for every view (`beads`, `projets`, `journal`, `runs`).
+    Each `COCKPIT_BEADS_POLL_SECONDS` (30 s): `bd list` and the beads still
+    carrying `gc.needs_benjamin`. The history the other views need is a
+    mirror of every bead updated within `COCKPIT_TRACKER_HISTORY_DAYS`
+    (28): read once in 7-day slices (`--updated-after`/`--updated-before`),
+    then each `COCKPIT_TRACKER_HISTORY_SECONDS` (by default the shorter of
+    `COCKPIT_PROJECTS_POLL_SECONDS` and `COCKPIT_JOURNAL_POLL_SECONDS`,
+    120 s) by one `--updated-after` read, one for the ended sessions, and
+    `bd children` of each open Planning Map. A page never runs `bd`;
+    `poll_now` asks the reader for a cycle and waits for it, requests made
+    together share it. A view is dated by the oldest read it was made from.
+    Why: on 19/11/2026 four pollers kept seven to ten `bd list` running,
+    Dolt at 285 % CPU, one `bd list` at 12 s instead of 4, and every `bd
+    list --all --has-metadata-key` ran into the driver's i/o timeout: the
+    pages stayed empty and `escalation-door list` failed. A bead older
+    than the window and unchanged since is not seen by Projets, Journal or
+    Runs; a session that ended before the cockpit started has its agent
+    said unknown.
+  - `beads_source.py`, `polling_source.py` — the `bd` call (killed with its
+    process group at `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`, 30 s) and the
+    other sources (GitHub, git, sessions…), each read on its own rhythm.
   - `server.py` — the HTTP process itself; refuses to bind anywhere but
     `127.0.0.1`.
   - `process.py`, `config.py` — wires it all together; config from env vars.
@@ -325,7 +345,7 @@ the read model, never from the frozen page:
   it. Loading while the tracker has not answered and no read of it ended,
   « Cette vue est indisponible » with « Réessayer » (`POST /api/health/recheck`)
   once a read of it failed (`ReadModel.fail`, from the poller; a `bd` call
-  fails after `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`, 10 s);
+  fails after `COCKPIT_BEADS_READ_TIMEOUT_SECONDS`, 30 s);
   « Rien à afficher ici » when nothing waits, nothing is declared and no
   indicator lacks its source (K2, code review F1.3: one that does is said
   unavailable with its reason);
@@ -680,7 +700,7 @@ their pure functions; no process imported them. They now have a running
 caller:
 
 - `projects/source.py` `read_projects` is the read model's `projets`
-  source (every `COCKPIT_PROJECTS_POLL_SECONDS`, 30 s; Validity window
+  source (derived from the one reader of Beads, `core/tracker.py`; Validity window
   5 min, like Beads): descriptors from `COCKPIT_DESCRIPTORS_DIR`
   (`config/project-descriptors/`), non-closed beads, every bead carrying
   `gc.graph_digest`, and the children of each open map. A failed `bd` call
@@ -970,7 +990,7 @@ serve `ui/journal/` (T15, until now imported only by its test). Each entry
 says what was asked, how it was resolved, when (Paris time), by whom, and
 by which way (spec .18); a bead resolved twice has two entries (spec .19).
 The cockpit keeps no copy: `requests/journal.py` `read_journal` is the
-read model's `journal` source (every `COCKPIT_JOURNAL_POLL_SECONDS`, 60 s)
+read model's `journal` source (derived from the one reader of Beads, `core/tracker.py`)
 and re-reads the traces; a read fails after
 `COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS` (20 s), which the isolated recipe
 raises to a day with the tracker's, so that a journal being read stays so.
@@ -1124,7 +1144,9 @@ Two more keys name the CI the Analyses read (D, af-ten1sp):
 `github_repo`, the repository « owner/name » whose CI runs and pull requests
 are read through the GitHub client, and `gh_bin`, that client (`gh` when
 unset). Without `github_repo` GitHub is never read, and the indicator of
-the CI says it is unavailable for that reason.
+the CI says it is unavailable for that reason. On factory-vm the file holds
+`"github_repo": "saymyname-app/agent-factory"` since 19/11/2026
+(af-q55qqx.9): « PR fusionnées » and « Vérifications CI » are traced.
 
 Every key is optional; an environment variable of the same meaning
 (`COCKPIT_PUSHOVER_SECRETS_FILE`, `COCKPIT_GITHUB_REPO`, …) wins. Absent or malformed, the file is
