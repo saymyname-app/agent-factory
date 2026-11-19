@@ -365,12 +365,13 @@ class JournalTest(unittest.TestCase):
         wait_until(self.journal)
 
     def test_a_journal_read_lasts_as_long_as_the_cockpit_allows_it(self):
-        # A tracker that never answers, and a cockpit that allows the journal
-        # one second per read: the journal says its read failed well before
-        # the twenty seconds it allows itself otherwise -- the isolated
-        # recipe allows 24 hours, and a reading under way stays one.
+        # A tracker that never answers, and a cockpit that allows its reads
+        # one second each: the journal says its read failed well before the
+        # thirty seconds allowed otherwise -- the isolated recipe allows 24
+        # hours, and a reading under way stays one. The journal is read by
+        # the cockpit's one reader of Beads (af-q55qqx.9), on its timeout.
         self.start_cockpit(COCKPIT_BD_BIN=str(ROOT / "tests" / "fixtures" / "cockpit" / "requests" / "silent-bd"),
-                           COCKPIT_JOURNAL_READ_TIMEOUT_SECONDS="1")
+                           COCKPIT_BEADS_READ_TIMEOUT_SECONDS="1")
         self.assertIn("Lecture en cours…", self.get("/journal"))
         wait_until(lambda: "Cette vue est indisponible" in self.get("/journal"), timeout=10)
 
