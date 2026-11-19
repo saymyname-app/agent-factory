@@ -209,6 +209,11 @@ class TrackerReader:
                 self._step_open()
             if not self._stop.is_set() and self._mono() >= self._next_history:
                 self._step_history()
+            # Asked before the history was ever whole: finish it, so that
+            # the views it feeds are published by the cycle asked for.
+            while forced and self._history_at is None and not self._stop.is_set():
+                if not self._step_history():
+                    break
             if forced:
                 with self._lock:
                     self._last_forced_end = self._mono()
@@ -247,7 +252,7 @@ class TrackerReader:
                 # The next slice right after: the open reads still come
                 # first when they are due.
                 self._next_history = self._mono()
-                return
+                return True
             since = _iso(self._cursor)
             changed = self._read(["list", "--all", "--limit", "0", "--updated-after", since])
             sessions = self._read(["list", "--all", "--limit", "0", "--include-ephemeral", "--updated-after", since,
@@ -264,7 +269,7 @@ class TrackerReader:
                     if history:
                         self._read_model.fail(name)
                         self.results[name] = False
-            return
+            return False
         self._merge(changed)
         self._sessions.update((b["id"], b) for b in _beads(sessions) if b.get("issue_type") == SESSION_TYPE)
         self._children = children
@@ -272,6 +277,7 @@ class TrackerReader:
         self._history_at = started
         self._next_history = self._mono() + self._history_seconds
         self._publish()
+        return True
 
     def _merge(self, payload):
         for bead in _beads(payload):

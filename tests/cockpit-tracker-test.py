@@ -94,15 +94,16 @@ class TrackerReaderTest(unittest.TestCase):
     def test_a_cycle_reads_the_open_beads_then_the_history_in_slices_then_incrementally(self):
         fake = FakeRead()
         reader, model, sources, _ = reader_with(fake)
-        self.assertTrue(sources["beads"].poll_now())
+        reader._cycle([])
+        self.assertTrue(reader.results["beads"])
         self.assertEqual(fake.calls[0], ["list"])
         self.assertIn("gc.needs_benjamin", fake.calls[1])
         slices = [c for c in fake.calls if "--updated-before" in c]
         self.assertEqual(len(slices), 1, "one slice per cycle, the open reads keep their rhythm")
         # Until the history is whole, a view that needs it is not published.
         self.assertIsNone(model.snapshot()["projets"]["read_at"])
-        reader._cycle([None])  # second slice
-        reader._cycle([None])  # the first incremental read, then the views
+        reader._cycle([])  # second slice
+        reader._cycle([])  # the first incremental read, then the views
         self.assertEqual(len([c for c in fake.calls if "--updated-before" in c]), 2)
         incremental = [c for c in fake.calls if "--updated-after" in c and "--updated-before" not in c]
         self.assertEqual(len(incremental), 2, "one read of what changed, one of the ended sessions")
@@ -149,6 +150,15 @@ class TrackerReaderTest(unittest.TestCase):
             sources["beads"].request_stop()
             sources["beads"].join(5)
         self.assertLessEqual(fake.calls.count(["list"]) - before, 2)
+
+    def test_a_cycle_asked_before_the_history_is_whole_publishes_every_view(self):
+        # The re-read after an action (server: REREAD_AFTER_ACTION_SECONDS)
+        # asks every view of Beads: one asked during the first reading of
+        # the history must not come back without them.
+        fake = FakeRead()
+        reader, model, sources, _ = reader_with(fake, open_seconds=3600, history_seconds=3600)
+        self.assertTrue(sources["projets"].poll_now())
+        self.assertEqual(model.snapshot()["projets"]["value"], ["af-3"])
 
     def test_a_failed_read_is_said_and_not_asked_again_at_once(self):
         fake = FakeRead()
