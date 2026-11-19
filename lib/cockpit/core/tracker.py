@@ -43,6 +43,13 @@ HISTORY_DAYS = 28
 # 30 s it kept one bd running at all times and `escalation-door list`, which
 # makes the same read, failed.
 FLAGGED_SECONDS = 600.0
+# The ended sessions (kept apart by the tracker, read with
+# --include-ephemeral, a heavy read) are read on that same rhythm: they only
+# name the agents of finished runs.
+# While the history is first read, the open beads wait for it, but never
+# longer than this: on 19/11/2026 the first reading took 11 min under a load
+# of 20 and the tickets went stale meanwhile.
+BACKFILL_OPEN_HOLD_SECONDS = 60.0
 SLICE_DAYS = 7
 # A failed read is asked again after RETRY_FIRST_SECONDS, then twice as
 # long each time it fails again, up to RETRY_SECONDS: a source not ready at
@@ -162,7 +169,8 @@ class TrackerReader:
         # History mirror.
         self._history, self._sessions, self._children = {}, {}, {}
         self._history_at = None
-        self._slices = self._cursor = None
+        self._slices = self._cursor = self._sessions_cursor = None
+        self._next_sessions = 0.0
         self._next_history = 0.0
 
     # --- declaration and life ------------------------------------------------
@@ -230,7 +238,7 @@ class TrackerReader:
         with self._cycle_lock:
             if self._slices is None:
                 start = self._wall()
-                self._cursor = start - OVERLAP_SECONDS
+                self._cursor = self._sessions_cursor = start - OVERLAP_SECONDS
                 count = max(1, math.ceil(self._history_days / self._slice_days))
                 span = self._slice_days * 86400
                 self._slices = [(start - (k + 1) * span, start - k * span) for k in range(count)]
@@ -238,7 +246,8 @@ class TrackerReader:
             # While the history is first read, the open beads already read
             # wait for it (unless asked): the views that need it are not
             # published before, and a page waits for them.
-            backfilling = bool(self._slices) and self._open is not None
+            backfilling = (bool(self._slices) and self._open is not None
+                           and self._mono() - self._open_at < BACKFILL_OPEN_HOLD_SECONDS)
             if forced or (self._mono() >= self._next_open and not backfilling):
                 self._step_open()
             if not self._stop.is_set() and self._open is not None and (
@@ -317,8 +326,10 @@ class TrackerReader:
                 return True
             since = _iso(self._cursor)
             changed = self._read(["list", "--all", "--limit", "0", "--updated-after", since])
-            sessions = self._read(["list", "--all", "--limit", "0", "--include-ephemeral", "--updated-after", since,
-                                   "--has-metadata-key", SESSION_AGENT_KEY])
+            sessions = None
+            if self._mono() >= self._next_sessions:
+                sessions = self._read(["list", "--all", "--limit", "0", "--include-ephemeral", "--updated-after",
+                                       _iso(self._sessions_cursor), "--has-metadata-key", SESSION_AGENT_KEY])
             children = {
                 bead["id"]: _beads(self._read(["children", bead["id"]]))
                 for bead in self._open or []
@@ -335,7 +346,10 @@ class TrackerReader:
         self._failures["history"] = 0
         self._merge(changed)
         before = dict(self._sessions)
-        self._sessions.update((b["id"], b) for b in _beads(sessions) if b.get("issue_type") == SESSION_TYPE)
+        if sessions is not None:
+            self._sessions.update((b["id"], b) for b in _beads(sessions) if b.get("issue_type") == SESSION_TYPE)
+            self._sessions_cursor = wall_started - OVERLAP_SECONDS
+            self._next_sessions = self._mono() + self._flagged_seconds
         if self._sessions != before or children != self._children:
             self._history_version += 1
         self._children = children

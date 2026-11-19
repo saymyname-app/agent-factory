@@ -68,6 +68,8 @@ class FakeRead:
             if "--has-metadata-key" in args and "gc.needs_benjamin" in args:
                 return list(self.flagged)
             if "--updated-before" in args:
+                if getattr(self, "fail_slices", False):
+                    raise RuntimeError("i/o timeout")
                 return list(self.history)
             if "--updated-after" in args and "--include-ephemeral" not in args:
                 return list(self.changed)
@@ -247,6 +249,35 @@ class TrackerReaderTest(unittest.TestCase):
         mono[0] += 600
         reader._cycle([])
         self.assertEqual(flagged(), 2)
+
+    def test_the_tickets_are_read_again_while_a_long_first_history_reading_goes_on(self):
+        # 19/11/2026: the first reading of the history took 11 min under
+        # load; the tickets must not wait for all of it.
+        fake = FakeRead()
+        fake.fail_slices = True
+        mono = [0.0]
+        reader, model, sources, _ = reader_with(fake, open_seconds=30, mono=lambda: mono[0])
+        for _ in range(10):
+            reader._cycle([])
+            mono[0] += 30
+        self.assertGreaterEqual(fake.calls.count(["list"]), 4)
+        self.assertEqual(model.snapshot()["beads"]["read_at"] is None, False)
+
+    def test_the_ended_sessions_are_read_on_the_rhythm_of_the_beads_asking_benjamin(self):
+        fake = FakeRead()
+        mono = [0.0]
+        reader, model, sources, _ = reader_with(fake, history_seconds=120, flagged_seconds=600, mono=lambda: mono[0])
+        sessions = lambda: sum(1 for c in fake.calls if "--include-ephemeral" in c)  # noqa: E731
+        for _ in range(4):
+            reader._cycle([])
+        self.assertEqual(sessions(), 1)
+        for _ in range(4):  # eight minutes: four readings of the history
+            mono[0] += 120
+            reader._cycle([])
+        self.assertEqual(sessions(), 1)
+        mono[0] += 120
+        reader._cycle([])
+        self.assertEqual(sessions(), 2)
 
     def test_the_freshest_copy_of_a_bead_wins(self):
         snapshot = TrackerSnapshot(
