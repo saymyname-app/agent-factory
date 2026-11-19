@@ -104,7 +104,7 @@ class TrackerReader:
 
     def __init__(self, read_model, bd_bin="bd", timeout=READ_TIMEOUT_SECONDS, open_seconds=30.0,
                  history_seconds=120.0, history_days=HISTORY_DAYS, slice_days=SLICE_DAYS,
-                 read=read_beads_json, wall=time.time, mono=time.monotonic):
+                 read=read_beads_json, wall=None, mono=time.monotonic):
         self._read_model = read_model
         self._bd_bin = bd_bin
         self._timeout = timeout
@@ -113,7 +113,9 @@ class TrackerReader:
         self._history_days = history_days
         self._slice_days = slice_days
         self._read_fn = read
-        self._wall = wall
+        # The history window and its cursor follow the cockpit's clock (a
+        # shifted one in an isolated run on a dated dataset).
+        self._wall = wall or read_model.now
         self._mono = mono
         self._derived = []
         self._lock = threading.Lock()
