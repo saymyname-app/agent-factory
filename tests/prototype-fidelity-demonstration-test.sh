@@ -15,6 +15,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 TOOL="$ROOT/bin/prototype-fidelity"
 STATE="$ROOT/bin/convoy-state"
 CAPTURE="$ROOT/bin/evidence-capture"
@@ -44,6 +45,7 @@ fi
 skip_unless_capture_browser_sandbox "$BROWSER"
 
 TRIAL=$(mktemp -d /tmp/af-622nya-prototype-fidelity.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 TEST_CITY="$TRIAL/city"
 PRODUCT="$TRIAL/product"
 PROTOTYPE="$TRIAL/prototype"

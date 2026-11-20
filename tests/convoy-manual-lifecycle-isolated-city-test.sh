@@ -64,6 +64,7 @@ for required in gc bd jq git dolt; do
 done
 
 TRIAL=$(mktemp -d /tmp/af-kn83no-lifecycle.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 CITY="$TRIAL/c"
 SWEEPS="$TRIAL/sweeps.jsonl"
 ARTIFACT_RUNS="$TRIAL/artifact-runs.log"

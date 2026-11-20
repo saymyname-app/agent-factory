@@ -58,6 +58,7 @@ done
 # /tmp, and the Evaluator of this trial runs inside it.
 mkdir -p "$HOME/.cache"
 TRIAL=$(mktemp -d "$HOME/.cache/af-higj9z-evaluation.XXXXXX")
+isolated_city_hold_trial "$TRIAL"
 CITY="$TRIAL/c"
 PRODUCT="$CITY"
 FIXTURE="tests/fixtures/delivery-fixture-city"

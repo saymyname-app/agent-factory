@@ -63,6 +63,7 @@ else
 fi
 [ ! -e "$TRIAL" ] || fail "$TRIAL exists: another trial is using it, or left it behind -- nothing is touched"
 mkdir -p "$TRIAL"
+isolated_city_hold_trial "$TRIAL"
 CITY="$TRIAL/c"
 SYSTEMD_USER_DIR="$HOME/.local/share/systemd/user"
 cleanup() {

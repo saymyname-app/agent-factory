@@ -40,8 +40,9 @@ will stop them (af-kky570: two `bin/cockpit run` of a deleted runtime
 worktree lived 3 days 12 hours), or whose trial has ended though its
 folder is still there (lib/trial_lock.py; af-3vcqd3: a cockpit of a killed
 tdd-step's tree, 61 h; af-23j8a8: a product of a test file whose reaper,
-lib/ci_test_reaper.py, was killed with it). Each stop is written to
-TRACE_FILE.
+lib/ci_test_reaper.py, was killed with it), or whose city home (GC_HOME) is
+in the folder of an ended trial (af-myowqa: a test city killed past its
+cleanup). Each stop is written to TRACE_FILE.
 orders/project-launch-sweep.toml runs it.
 
 `--repo-root` is the repository of the product (default: the Factory's own);
@@ -106,6 +107,10 @@ SPEC_INTEGRATION_TREES = Path(os.environ.get("SPEC_INTEGRATION_WORK_DIR")
                                       or "/tmp") / "agent-factory-spec-integration")
 WORK_ROOTS = (Path(tempfile.gettempdir()), account_home() / ".cache", RUNTIME_WORKTREES,
               account_home() / "agent-factory-maint", account_home() / "agent-factory-po", SPEC_INTEGRATION_TREES)
+# Where a test city of a fixed name lives (tests/*-isolated-city-test.sh,
+# af-role-trial): looked at only for the home of a city whose trial has
+# ended (af-myowqa), never for a work tree that is gone.
+CITY_TRIAL_ROOTS = (account_home() / ".local" / "share",)
 # A copy the sweep could not release: set aside, never retried in silence.
 UNRELEASABLE = ".unreleasable"
 # The temporary folder a test file runs with under lib/ci_test_reaper.py: a
@@ -937,14 +942,32 @@ def reparented(pid: int) -> bool:
         return False
 
 
-def work_tree_orphan(pid: int, roots: list[Path]) -> tuple[str, str] | None:
+def city_home(pid: int) -> Path | None:
+    """The Gas City home (GC_HOME) of `pid`'s environment, if it names one."""
+    try:
+        environ = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return None
+    home = next((entry[len(b"GC_HOME="):] for entry in environ if entry.startswith(b"GC_HOME=")), b"")
+    return Path(os.path.normpath(home.decode(errors="replace"))) if home.startswith(b"/") else None
+
+
+def work_tree_orphan(pid: int, roots: list[Path], home_roots: list[Path] | None = None) -> tuple[str, str] | None:
     """Why a program launched without this launcher must end, and its work
     tree: its launcher ended and its work tree is gone, or lies in the folder
     of a trial that has ended (lib/trial_lock.py: a killed tdd-step left a
     cockpit polling for 61 h in its still present tree, af-3vcqd3), or it
-    has outlived a lifetime in a runtime worktree."""
+    has outlived a lifetime in a runtime worktree. A city's supervisor works
+    from anywhere: the city home of its environment (GC_HOME) in the folder
+    of an ended trial ends it too (af-myowqa: three test cities killed past
+    their cleanup ran up to 8 h 52 at a load of 20 on 8 cores)."""
     if not reparented(pid):
         return None
+    home = city_home(pid)
+    if home is not None:
+        root = next((r for r in (roots if home_roots is None else home_roots) if r in home.parents), None)
+        if root is not None and trial_lock.ended_trial(home, root) is not None:
+            return "trial_gone", str(home)
     try:
         cwd = os.readlink(f"/proc/{pid}/cwd")
     except OSError:
@@ -980,7 +1003,8 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         if launch_id and process_alive(pid) and (not args.launch_id or launch_id in args.launch_id):
             launches.setdefault(launch_id, []).append(pid)
         elif not launch_id and pid != os.getpid() and process_alive(pid) and (args.work_root or not args.launch_id):
-            orphan = work_tree_orphan(pid, [Path(r).resolve() for r in args.work_root] or list(WORK_ROOTS))
+            orphan = (work_tree_orphan(pid, [Path(r).resolve() for r in args.work_root]) if args.work_root
+                      else work_tree_orphan(pid, list(WORK_ROOTS), [*WORK_ROOTS, *CITY_TRIAL_ROOTS]))
             if orphan:
                 orphans.append((pid, *orphan))
     stopped, kept = [], 0
