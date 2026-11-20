@@ -37,15 +37,17 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 # --- 1. every test that kills by path holds its trial lock -------------------
 # The variables a shell test kills by path (`pkill [-9] -f -- "$VAR...`) and
 # does not hold the trial lock of.
+# host-process: allow — the pattern of the check, not a call
+KILL_BY_PATH='pkill[^|;]*-f[[:space:]]+--[[:space:]]+"\$\{?[A-Za-z_]+'
 unheld_shell() {
   local var
-  for var in $(grep -vE '^[[:space:]]*#' "$1" \
-      | grep -oE 'pkill[^|;]*-f[[:space:]]+--[[:space:]]+"\$\{?[A-Za-z_]+' \
+  for var in $(grep -vE '^[[:space:]]*#' "$1" | grep -oE "$KILL_BY_PATH" \
       | grep -oE '[A-Za-z_]+$' | sort -u); do
     grep -qE "^[[:space:]]*isolated_city_hold_trial \"\\\$\\{?$var\\}?\"" "$1" || printf '%s\n' "$var"
   done
 }
 unheld_python() {
+  # host-process: allow — the pattern of the check, not a call
   grep -qE '"pkill",[[:space:]]*("-[A-Za-z0-9]+",[[:space:]]*)*"-f",[[:space:]]*"--"' "$1" \
     && ! grep -qE 'trial_lock\.hold\(' "$1"
 }
