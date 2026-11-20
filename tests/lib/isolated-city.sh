@@ -51,6 +51,31 @@ isolated_city_stop() {
   gc supervisor stop
 }
 
+# isolated_city_hold_trial <trial-dir>
+#   Called right after the trial directory is made, before anything points
+#   inside it: holds the trial lock of <trial-dir> (lib/trial_lock.py) for as
+#   long as this shell lives. The cleanup above stops the city only when it
+#   runs; a trial killed past it (SIGKILL, a caller's deadline killing its
+#   group) leaves its supervisor, Dolt and sessions to systemd --user. On
+#   20/11/2026 three such cities ran up to 8 h 52 and held the host at a load
+#   of 20 on 8 cores (af-myowqa). With the lock free and the directory still
+#   there, `bin/project-launch sweep` stops every process handed to init that
+#   works in it or whose GC_HOME is in it. Every test that kills its trial's
+#   processes by path holds this lock: tests/trial-lock-held-test.sh.
+isolated_city_hold_trial() {
+  local trial=${1:-} lib _
+  lib="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)/lib/trial_lock.py"
+  [ -d "$trial" ] || { echo "isolated_city_hold_trial: no trial directory: ${trial:-unset}" >&2; return 1; }
+  python3 "$lib" hold-while "$trial" "$$" </dev/null >/dev/null 2>&1 &
+  disown "$!" 2>/dev/null || true
+  for _ in $(seq 100); do
+    [ -e "$trial.trial" ] && ! flock -n "$trial.trial" true 2>/dev/null && return 0
+    sleep 0.1
+  done
+  echo "isolated_city_hold_trial: the trial lock of $trial was not taken" >&2
+  return 1
+}
+
 # isolated_city_disable_dog <trial-dir> <city-dir>
 #   The minimal Gas City template imports bd.dog with a pool of two sessions.
 #   Delivery trials replace the workspace provider with a role-specific stub,
@@ -82,13 +107,14 @@ isolated_city_disable_dog() {
 #   GC_HOME was refilling $TRIAL/h/cache). Each retry kills the processes
 #   whose working directory or environment points inside the trial, never
 #   this shell itself, which first leaves for /. Refuses an empty path or /.
+#   The trial lock file beside it (isolated_city_hold_trial) goes with it.
 isolated_city_remove() {
   local trial=${1:-} proc cwd _
   [ -n "$trial" ] && [ "$(realpath -m -- "$trial" 2>/dev/null)" != / ] || return 1
   trial=$(realpath -m -- "$trial")
   cd / || return 1
   for _ in 1 2 3 4 5; do
-    rm -rf -- "$trial" 2>/dev/null && return 0
+    rm -rf -- "$trial" 2>/dev/null && { rm -f -- "$trial.trial"; return 0; }
     for proc in /proc/[0-9]*; do
       [ "${proc#/proc/}" != "$$" ] && [ "${proc#/proc/}" != "${BASHPID:-$$}" ] || continue
       cwd=$(readlink -- "$proc/cwd" 2>/dev/null) || continue
@@ -101,7 +127,7 @@ isolated_city_remove() {
     pkill -9 -f -- "$trial/" >/dev/null 2>&1 || true
     sleep 1
   done
-  rm -rf -- "$trial"
+  rm -rf -- "$trial" && rm -f -- "$trial.trial"
 }
 
 # isolated_city_wait_for <seconds> <command...>

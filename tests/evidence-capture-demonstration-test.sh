@@ -12,6 +12,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 TOOL="$ROOT/bin/evidence-capture"
 STATE="$ROOT/bin/convoy-state"
 LAUNCH="$ROOT/bin/project-launch"
@@ -40,6 +41,7 @@ fi
 skip_unless_capture_browser_sandbox "$BROWSER"
 
 TRIAL=$(mktemp -d /tmp/af-pvcg6t-evidence-capture.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 TEST_CITY="$TRIAL/city"
 LAUNCH_STATE="$TRIAL/launch.json"
 cleanup() {

@@ -12,6 +12,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 TOOL="$ROOT/bin/convoy-state"
 
 fail() {
@@ -30,6 +31,7 @@ for required in gc bd jq git dolt; do
 done
 
 TRIAL=$(mktemp -d /tmp/af-cbp84n-convoy-stops.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 TEST_CITY="$TRIAL/city"
 cleanup() {
   status=$?

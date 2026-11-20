@@ -51,6 +51,7 @@ CEILING=$(jq -r '.max_sessions' "$ROOT/config/delivery-flow.json")
 [ "$CEILING" = 2 ] || fail "the trial is written for N=2; config/delivery-flow.json gives max_sessions=$CEILING"
 
 TRIAL=$(mktemp -d /tmp/af-rc0ozs-fresh.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 CITY="$TRIAL/c"
 PRODUCT="$CITY"
 FIXTURE="tests/fixtures/delivery-fixture-city"

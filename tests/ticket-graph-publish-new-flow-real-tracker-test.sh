@@ -24,6 +24,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 DOOR="$ROOT/bin/ticket-graph-publish"
 STATE="$ROOT/bin/convoy-state"
 FIXTURES="$ROOT/tests/fixtures/ticket-graph-publish"
@@ -39,6 +40,7 @@ for required in gc bd jq git dolt python3 sha256sum; do
 done
 
 TRIAL=$(mktemp -d /tmp/af-c8n7ep-entry-contract.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 TEST_CITY="$TRIAL/city"
 cleanup() {
   status=$?

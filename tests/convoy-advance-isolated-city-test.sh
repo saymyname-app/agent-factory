@@ -46,6 +46,7 @@ for required in gc bd jq git dolt tmux; do
 done
 
 TRIAL=$(mktemp -d /tmp/af-gfyj6k-advance.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 CITY="$TRIAL/c"
 PASSES="$TRIAL/passes.jsonl"
 cleanup() {

@@ -4,6 +4,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -18,6 +19,7 @@ done
 # "which city to write beads/mail into" (bin/local-only-tests cd's there and
 # never passes --city), so the test city itself has to carry the fake tests/.
 TEST_TMPDIR=$(mktemp -d /tmp/af-o13-local-only-tests.XXXXXX)
+isolated_city_hold_trial "$TEST_TMPDIR"
 TEST_CITY="$TEST_TMPDIR/city"
 mkdir -p "$TEST_CITY"
 # Isolated tmux socket dir and a stub `codex` ahead of PATH: gc mail send

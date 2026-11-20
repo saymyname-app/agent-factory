@@ -33,6 +33,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 # A do-work branch lives in a worktree without the generated provider overlay.
 # Its functional sweep below must come from $ROOT, while order discovery reads
 # the running City's config from this explicit live root.
@@ -48,6 +49,7 @@ for required in gc bd jq git sha256sum; do
 done
 
 TEST_TMPDIR=$(mktemp -d /tmp/af-w08-factory-orphan-sweep.XXXXXX)
+isolated_city_hold_trial "$TEST_TMPDIR"
 TEST_CITY="$TEST_TMPDIR/city"
 mkdir -p "$TEST_CITY"
 

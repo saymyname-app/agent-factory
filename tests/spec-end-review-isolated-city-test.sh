@@ -66,6 +66,7 @@ for required in gc bd jq git dolt tmux curl python3 sha256sum; do
 done
 
 TRIAL=$(mktemp -d /tmp/af-ji2ruy-end-review.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 CITY="$TRIAL/c"
 PRODUCT="$CITY"
 FIXTURE="tests/fixtures/delivery-fixture-city"

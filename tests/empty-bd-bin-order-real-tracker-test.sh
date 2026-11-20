@@ -17,6 +17,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -28,6 +29,7 @@ for required in gc bd jq git dolt python3; do
 done
 
 TRIAL=$(mktemp -d /tmp/af-d130xt-empty-bd-bin.XXXXXX)
+isolated_city_hold_trial "$TRIAL"
 TEST_CITY="$TRIAL/city"
 CITY_NAME=$(basename "$TRIAL")
 cleanup() {

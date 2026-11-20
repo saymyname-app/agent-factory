@@ -54,6 +54,15 @@ SLOT_WAIT="${LOCAL_ONLY_SLOT_WAIT:-1800}"
 SLOTS="$(cd -- "$(dirname -- "$0")" && pwd -P)/../lib/host_slots.py"
 IN_SLOT=()
 [ -f "$SLOTS" ] && IN_SLOT=(python3 "$SLOTS" run --name local-only-tests --wait "$SLOT_WAIT" --label)
+# Each test runs under lib/ci_test_reaper.py, as bin/ci-run-tests runs its
+# own: what a test leaves alive when it ends, its deadline included, is
+# killed, named, and fails it (docs/DEFECT_CLASSES.md, P). A test city
+# stopped by a cleanup the timeout's SIGKILL never let run lived on under
+# systemd --user for hours, its Dolt busy (af-myowqa). A copy of this script
+# without its lib/ runs each test directly.
+REAPER="$(cd -- "$(dirname -- "$0")" && pwd -P)/../lib/ci_test_reaper.py"
+REAPED=()
+[ -f "$REAPER" ] && REAPED=(python3 "$REAPER")
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -118,7 +127,7 @@ for t in ${TESTS[@]+"${TESTS[@]}"}; do
   # after its FAIL lines on stderr, and the last 5 lines kept for the bead hid
   # them (fake-tool-contract-test.py, 2026-10-18 nightly, af-foq4t7).
   OUTPUT=$(PYTHONUNBUFFERED=1 ${IN_SLOT[@]+"${IN_SLOT[@]}" "local-only-tests $t" --} \
-    timeout --kill-after=30 "$TEST_TIMEOUT" "$t" 2>&1)
+    ${REAPED[@]+"${REAPED[@]}"} timeout --kill-after=30 "$TEST_TIMEOUT" "$t" 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ]; then
     say "local-only-tests: PASS $t"

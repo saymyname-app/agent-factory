@@ -4,6 +4,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+. "$ROOT/tests/lib/isolated-city.sh"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -15,6 +16,7 @@ for required in gc bd jq git; do
 done
 
 TEST_TMPDIR=$(mktemp -d /tmp/af-o13-backup-freshness.XXXXXX)
+isolated_city_hold_trial "$TEST_TMPDIR"
 TEST_CITY="$TEST_TMPDIR/city"
 ARCHIVE=$(mktemp -d /tmp/af-o13-backup-freshness-archive.XXXXXX)
 mkdir -p "$TEST_CITY"

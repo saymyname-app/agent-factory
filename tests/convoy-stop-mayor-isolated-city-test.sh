@@ -68,6 +68,7 @@ fi
 pgrep -f -- "$TRIAL/" >/dev/null 2>&1 && fail "an adoption trial is running in $TRIAL -- try again once it is over"
 rm -rf -- "$TRIAL"
 mkdir -p "$TRIAL"
+isolated_city_hold_trial "$TRIAL"
 echo "isolated city of tests/convoy-stop-mayor-isolated-city-test.sh; erased on every run" > "$MARKER"
 CITY="$TRIAL/c"
 PASSES="$TRIAL/passes.jsonl"

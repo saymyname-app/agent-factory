@@ -36,6 +36,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
+sys.path.insert(0, str(ROOT / "lib"))
+import trial_lock  # noqa: E402
 
 FAILURES = []
 
@@ -461,12 +463,22 @@ def calibrate_blocked_close(env, city):
 def check_bd_behavior(real_runtime):
     """Calibrate the oracle when possible, then replay every relevant fake."""
     trial = Path(tempfile.mkdtemp(prefix="af-1zxao6-fake-bd-contract."))
+    # Killed before its `finally`, this check left its city's Dolt server to
+    # systemd --user for 8 days: with its trial lock free, `bin/project-launch
+    # sweep` stops it (af-myowqa).
+    with trial_lock.hold(trial):
+        check_bd_behavior_in(trial, real_runtime)
+
+
+def check_bd_behavior_in(trial, real_runtime):
     city_started = False
     try:
         # Nothing of the live Factory may reach this city.
         env = isolated_env(trial)
         city = trial / "city"
         if real_runtime:
+            # `gc init` starts the city's Dolt server before it can fail.
+            city_started = True
             for setup in (
                 ["dolt", "config", "--global", "--add", "user.name", "fake-bd contract trial"],
                 ["dolt", "config", "--global", "--add", "user.email", "trial@example.invalid"],
@@ -478,7 +490,6 @@ def check_bd_behavior(real_runtime):
                     fail(f"the disposable city of the bd dependency check could not be made ({' '.join(setup[:2])}): "
                          f"{proc.stderr.strip()[-300:]}")
                     return
-            city_started = True
             if not calibrate_blocked_close(env, city):
                 return
         else:
