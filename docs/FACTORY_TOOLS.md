@@ -109,6 +109,16 @@ de PR et `proof=github-pr-merged` entrent dans le journal. CLI absente, délai
 dépassé, réponse illisible, OID différent ou PR non fusionnée : aucune
 suppression ; le chemin existant de refus ou d'escalade reste en vigueur.
 
+`prune-merged-branches` applique la même preuve aux branches locales, lue en
+une seule requête paginée de toutes les PR fusionnées : une branche que Git
+ne voit ni poussée ni fusionnée dans `main` est supprimée seulement si une PR
+fusionnée de ce nom tient son HEAD, comme tête ou comme commit antérieur à
+sa tête (af-tdpbg1 : sans elle, aucune branche fusionnée par squash n'était
+élaguée et 858 branches s'étaient accumulées dans la racine vivante). Le
+journal porte `pr=<n>` et une annulation qui récupère d'abord
+`pull/<n>/head`. L'ordre `prune-merged-branches` la lance chaque jour à
+05:20 (heure de l'hôte), après `clean-worktrees` de 05:00.
+
 ---
 ## `./bin/factory-watchdog` — la surveillance qui page, pas seulement qui observe
 
@@ -477,6 +487,16 @@ perd rien, le suivant relit tout trois minutes plus tard ; il est donc reporté
 passages coupés de suite sortent 2 (`PR_AUTOPILOT_DEFER_LIMIT`). Le compte est
 tenu dans `.gc/runtime/pr-autopilot-deferred-passes` et remis à zéro par un
 passage qui finit (`af-pmbhlh`).
+
+L'historique entier des Beads d'un rig (`gc bd list --all`), dont la
+réconciliation a besoin à chaque passage, est gardé entre les passages dans
+le dossier que nomme `PR_AUTOPILOT_HISTORY_CACHE_DIR` (l'ordre :
+`.gc/runtime/pr-autopilot-history`) : lu entier une fois par jour, puis
+seulement ce qui a changé depuis la lecture précédente, moins dix minutes
+(`lib/beads_history_cache.py`). Le 20/11/2026 la lecture entière du store HQ
+faisait 60 Mo en 20 s, toutes les trois minutes : 34 % de ce que Dolt
+envoyait à ses clients (`af-tdpbg1`). Sans ce dossier, chaque passage lit
+l'historique entier comme avant.
 
 ---
 

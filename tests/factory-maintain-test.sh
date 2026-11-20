@@ -63,7 +63,62 @@ git -C "$REPO" checkout -qb merged-but-unpushed
 echo three > "$REPO/h" && git -C "$REPO" add -A && git -C "$REPO" commit -qm three
 git -C "$REPO" checkout -q main
 
-OUT=$("$SCRIPT" prune-merged-branches --repo "$REPO" 2>&1) || fail "prune-merged-branches exited non-zero: $OUT"
+# squash-merged branches whose remote branch GitHub deleted (af-tdpbg1):
+# never an ancestor of main, no upstream left. Deleted only when a merged PR
+# of the branch holds the local head -- as its head, or a commit before it.
+squash_branch() {
+  git -C "$REPO" checkout -qb "$1"
+  echo "$1" > "$REPO/$1" && git -C "$REPO" add -A && git -C "$REPO" commit -qm "$1"
+  git -C "$REPO" checkout -q main
+}
+squash_branch squash-merged-deleted
+SQUASH_SHA=$(git -C "$REPO" rev-parse squash-merged-deleted)
+squash_branch squash-behind-pr
+SQUASH_BEHIND_SHA=$(git -C "$REPO" rev-parse squash-behind-pr)
+git -C "$REPO" checkout -q squash-behind-pr
+echo more > "$REPO/more" && git -C "$REPO" add -A && git -C "$REPO" commit -qm more
+SQUASH_PR_HEAD=$(git -C "$REPO" rev-parse HEAD)
+git -C "$REPO" reset -q --hard "$SQUASH_BEHIND_SHA"
+git -C "$REPO" checkout -q main
+squash_branch squash-diverged
+squash_branch squash-ahead-of-pr
+SQUASH_AHEAD_PR_HEAD=$(git -C "$REPO" rev-parse squash-ahead-of-pr)
+git -C "$REPO" checkout -q squash-ahead-of-pr
+echo local > "$REPO/local" && git -C "$REPO" add -A && git -C "$REPO" commit -qm local
+git -C "$REPO" checkout -q main
+
+PRUNE_BIN="$TMP/prune-bin"
+mkdir -p "$PRUNE_BIN"
+cat > "$PRUNE_BIN/gh" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" pr list"*" --state merged "*)
+    printf '[%s,%s,%s,%s]\n' \
+      '{"headRefName":"squash-merged-deleted","headRefOid":"$SQUASH_SHA","mergedAt":"2026-11-19T10:00:00Z","number":801}' \
+      '{"headRefName":"squash-behind-pr","headRefOid":"$SQUASH_PR_HEAD","mergedAt":"2026-11-19T10:00:00Z","number":802}' \
+      '{"headRefName":"squash-diverged","headRefOid":"$MERGED_SHA","mergedAt":"2026-11-19T10:00:00Z","number":803}' \
+      '{"headRefName":"squash-ahead-of-pr","headRefOid":"$SQUASH_AHEAD_PR_HEAD","mergedAt":"2026-11-19T10:00:00Z","number":804}'
+    ;;
+  *) echo '[]' ;;
+esac
+EOF
+chmod +x "$PRUNE_BIN/gh"
+
+OUT=$(PATH="$PRUNE_BIN:$PATH" "$SCRIPT" prune-merged-branches --repo "$REPO" 2>&1) || fail "prune-merged-branches exited non-zero: $OUT"
+
+git -C "$REPO" show-ref --verify --quiet refs/heads/squash-merged-deleted \
+  && fail "prune-merged-branches kept a branch whose head is a merged PR's head: $OUT"
+git -C "$REPO" show-ref --verify --quiet refs/heads/squash-behind-pr \
+  && fail "prune-merged-branches kept a branch whose head is before a merged PR's head: $OUT"
+git -C "$REPO" show-ref --verify --quiet refs/heads/squash-diverged \
+  || fail "prune-merged-branches deleted a branch its merged PR does not hold"
+git -C "$REPO" show-ref --verify --quiet refs/heads/squash-ahead-of-pr \
+  || fail "prune-merged-branches deleted a branch with commits after its merged PR's head"
+grep -q "status=deleted.*branch=squash-merged-deleted sha=$SQUASH_SHA pr=801 undo='git -C $REPO fetch origin pull/801/head; git -C $REPO branch squash-merged-deleted $SQUASH_SHA'" "$FACTORY_MAINTAIN_LOG" \
+  || fail "log entry for the squash-merged branch does not name its PR and undo"
+grep -q "branch=squash-behind-pr sha=$SQUASH_BEHIND_SHA pr=802" "$FACTORY_MAINTAIN_LOG" \
+  || fail "log entry for the branch behind its merged PR does not name its PR"
+case "$OUT" in *"deleted=3 "*) ;; *) fail "prune-merged-branches summary is not deleted=3: $OUT" ;; esac
 
 git -C "$REPO" show-ref --verify --quiet refs/heads/merged-and-pushed \
   && fail "prune-merged-branches did not delete a merged, fully-pushed branch"

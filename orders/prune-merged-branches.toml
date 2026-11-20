@@ -1,0 +1,13 @@
+# af-tdpbg1: `factory-maintain prune-merged-branches` only ever ran by hand,
+# and until af-tdpbg1 it could not see a squash-merged branch -- 858 local
+# branches piled up in the live root, walked by every factory-guard pass.
+# Daily, after clean-worktrees (05:00) has removed the worktrees that pin
+# merged branches. It deletes only a branch pushed and merged into main, or
+# whose head a merged PR of that branch holds; each deletion is logged in
+# var/factory-maintain.log with its undo.
+[order]
+description = "Daily pruning of local branches merged into main or held by a merged PR (squash merges included); each deletion logged with its undo"
+trigger = "cron"
+schedule = "20 5 * * *"
+exec = "/home/benja/agent-factory/bin/order-pause gate prune-merged-branches -- /home/benja/agent-factory/bin/factory-maintain prune-merged-branches"
+timeout = "600s"
