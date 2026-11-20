@@ -366,7 +366,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/evaluation-capacity-test.py`,
   `bash tests/gh-unsupported-subcommand-guard-test.sh`,
   `python3 tests/reversibility-test.py`,
-  `bash tests/pr-autopilot-project-hold-test.sh` — complet pour le dossier
+  `bash tests/pr-autopilot-project-hold-test.sh`,
+  `bash tests/factory-maintain-test.sh`,
+  `bash tests/factory-guard-merged-branch-backup-test.sh` — complet pour le dossier
   personnel et les faux exécutables `bd`/`gc` : le second tient en CI la
   liste fermée des 27 faux, rejoue la limite d'un argument sur chacun, la
   fermeture d'un bloqué sur les 11 qui écrivent l'état et les huit formes
@@ -393,13 +395,21 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   diff entier que GitHub refuse au-delà de 300 fichiers (le faux `gh` le
   refuse aussi), et refuse de juger une liste plus courte que la PR ; une
   liste illisible n'arme pas une PR comme une liste vide (af-u0uuhr).
+  Les deux derniers tiennent « fusionnée » lu comme GitHub le dit, pas
+  par la seule ascendance Git, qu'une fusion squash ne donne jamais :
+  `prune-merged-branches` élague une branche dont une PR fusionnée tient
+  la tête, et `factory-guard` ne repousse pas sur origin une telle branche
+  que GitHub a supprimée à la fusion (af-tdpbg1).
 - Occurrences : #566, #618, #641, #648, #656, #664, #665, #669, #671, #674,
   #675, #676, #680, #689, #690, #692, #699, #700, #714, #715 ; af-vf51g6 ;
   af-dtsy06 ; af-h6nyqc ; af-toyety ; af-yxxa68 ; af-33j358 ; af-u0uuhr
   (`bin/reversibility-check` lisait le diff entier d'une PR : HTTP 406 sur
   les 325 fichiers de #889, une erreur `pr-autopilot` à chaque passage ;
   la porte des descripteurs de projet prenait une liste illisible pour une
-  liste vide).
+  liste vide) ; af-tdpbg1 (`prune-merged-branches` ne voyait fusionnée
+  qu'une branche ancêtre de `main` : 858 branches locales jamais élaguées ;
+  la sauvegarde de `factory-guard` recréait sur origin, minutes après sa
+  fusion, chaque branche squash que GitHub venait de supprimer).
 - Ouvertes : exception datée du 29/10/2026 : la relecture de code par modèle
   n'est pas rejouée sur un cas connu (étude B § 4.3). Elle reste bornée par
   ses citations vérifiées et ses passes ciblées, mais n'est pas déclarée

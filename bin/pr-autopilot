@@ -361,6 +361,10 @@ done
 AP_HARD=$((AP_BUDGET + AP_GRACE))              # no bounded call outlives this
 AP_READ_CAP=20; AP_WRITE_CAP=30; AP_DOOR_CAP=60
 AP_TMO="$TMPDIR_AP/timeouts"; : > "$AP_TMO"
+AP_HISTORY_CACHE_TOOL="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/beads_history_cache.py"
+# Kept between passes only where the order names a directory; otherwise in
+# this run's temporary directory, so each run reads the history whole.
+AP_HISTORY_CACHE_DIR="${PR_AUTOPILOT_HISTORY_CACHE_DIR:-$TMPDIR_AP/history}"
 AP_REPO="-"; AP_REPO_T0=0; AP_TIMINGS=(); AP_NOT_CHECKED=()
 
 timed_out()   { [ "$1" = 124 ] || [ "$1" = 137 ]; }
@@ -957,7 +961,13 @@ queue_refused() {  # repo num sha -> 0 refused at this head, 1 not refused, 2 un
 ensure_rig_all_beads() {  # fetch $RIG_ALL_BEADS_JSON once per rig, lazily
   [ "$RIG_ALL_BEADS_FETCHED" = "1" ] && return 0
   local rc
-  RIG_ALL_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_WRITE_CAP" gc bd list --all --limit 0 --json 2>/dev/null); rc=$?
+  # af-tdpbg1: read whole once a day, otherwise only what changed since the
+  # last pass (lib/beads_history_cache.py) -- the whole read of the HQ store
+  # was 60 MB every 3 minutes, the largest reader of Dolt in the Factory.
+  local cache
+  cache="$AP_HISTORY_CACHE_DIR/$(printf '%s' "$rig_path" | cksum | cut -d' ' -f1).json"
+  RIG_ALL_BEADS_JSON=$(cd "$rig_path" && bounded "$AP_WRITE_CAP" python3 "$AP_HISTORY_CACHE_TOOL" \
+    --cache "$cache" -- gc bd list --all --limit 0 --json 2>/dev/null); rc=$?
   # A cut read is not "no beads": callers must not act on it (RIG_ALL_BEADS_UNKNOWN).
   if timed_out "$rc"; then RIG_ALL_BEADS_UNKNOWN=1; RIG_ALL_BEADS_JSON='[]'; fi
   [ -n "$RIG_ALL_BEADS_JSON" ] || RIG_ALL_BEADS_JSON='[]'

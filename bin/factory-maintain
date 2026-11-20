@@ -32,8 +32,10 @@ usage: factory-maintain <gesture> [args...]
 gestures:
   prune-merged-branches [--repo <path>] [--dry-run]
       Delete local branches that are merged into origin's default branch
-      and have no unpushed commits. Refuses anything unmerged, unpushed,
-      the current branch, or a rig's protected branch.
+      and have no unpushed commits, or whose head is held by a merged PR
+      of the same branch (its head or a commit before it: a squash merge).
+      Refuses anything unmerged, unpushed, the current branch, or a rig's
+      protected branch.
 
   clean-worktrees [--worktree-root <path>] [--idle-days N] [--only <name>[@<sha>]]... [--dry-run]
       Remove do-work worktrees that are clean (no uncommitted changes) and
@@ -145,6 +147,37 @@ raise SystemExit(1)
 ' "$branch" "$sha"
 }
 
+# merged_pr_heads <repo> — print "<branch>\t<head sha>\t<PR number>" for
+# every merged PR of the repo's GitHub repository, in one paginated read
+# (prune-merged-branches looks at hundreds of branches; one gh call each
+# would cost as many API requests). Prints nothing when GitHub cannot be
+# read, so the caller falls back to ancestry alone.
+merged_pr_heads() {
+  local repo="$1" pulls
+  command -v gh >/dev/null 2>&1 || return 0
+  pulls=$(
+    cd "$repo" || exit 1
+    timeout 120 gh pr list --state merged \
+      --json number,headRefName,headRefOid,mergedAt --limit 10000 2>/dev/null
+  ) || return 0
+  printf '%s' "$pulls" | python3 -c '
+import json
+import sys
+
+try:
+    pulls = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(0)
+for pull in pulls if isinstance(pulls, list) else []:
+    if not isinstance(pull, dict) or not pull.get("mergedAt"):
+        continue
+    branch, sha, number = pull.get("headRefName"), pull.get("headRefOid"), pull.get("number")
+    if (isinstance(branch, str) and branch and isinstance(number, int)
+            and isinstance(sha, str) and len(sha) == 40 and "\t" not in branch):
+        print(f"{branch}\t{sha}\t{number}")
+'
+}
+
 # held_by_live_session <path> <branch> — print "<ticket> <session>" and
 # succeed when the worktree is the working copy of a ticket still
 # in_progress whose recorded session is still open: its author has simply
@@ -225,39 +258,63 @@ cmd_prune_merged_branches() {
   base=$(default_base_branch "$repo")
   protected=$'\n'"$(protected_branches_for "$repo")"$'\n'
 
+  # A squash-merged branch is never an ancestor of origin's default branch,
+  # and GitHub deletes its remote branch: without the merged PRs read below
+  # it was never pruned (858 local branches in the live root, af-tdpbg1).
+  local -A merged_heads=()
+  local pr_branch pr_sha pr_number
+  while IFS=$'\t' read -r pr_branch pr_sha pr_number; do
+    [ -n "$pr_number" ] || continue
+    merged_heads[$pr_branch]+="$pr_sha:$pr_number "
+  done < <(merged_pr_heads "$repo")
+
   local branch deleted=0 skipped=0
   while IFS= read -r branch; do
     [ -n "$branch" ] || continue
     if [ "$branch" = "$current" ]; then skipped=$((skipped+1)); continue; fi
     case "$protected" in *$'\n'"$branch"$'\n'*) skipped=$((skipped+1)); continue ;; esac
 
-    local upstream ahead
+    local sha upstream ahead=1 merged_pr="" entry
+    sha=$(git -C "$repo" rev-parse "refs/heads/$branch")
     upstream=$(git -C "$repo" for-each-ref --format='%(upstream)' "refs/heads/$branch")
     if [ -z "$upstream" ]; then
       # no configured tracking branch -- fall back to a same-named remote
       # branch so a plain `git push origin <branch>` (no `-u`) still counts
       if git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
         upstream="refs/remotes/origin/$branch"
-      else
-        skipped=$((skipped+1)); continue   # never pushed
       fi
     fi
-    ahead=$(git -C "$repo" rev-list --count "$upstream..refs/heads/$branch" 2>/dev/null || echo 1)
-    if [ "$ahead" != "0" ]; then skipped=$((skipped+1)); continue; fi  # unpushed commits
-
-    if ! git -C "$repo" merge-base --is-ancestor "refs/heads/$branch" "refs/remotes/origin/$base" 2>/dev/null; then
-      skipped=$((skipped+1)); continue                                 # not merged
+    if [ -n "$upstream" ]; then
+      ahead=$(git -C "$repo" rev-list --count "$upstream..refs/heads/$branch" 2>/dev/null || echo 1)
     fi
 
-    local sha
-    sha=$(git -C "$repo" rev-parse "refs/heads/$branch")
+    if [ "$ahead" != "0" ] \
+       || ! git -C "$repo" merge-base --is-ancestor "refs/heads/$branch" "refs/remotes/origin/$base" 2>/dev/null; then
+      # not pushed-and-merged by ancestry: deletable only when a merged PR
+      # of this branch holds the local head (its head, or a commit before
+      # it), so GitHub keeps every local commit under refs/pull/<n>/head
+      for entry in ${merged_heads[$branch]:-}; do
+        if [ "${entry%%:*}" = "$sha" ] \
+           || git -C "$repo" merge-base --is-ancestor "$sha" "${entry%%:*}" 2>/dev/null; then
+          merged_pr="${entry#*:}"; break
+        fi
+      done
+      if [ -z "$merged_pr" ]; then
+        skipped=$((skipped+1)); continue   # never pushed, unpushed commits, or not merged
+      fi
+    fi
+
+    local undo="git -C $repo branch $branch $sha"
+    [ -n "$merged_pr" ] && undo="git -C $repo fetch origin pull/$merged_pr/head; $undo"
     if [ "$dry_run" = "1" ]; then
-      echo "would delete: $branch ($sha)"
+      echo "would delete: $branch ($sha${merged_pr:+, merged PR #$merged_pr})"
     else
       if git -C "$repo" branch -D "$branch" >/dev/null 2>&1; then
         deleted=$((deleted+1))
         log prune-merged-branches deleted \
-          "branch=$branch sha=$sha undo='git -C $repo branch $branch $sha'"
+          "branch=$branch sha=$sha${merged_pr:+ pr=$merged_pr} undo='$undo'"
+      else
+        skipped=$((skipped+1))   # e.g. checked out in a worktree
       fi
     fi
   done < <(git -C "$repo" for-each-ref --format='%(refname:short)' refs/heads/)

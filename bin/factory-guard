@@ -424,6 +424,21 @@ while read -r b local_sha; do
   if [ -z "$remote" ]; then
     n=$(git rev-list --count origin/main.."$b" 2>/dev/null || echo 0)
     [ "${n:-0}" = "0" ] && continue
+    # A squash-merged branch is never in origin/main, and GitHub deletes its
+    # remote branch on merge: pushing it "back up" re-created every merged
+    # branch on origin minutes after its merge (do-work/af-abozjt, PR #917,
+    # deleted 01:26:30Z and re-created 01:29:58Z on 2026-11-20, af-tdpbg1).
+    # Nothing is at risk when a merged PR of the branch holds its head: GitHub
+    # keeps it under refs/pull/<n>/head. An unknown answer still backs up.
+    merged_heads=$(bounded 20 gh pr list --head "$b" --state merged \
+      --json headRefOid --jq '.[].headRefOid' 2>/dev/null) || merged_heads=""
+    held=""
+    for h in $merged_heads; do
+      if [ "$h" = "$local_sha" ] || git merge-base --is-ancestor "$local_sha" "$h" 2>/dev/null; then
+        held=1; break
+      fi
+    done
+    [ -n "$held" ] && continue
   elif [ "$remote" = "$local_sha" ]; then
     continue
   elif git merge-base --is-ancestor "$local_sha" "$remote" 2>/dev/null; then

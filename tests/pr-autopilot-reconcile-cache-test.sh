@@ -99,4 +99,19 @@ out2=$(pilot)
 grep -q "af-done" "$TMP/gc.log" \
   && { echo "$out2" >&2; fail "tick 2 re-checked af-done's live status despite it already being cached as verified-closed"; }
 
+# af-tdpbg1: with the order's history cache directory, the whole history is
+# read once, then only what changed since (lib/beads_history_cache.py holds
+# the rest; this proves the transmission).
+export PR_AUTOPILOT_HISTORY_CACHE_DIR="$TMP/history-cache"
+: > "$TMP/gc.log"
+out3=$(pilot)
+grep -q "^bd list --all --limit 0 --json$" "$TMP/gc.log" \
+  || { echo "$out3" >&2; fail "the first tick with a history cache did not read the whole history"; }
+: > "$TMP/gc.log"
+out4=$(pilot)
+grep -Eq "^bd list --all --limit 0 --json --updated-after [0-9T:-]+Z$" "$TMP/gc.log" \
+  || { echo "$out4" >&2; cat "$TMP/gc.log" >&2; fail "the next tick read the whole history again instead of what changed"; }
+grep -q "^bd list --all --limit 0 --json$" "$TMP/gc.log" \
+  && fail "the next tick still read the whole history"
+
 echo "OK pr-autopilot caches a live-verified terminal PR and skips the repeat gc bd show on later ticks"

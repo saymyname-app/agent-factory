@@ -33,5 +33,15 @@ passages coupés de suite sortent 2 (`PR_AUTOPILOT_DEFER_LIMIT`). Le compte est
 tenu dans `.gc/runtime/pr-autopilot-deferred-passes` et remis à zéro par un
 passage qui finit (`af-pmbhlh`).
 
+L'historique entier des Beads d'un rig (`gc bd list --all`), dont la
+réconciliation a besoin à chaque passage, est gardé entre les passages dans
+le dossier que nomme `PR_AUTOPILOT_HISTORY_CACHE_DIR` (l'ordre :
+`.gc/runtime/pr-autopilot-history`) : lu entier une fois par jour, puis
+seulement ce qui a changé depuis la lecture précédente, moins dix minutes
+(`lib/beads_history_cache.py`). Le 20/11/2026 la lecture entière du store HQ
+faisait 60 Mo en 20 s, toutes les trois minutes : 34 % de ce que Dolt
+envoyait à ses clients (`af-tdpbg1`). Sans ce dossier, chaque passage lit
+l'historique entier comme avant.
+
 ---
 

@@ -430,7 +430,7 @@ fixes now landed).
 | Gesture | Verdict | Note |
 |---|---|---|
 | `restart-service` | ops | O12 (af-1lofk): wraps `gc service restart <name>`, refuses an unknown service name |
-| `prune-merged-branches` | ops | O12: refuses anything unmerged, unpushed, current, or a rig's protected branch |
+| `prune-merged-branches` | ops | O12: refuses anything unmerged, unpushed, current, or a rig's protected branch; a squash-merged branch is pruned when a merged PR of it holds its head (af-tdpbg1); daily order `prune-merged-branches` |
 | `clean-worktrees` | ops | O12: refuses anything with unmerged or unpushed work |
 | `rotate-logs` | ops | O12: gzip-archives over a size threshold, never deletes a log outright |
 | `reload-city-config` | ops | O12: wraps `gc reload`, logged like every other gesture |
