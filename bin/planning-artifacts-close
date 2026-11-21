@@ -39,6 +39,18 @@
 # same pass again over the same convoys -- so it is deferred (exit 0); only
 # PLANNING_ARTIFACTS_CLOSE_DEFER_LIMIT runs cut in a row fail (exit 2).
 #
+# Most bead closes close no convoy, yet each one paid the whole pass: the
+# list of every closed convoy (12 s at loadavg 20), the state command and
+# the `bd show`; the 30 s budget was cut seven times in a row at loadavg ~8
+# (af-ktxsfi). A pass that finishes without a failure records when it began;
+# the next run first asks for one convoy closed since then (one short
+# `bd list --closed-after`) and, finding none, stops there. A run that
+# cannot ask, a pass that fails or is cut, and a record older than
+# PLANNING_ARTIFACTS_CLOSE_FULL_PASS_SECONDS (an hour) make the whole pass
+# again: what only the whole pass sees (a marked convoy no longer listed
+# under `closed_outside`) still closes within the hour. --check-only always
+# makes the whole pass and records nothing.
+#
 # Usage: planning-artifacts-close [--check-only]
 set -uo pipefail
 
@@ -50,6 +62,8 @@ CHECK_ONLY=0
 BUDGET_SECONDS="${PLANNING_ARTIFACTS_CLOSE_BUDGET_SECONDS:-30}"
 DEFER_LIMIT="${PLANNING_ARTIFACTS_CLOSE_DEFER_LIMIT:-3}"
 DEFERRED_FILE="$ROOT/.gc/runtime/planning-artifacts-close-deferred-passes"
+FULL_PASS_SECONDS="${PLANNING_ARTIFACTS_CLOSE_FULL_PASS_SECONDS:-3600}"
+LAST_PASS_FILE="$ROOT/.gc/runtime/planning-artifacts-close-last-pass"
 
 # Own the whole process group below the order's 60 s deadline (and order-pause
 # gate's 20 s read before it), so a slow run answers precisely instead of the
@@ -78,7 +92,7 @@ fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --check-only) CHECK_ONLY=1 ;;
-    -h|--help) sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,54p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "$PROGRAM_NAME: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -158,6 +172,21 @@ resolve_and_close() {  # id convoy_id convoy_title
   fi
 }
 
+# A convoy that closes while this pass runs is seen by the next one: the
+# record is taken a minute before the pass begins.
+pass_started=$(date -u -d "@$(( $(date +%s) - 60 ))" +%Y-%m-%dT%H:%M:%SZ)
+last_pass=$(cat "$LAST_PASS_FILE" 2>/dev/null)
+last_pass_epoch=$(date -u -d "$last_pass" +%s 2>/dev/null) || last_pass_epoch=""
+if [ "$CHECK_ONLY" = "0" ] && [ -n "$last_pass" ] && [ -n "$last_pass_epoch" ] \
+   && [ $(( $(date +%s) - last_pass_epoch )) -lt "$FULL_PASS_SECONDS" ]; then
+  since=$(cd "$ROOT" && "$GC_BIN" bd list --all --type convoy --status closed --has-metadata-key gc.artifact_id \
+    --closed-after "$last_pass" --limit 1 --json 2>/dev/null)
+  if jq -e 'type == "array" and length == 0' >/dev/null 2>&1 <<<"$since"; then
+    say "$PROGRAM_NAME: no convoy closed since $last_pass -- nothing to do"
+    exit 0
+  fi
+fi
+
 convoys=$(cd "$ROOT" && "$GC_BIN" bd list --all --type convoy --status closed --has-metadata-key gc.artifact_id --limit 0 --json 2>/dev/null)
 jq -e . >/dev/null 2>&1 <<<"$convoys" || convoys='[]'
 
@@ -197,4 +226,8 @@ done <<<"$rows"
 
 say ""
 say "$PROGRAM_NAME: closed=$CLOSED skipped=$SKIPPED failed=$FAILED"
-[ "$FAILED" -eq 0 ]
+[ "$FAILED" -eq 0 ] || exit 1
+if [ "$CHECK_ONLY" = "0" ]; then
+  mkdir -p "$(dirname "$LAST_PASS_FILE")" 2>/dev/null && printf '%s\n' "$pass_started" > "$LAST_PASS_FILE" 2>/dev/null
+fi
+exit 0

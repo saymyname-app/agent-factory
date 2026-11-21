@@ -19,6 +19,11 @@
 # The command owns a 30 s budget below this timeout (and order-pause's 20 s
 # read before it): a run cut by it closes nothing half-way and is deferred
 # (exit 0) to the next bead close; only three runs cut in a row fail (case 7).
+# af-ktxsfi: most bead closes close no convoy, yet each one paid the whole
+# pass, and at loadavg ~8 the budget was cut seven times in a row. After a
+# pass that finished, a run that finds no convoy closed since it stops after
+# one short tracker call; the whole pass runs again on a convoy closed since,
+# and at least once an hour (case 8).
 [order]
 description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, once that convoy closes (W06, A6b)."
 trigger = "event"
