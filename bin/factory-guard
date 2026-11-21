@@ -508,7 +508,21 @@ if [ "${DIRTY:-0}" -gt 0 ]; then
         -m "factory-guard snapshot ${stamp}: ${DIRTY} entries that existed only on this machine" \
         2>/dev/null)
       SNAP_REF="refs/factory-guard/snapshots/${stamp}"
-      if [ -n "$commit" ] && bounded 30 git push -q "$SNAP_REMOTE" "$commit:$SNAP_REF" 2>/dev/null; then
+      # The same entries, already off-box, are not pushed again (af-q55qqx.10):
+      # runtime files the repo does not ignore (gc skill links, a gate lock,
+      # var/ reports) kept the tree dirty, so every 5-minute pass pushed a new
+      # snapshot and deleted an old one, two pushes of ~10 s each at a load
+      # of 15-35, and the order was killed at its 180 s (2026-11-20/21). The
+      # latest dated snapshot was made here, so its tree is read locally; an
+      # unknown answer pushes, as before.
+      SNAP_LAST=$(bounded 30 git ls-remote --refs "$SNAP_REMOTE" 'refs/factory-guard/snapshots/*' 2>/dev/null \
+        | awk '$2 ~ /\/snapshots\/[0-9]{8}T[0-9]{6}Z$/ {print $2, $1}' | sort | tail -n 1 | cut -d' ' -f2)
+      if [ -n "$SNAP_LAST" ] && [ "$(git rev-parse -q --verify "$SNAP_LAST^{tree}" 2>/dev/null)" = "$tree" ]; then
+        say "✓ work-tree — these ${DIRTY} entries are already in $SNAP_REMOTE's latest snapshot"
+      # --no-verify: the pre-push hook checks code pushed to branches
+      # (.githooks/pre-push); a backup ref is neither, and a red hook must not
+      # leave the work only here.
+      elif [ -n "$commit" ] && bounded 30 git push -q --no-verify "$SNAP_REMOTE" "$commit:$SNAP_REF" 2>/dev/null; then
         did "snapshotted ${DIRTY} working-tree entr(y|ies) to $SNAP_REMOTE $SNAP_REF"
         # Keep the ten most recent; older ones describe states long superseded.
         # Only the dated ones count: the worktree backups of section 6b live
@@ -517,7 +531,7 @@ if [ "${DIRTY:-0}" -gt 0 ]; then
         # (seen 2026-10-11: ten worktree refs on origin, no dated one).
         bounded 30 git ls-remote --refs "$SNAP_REMOTE" 'refs/factory-guard/snapshots/*' 2>/dev/null \
           | awk '{print $2}' | grep -E '/snapshots/[0-9]{8}T[0-9]{6}Z$' | sort | head -n -10 \
-          | while read -r old; do bounded 30 git push -q "$SNAP_REMOTE" ":$old" 2>/dev/null || true; done
+          | while read -r old; do bounded 30 git push -q --no-verify "$SNAP_REMOTE" ":$old" 2>/dev/null || true; done
       else
         bad "could not snapshot the working tree to $SNAP_REMOTE — ${DIRTY} entries at risk"
       fi
@@ -793,7 +807,7 @@ if [ -d "$RUNTIME_WT_ROOT" ]; then
       if [ "$CHECK_ONLY" = "1" ]; then
         bad "worktree '$wt' has commit(s) on branch '${RT_BRANCH:-detached}' that exist nowhere but this machine"
       elif RT_SNAP_REMOTE=$(snap_remote "$wt") \
-           && bounded 30 git -C "$wt" push "$RT_SNAP_REMOTE" "$RT_HEAD:$RT_SNAP_REF" >/dev/null 2>&1; then
+           && bounded 30 git -C "$wt" push --no-verify "$RT_SNAP_REMOTE" "$RT_HEAD:$RT_SNAP_REF" >/dev/null 2>&1; then
         did "backed up worktree '$wt' HEAD (branch '${RT_BRANCH:-detached}') to $RT_SNAP_REMOTE $RT_SNAP_REF"
       else
         bad "could not back up worktree '$wt' HEAD to $RT_SNAP_REMOTE — commit(s) exist nowhere else"
