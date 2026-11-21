@@ -24,9 +24,16 @@
 # pass that finished, a run that finds no convoy closed since it stops after
 # one short tracker call; the whole pass runs again on a convoy closed since,
 # and at least once an hour (case 8).
+# af-c8m2gh: that hourly whole pass lasts 25 to 50 s at loadavg 5 to 13
+# (four tracker calls of 4 to 15 s each), longer than the 30 s that cut it:
+# never finished, its record never moved, and every run made it again, cut
+# each time (five failures in three hours, 21/11). The order is now a
+# cooldown every two minutes, not every bead close: the tool's budget is
+# 150 s, inside this 180 s = order-pause's 20 s read + 150 s + the 3 s
+# kill. A convoy's Spec and Draft close within two minutes of it (case 9).
 [order]
-description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, once that convoy closes (W06, A6b)."
-trigger = "event"
-on = "bead.closed"
+description = "Closes the Spec bead and Ticket Graph Draft bead a convoy was published from, with a reason naming the convoy, within two minutes of that convoy closing (W06, A6b)."
+trigger = "cooldown"
+interval = "2m"
 exec = "/home/benja/agent-factory/bin/order-pause gate planning-artifacts-close -- /home/benja/agent-factory/bin/planning-artifacts-close"
-timeout = "60s"
+timeout = "180s"

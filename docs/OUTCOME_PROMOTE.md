@@ -212,7 +212,7 @@ answer that ends the judgement stands.
 | after the take-up was pushed, before the merge | the tip is this command's own take-up and holds the protected tip: step 6 follows (see Limits) |
 | after the protected branch took the merge, before `record-promotion` | the merge is recognised — the protected tip is a merge whose second parent is the integration tip — and recorded; nothing is merged twice |
 | after `record-promotion` (`fusion.html` or the purge failed, exit 1) | `resumed: true`: the note and the purge are done again, then the closing. The convoy **stays open** until both are done |
-| after `close-convoy`, the Spec or the draft not closed | exit 0 with `pending: ["Spec et brouillon : …"]`; `orders/planning-artifacts-close.toml`, which runs on every `bead.closed`, takes it up, and so does the next `run` |
+| after `close-convoy`, the Spec or the draft not closed | exit 0 with `pending: ["Spec et brouillon : …"]`; `orders/planning-artifacts-close.toml`, which runs every two minutes, takes it up, and so does the next `run` |
 | the convoy is closed by command | `done: true`: nothing is merged, nothing is written on the convoy; only `bin/planning-artifacts-close` is run again |
 
 `fusion.html` written again is the same page (`written: false`).

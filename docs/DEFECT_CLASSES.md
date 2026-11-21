@@ -139,7 +139,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   comme `bin/ci-run-tests` (af-myowqa). Le dernier tient le coût d'un
   ordre déclenché à chaque fermeture de bead : `planning-artifacts-close`,
   sans convoi fermé depuis sa dernière passe finie, s'arrête après une
-  seule lecture courte du suivi (af-ktxsfi). Le dernier tient la relève
+  seule lecture courte du suivi (af-ktxsfi) ; sa passe complète tient
+  dans son budget, lui-même dans le délai de l'ordre, et l'ordre ne part
+  plus à chaque fermeture de bead (af-c8m2gh). Le dernier tient la relève
   en direct de `factory-observe` : les beads non fermés lus une seule
   fois, lus avec les sessions et les PR en même temps (af-ufug19).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
@@ -192,6 +194,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   même quand aucun convoi ne s'était fermé : 12 s pour la seule liste à une
   charge de 20, budget de 30 s coupé sept fois de suite à une charge de 8,
   af-f8aglj) ;
+  af-c8m2gh (la même passe complète, forcée au moins une fois l'heure,
+  durait 25 à 50 s à une charge de 5 à 13 sous un budget de 30 s : jamais
+  finie, son relevé ne bougeait plus et chaque fermeture de bead la
+  relançait, coupée, cinq échecs en trois heures le 21/11 ; ordre passé à
+  un cooldown de deux minutes, budget de 150 s dans un délai de 180 s) ;
   af-ufug19 (`factory-observe live`, dernière section de
   `factory-watchdog`, lisait l'un après l'autre trois listes de beads,
   les sessions et les PR, chaque lecture à environ 4 s quel que soit
