@@ -40,6 +40,11 @@
       "label": "Claude Opus 5.5 · effort moyen",
       "pool": "anthropic",
       "tier": "standard"
+    },
+    "claude-sonnet": {
+      "label": "Claude Sonnet 5.5 · effort moyen",
+      "pool": "anthropic",
+      "tier": "standard"
     }
   },
   "targets": {
@@ -53,9 +58,10 @@
     },
     "mayor": {
       "label": "Mayor (orchestration)",
-      "why": "Codex en tête restauré (af-wpjgu, 2026-09-21), même raison que workspace.",
+      "why": "Essai d'une semaine du Mayor sur Sonnet 5.5, Opus 5.5 (claude-standard) en repli (af-yzo8fo). Benjamin, ses mots, 21/11/2026 19:08 Paris : « b) Essai Sonnet ». Codex reste en tête mais désactivé sur l'hôte depuis le 09/11 (« Reste sur Claude »). Retour à Opus en une commande : bin/provider-failover set --action force --args '{\"target\":\"mayor\",\"provider\":\"claude-standard\"}', puis revert de cette PR. Bilan le 28/11 sur af-yzo8fo. Avant : Codex en tête restauré (af-wpjgu, 2026-09-21).",
       "chain": [
         "codex",
+        "claude-sonnet",
         "claude-standard"
       ]
     },
