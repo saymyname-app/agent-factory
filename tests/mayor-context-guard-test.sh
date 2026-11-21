@@ -61,7 +61,7 @@ printf '{"type":"assistant","timestamp":"%s","message":{"stop_reason":"end_turn"
 
 guard() { FACTORY_ROOT="$TMP/city" "$GUARD" "$@" 2>&1; }
 guard_with_short_command_budget() {
-  MAYOR_CONTEXT_GUARD_COMMAND_TIMEOUT_SECONDS=0.2 timeout 3 \
+  MAYOR_CONTEXT_GUARD_COMMAND_TIMEOUT_SECONDS=0.2 MAYOR_CONTEXT_GUARD_RESET_TIMEOUT_SECONDS=0.2 timeout 3 \
     env FACTORY_ROOT="$TMP/city" "$GUARD" "$@" 2>&1
 }
 mails()  { grep -c '^mail send mayor' "$CALLS" || true; }

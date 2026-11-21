@@ -75,4 +75,26 @@ git -C "$TMP/backup.git" cat-file -e "$DETACHED_SHA" 2>/dev/null \
 [ "$(git ls-remote --refs backup 'refs/factory-guard/snapshots/worktree/*' | wc -l)" = "11" ] \
   || fail "a worktree backup was pruned with the dated snapshots"
 
-echo "OK factory-guard snapshots go to the backup remote, never to origin, when one is named"
+# --- third thing (af-q55qqx.10): the same entries are not pushed twice, and a
+# red pre-push hook neither runs on nor stops a backup push. Runtime files kept
+# the live tree dirty, so every 5-minute pass pushed a snapshot and deleted an
+# old one, each push running .githooks/pre-push (~10 s under load): the order
+# was killed at its 180 s ten times on 20-21/11.
+mkdir -p "$TMP/hooks"
+printf '#!/bin/sh\ntouch "%s/hook-ran"\nexit 1\n' "$TMP" > "$TMP/hooks/pre-push"
+chmod +x "$TMP/hooks/pre-push"
+git config core.hooksPath "$TMP/hooks"
+dated() { git ls-remote --refs backup 'refs/factory-guard/snapshots/*' | awk '{print $2}' | grep -cv '/worktree/' || true; }
+
+out=$(HOME="$FAKE_HOME" FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
+grep -q "already in backup's latest snapshot" <<<"$out" \
+  || { printf '%s\n' "$out" >&2; fail "the same entries were not recognised as already snapshotted"; }
+[ "$(dated)" = "1" ] || fail "the same working tree was snapshotted twice"
+
+sleep 1  # a snapshot's name is its second
+echo second-draft >> NOTES.md
+out=$(HOME="$FAKE_HOME" FACTORY_ROOT="$TMP/repo" "$GUARD" 2>&1 || true)
+[ "$(dated)" = "2" ] || { printf '%s\n' "$out" >&2; fail "a changed working tree was not snapshotted (stopped by the red pre-push hook?)"; }
+[ ! -e "$TMP/hook-ran" ] || fail "a backup push ran the pre-push hook"
+
+echo "OK factory-guard snapshots go to the backup remote, never to origin, when one is named; the same entries are pushed once, without the pre-push hook"
