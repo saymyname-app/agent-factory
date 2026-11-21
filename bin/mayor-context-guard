@@ -40,9 +40,13 @@ GC = os.environ.get("GC_BIN", "gc")
 ALIAS = "mayor"
 TOKENS = int(os.environ.get("MAYOR_CONTEXT_GUARD_TOKENS", "150000"))
 MAX_AGE = float(os.environ.get("MAYOR_CONTEXT_GUARD_MAX_AGE_HOURS", "8")) * 3600
-# The order owns 120s: inventory may use 60s; two 20s mutations leave 20s
-# for transcript, state and log I/O. The override keeps timeout tests fast.
+# The order owns 180s: its order-pause gate may use 20s, inventory 60s, the
+# reset 60s, the mail 20s, leaving 20s for transcript, state and log I/O.
+# The reset is a few tracker round trips; at 20s it failed 33 times in 48
+# tries from 15 to 21/11/2026 (load 15-35, `gc session list` 6-7s), once in
+# 31 before (af-q55qqx.10). The overrides keep timeout tests fast.
 COMMAND_TIMEOUT = float(os.environ.get("MAYOR_CONTEXT_GUARD_COMMAND_TIMEOUT_SECONDS", "20"))
+RESET_TIMEOUT = float(os.environ.get("MAYOR_CONTEXT_GUARD_RESET_TIMEOUT_SECONDS", "60"))
 STATE = os.path.join(ROOT, ".gc/runtime/mayor-context-guard-state.json")
 LOG = os.path.join(ROOT, "var/mayor-context-guard.log")
 
@@ -128,7 +132,7 @@ def main(argv):
     try:
         reset_rc = bounded_run(
             [GC, "session", "reset", ALIAS], cwd=ROOT, capture_output=True,
-            text=True, timeout=COMMAND_TIMEOUT,
+            text=True, timeout=RESET_TIMEOUT,
         ).returncode
     except subprocess.TimeoutExpired:
         reset_rc = "timeout"
