@@ -50,6 +50,6 @@ cp "$TMP/small.json" "$TMP/inbox.json"
 FAKE_INBOX_FAILS=1 run 2>/dev/null && fail "an unreadable mailbox exited 0"
 FAKE_ARCHIVE_FAILS=1 run 2>/dev/null && fail "a failed archive exited 0"
 echo '{"ok":true,"messages":[]}' >"$TMP/inbox.json"
-run | grep -q "nothing to human" || fail "an empty mailbox was not reported as such"
+grep -q "nothing to human" <<<"$(run)" || fail "an empty mailbox was not reported as such"
 
 echo "OK human-mail-archive archives only old mail to human, one batch a run, and fails loudly"
