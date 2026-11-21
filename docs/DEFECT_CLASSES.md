@@ -73,7 +73,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_the_sweep_stops_a_product_whose_test_reaper_was_killed_with_its_test`,
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_a_launch_ends_with_its_owner_while_its_product_repository_cannot_be_read`,
   `bash tests/factory-guard-time-budget-test.sh`,
-  `bash tests/trial-lock-held-test.sh`
+  `bash tests/trial-lock-held-test.sh`,
+  `bash tests/planning-artifacts-close-test.sh`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -134,7 +135,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `tests/lib/isolated-city.sh`, ou `trial_lock.hold` en Python), et le sweep
   arrête le processus remis à init dont le `GC_HOME` est dans un essai au
   verrou libre ; `bin/local-only-tests` lance chaque test sous le faucheur
-  comme `bin/ci-run-tests` (af-myowqa).
+  comme `bin/ci-run-tests` (af-myowqa). Le dernier tient le coût d'un
+  ordre déclenché à chaque fermeture de bead : `planning-artifacts-close`,
+  sans convoi fermé depuis sa dernière passe finie, s'arrête après une
+  seule lecture courte du suivi (af-ktxsfi).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -179,7 +183,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   tué avant son nettoyage, tournaient sous systemd --user jusqu'à 8 h 52,
   Dolt à 20-49 %, charge 20 sur 8 cœurs, six ordres hors budget le 20/11 ;
   trois autres oubliées depuis 8 à 21 jours ; le contrôle nocturne
-  `bin/local-only-tests` lançait ces tests sans faucheur).
+  `bin/local-only-tests` lançait ces tests sans faucheur) ; af-ktxsfi
+  (`planning-artifacts-close`, lancé à chaque fermeture de bead, relisait
+  tous les convois fermés, l'état des convois marqués et leurs documents
+  même quand aucun convoi ne s'était fermé : 12 s pour la seule liste à une
+  charge de 20, budget de 30 s coupé sept fois de suite à une charge de 8,
+  af-f8aglj).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

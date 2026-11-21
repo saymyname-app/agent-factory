@@ -22,6 +22,7 @@ export CONVOYS_FILE="$TMP/closed_convoys.json"; echo '[]' > "$CONVOYS_FILE"
 export SHOW_FILE="$TMP/show_beads.json"; echo '{}' > "$SHOW_FILE"
 export CLOSE_LOG="$TMP/closes.log"; : > "$CLOSE_LOG"
 export SHOW_LOG="$TMP/shows.log"; : > "$SHOW_LOG"
+export LIST_LOG="$TMP/lists.log"; : > "$LIST_LOG"
 mkdir -p "$TMP/bin"
 
 # --- stub gc: serves `bd list --type convoy --status closed`/`bd show` from
@@ -38,7 +39,14 @@ set -Eeuo pipefail
 if [[ ${1:-} == --city ]]; then shift 2; fi
 if [[ ${1:-} == bd && ${2:-} == list ]]; then
   sleep "${GC_TEST_LIST_SLEEP:-0}"
-  cat "$CONVOYS_FILE"
+  printf '%s\n' "$*" >> "$LIST_LOG"
+  # --closed-after keeps the convoys closed after it; a fixture without
+  # closed_at was closed just now.
+  after=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --closed-after) after=$2; shift 2 ;; *) shift ;; esac
+  done
+  jq --arg after "$after" '[.[] | select($after == "" or (.closed_at // "9999") > $after)]' "$CONVOYS_FILE"
   exit 0
 fi
 if [[ ${1:-} == bd && ${2:-} == show ]]; then
@@ -350,4 +358,71 @@ out=$(run_tool)
 grep -q "closed=2 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "the run after the deferred ones did not close what they left"; }
 [ ! -e "$DEFERRED_FILE" ] || fail "a run that finishes must clear the count of runs cut in a row"
 
-echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run, a run slowed past its budget deferred until cut three times in a row)"
+# =============================================================================
+# 8. The order runs on every bead close, and most close no convoy
+#    (af-ktxsfi): after a pass that finished, a run that finds no convoy
+#    closed since it asks the tracker once and stops -- no list of every
+#    closed convoy, no state command, no bd show. A convoy closed since, or
+#    a record older than the full-pass period, makes the whole pass again;
+#    a pass that fails keeps the record it found.
+# =============================================================================
+
+LAST_PASS_FILE="$TMP/.gc/runtime/planning-artifacts-close-last-pass"
+rm -f "$LAST_PASS_FILE"
+jq -n '{
+  "zz-fixture-spec-8": {"id": "zz-fixture-spec-8", "status": "open"},
+  "zz-fixture-draft-8": {"id": "zz-fixture-draft-8", "status": "open"}
+}' > "$SHOW_FILE"
+jq -n '[{
+  "id": "zz-fixture-convoy-8old", "title": "Fixture Convoy Eight Old", "status": "closed", "issue_type": "convoy",
+  "closed_at": "2000-01-01T00:00:00Z",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-8old", "gc.spec_id": "zz-fixture-spec-8old"}
+}]' > "$CONVOYS_FILE"
+out=$(run_tool)
+grep -q "closed=0 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "the first run, with no record, must make the whole pass"; }
+[ -s "$LAST_PASS_FILE" ] || fail "a pass that finished did not record when it began"
+
+# Nothing closed since: one tracker call, and the state command is never
+# asked (a broken one would fail the run).
+jq -n '[{
+  "id": "zz-fixture-convoy-8", "title": "Fixture Convoy Eight", "status": "closed", "issue_type": "convoy",
+  "closed_at": "2000-01-01T00:00:01Z",
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-8", "gc.spec_id": "zz-fixture-spec-8"}
+}]' > "$CONVOYS_FILE"
+: > "$LIST_LOG"; : > "$SHOW_LOG"; : > "$CLOSE_LOG"
+rc=0
+out=$(CONVOY_STATE_BIN="$TMP/bin/broken-convoy-state" run_tool) || rc=$?
+[ "$rc" -eq 0 ] || { echo "$out" >&2; fail "a run with no convoy closed since the last pass must pass (was $rc)"; }
+grep -q "no convoy closed since .* -- nothing to do" <<<"$out" || { echo "$out" >&2; fail "a run with no convoy closed since must say so"; }
+[ "$(wc -l < "$LIST_LOG")" -eq 1 ] || { cat "$LIST_LOG" >&2; fail "expected one tracker call when no convoy closed since the last pass"; }
+grep -q -- "--closed-after $(cat "$LAST_PASS_FILE") --limit 1" "$LIST_LOG" || { cat "$LIST_LOG" >&2; fail "the one call must ask for one convoy closed since the recorded pass"; }
+[ -s "$SHOW_LOG" ] && fail "a bd show ran although no convoy closed since the last pass"
+[ "$(bead_status zz-fixture-spec-8)" = "open" ] || fail "a Spec was closed although no convoy closed since the last pass"
+
+# A convoy closed since the recorded pass: a failing pass keeps the record,
+# the next one closes the Spec and the Draft.
+recorded=$(cat "$LAST_PASS_FILE")
+jq -n --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[{
+  "id": "zz-fixture-convoy-8", "title": "Fixture Convoy Eight", "status": "closed", "issue_type": "convoy",
+  "closed_at": $now,
+  "metadata": {"gc.artifact_id": "zz-fixture-draft-8", "gc.spec_id": "zz-fixture-spec-8"}
+}]' > "$CONVOYS_FILE"
+rc=0
+out=$(CONVOY_STATE_BIN="$TMP/bin/broken-convoy-state" run_tool) || rc=$?
+[ "$rc" -ne 0 ] || { echo "$out" >&2; fail "a convoy closed since the last pass did not make the whole pass"; }
+[ "$(cat "$LAST_PASS_FILE")" = "$recorded" ] || fail "a pass that failed moved the record"
+out=$(run_tool)
+grep -q "closed=2 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "a convoy closed since the last pass did not close its Spec and Draft"; }
+
+# A record older than the full-pass period: the whole pass again, though
+# nothing closed since.
+jq -n '{"zz-fixture-spec-8": {"id": "zz-fixture-spec-8", "status": "open"}}' > "$SHOW_FILE"
+jq -n '[{
+  "id": "zz-fixture-convoy-8", "title": "Fixture Convoy Eight", "status": "closed", "issue_type": "convoy",
+  "closed_at": "2000-01-01T00:00:01Z",
+  "metadata": {"gc.spec_id": "zz-fixture-spec-8"}
+}]' > "$CONVOYS_FILE"
+out=$(PLANNING_ARTIFACTS_CLOSE_FULL_PASS_SECONDS=0 run_tool)
+grep -q "closed=1 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "a record older than the full-pass period did not make the whole pass"; }
+
+echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run, a run slowed past its budget deferred until cut three times in a row, a run with no convoy closed since the last pass stops after one tracker call)"
