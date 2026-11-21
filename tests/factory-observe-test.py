@@ -167,6 +167,7 @@ class LiveToolCase(ToolCase):
         self.requests = self.tmp / "requests.json"
         self.prs = self.tmp / "prs.json"
         self.sessions = self.tmp / "sessions.json"
+        self.rendezvous = self.tmp / "rendezvous"
         self.git_head = self.tmp / "git-head"
         self.git_main = self.tmp / "git-main"
         self.git_head.write_text("1" * 40)
@@ -238,10 +239,17 @@ import json, pathlib, sys, time
 args = sys.argv[1:]
 with pathlib.Path({str(self.calls)!r}).open('a') as handle:
     handle.write(json.dumps(args) + '\\n')
+{self._rendezvous_source()}
 if args[:2] == ['bd', 'list']:
-    source = {str(self.requests)!r} if 'gc.needs_benjamin' in args else {str(self.active)!r}
-    print(pathlib.Path(source).read_text())
+    rendezvous('bd')
+    statuses = args[args.index('--status') + 1].split(',')
+    issues = {{}}
+    for source in ({str(self.active)!r}, {str(self.requests)!r}):
+        for issue in json.loads(pathlib.Path(source).read_text()):
+            issues[issue['id']] = issue
+    print(json.dumps([issue for issue in issues.values() if issue['status'] in statuses]))
 elif args[:2] == ['session', 'list']:
+    rendezvous('session')
     print(pathlib.Path({str(self.sessions)!r}).read_text())
 elif args[:2] == ['mail', 'send']:
     pathlib.Path({str(self.mail_state)!r}).write_text(pathlib.Path({str(self.state_file)!r}).read_text())
@@ -260,9 +268,11 @@ else:
 """)
         gh = self.bin_dir / "gh"
         gh.write_text(f"""#!/usr/bin/env python3
-import pathlib, sys
+import pathlib, sys, time
 if sys.argv[1:3] != ['pr', 'list']:
     raise SystemExit(2)
+{self._rendezvous_source()}
+rendezvous('gh')
 print(pathlib.Path({str(self.prs)!r}).read_text())
 """)
         git = self.bin_dir / "git"
@@ -282,6 +292,21 @@ else:
 """)
         for executable in (gc, gh, git):
             executable.chmod(0o755)
+
+    def _rendezvous_source(self):
+        # With a rendezvous file, each live source waits (10 s at most) until
+        # the three have started: read one after the other, they fail.
+        return f"""def rendezvous(name):
+    gate = pathlib.Path({str(self.rendezvous)!r})
+    if not gate.exists():
+        return
+    (gate.parent / ('started-' + name)).touch()
+    deadline = time.monotonic() + 10
+    while not all((gate.parent / ('started-' + other)).exists() for other in ('bd', 'session', 'gh')):
+        if time.monotonic() > deadline:
+            raise SystemExit(3)
+        time.sleep(0.02)
+"""
 
     def live_env(self, now):
         return {
@@ -316,6 +341,23 @@ class LiveObservationTest(unittest.TestCase):
                 set(status["live"]["areas_observed"]),
             )
             self.assertEqual("1970-01-01T02:16:40Z", status["live"]["window"]["due_at"])
+
+    def test_the_beads_sessions_and_pull_requests_are_read_together_beads_once(self):
+        # af-ufug19: each read costs seconds whatever it returns; read one
+        # after the other they overran the watchdog's budget under load.
+        with LiveToolCase() as case:
+            case.rendezvous.touch()
+            result = case.run_live(1000, check=False)
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(
+                [["bd", "list", "--status", "open,in_progress,blocked,deferred", "--brief", "--limit", "0", "--json"]],
+                case.calls_matching(["bd", "list"]),
+            )
+            status = json.loads(case.run_tool("status", "--json", env=case.live_env(1000), check=True).stdout)
+            self.assertEqual(["af-ocz64w"], sorted(status["live"]["window"]["baseline"]["areas"]["human_requests"]))
+            self.assertEqual({"af-cifk1e"}, {
+                key for key in status["live"]["window"]["baseline"]["areas"]["delivery"] if key.startswith("af-")
+            })
 
     def test_a_new_unblocked_resume_routes_once_to_the_holding_worker(self):
         with LiveToolCase() as case:

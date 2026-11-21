@@ -74,7 +74,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/project-launch-test.py ProjectLaunchTest.test_a_launch_ends_with_its_owner_while_its_product_repository_cannot_be_read`,
   `bash tests/factory-guard-time-budget-test.sh`,
   `bash tests/trial-lock-held-test.sh`,
-  `bash tests/planning-artifacts-close-test.sh`
+  `bash tests/planning-artifacts-close-test.sh`,
+  `python3 tests/factory-observe-test.py LiveObservationTest.test_the_beads_sessions_and_pull_requests_are_read_together_beads_once`
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -138,7 +139,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   comme `bin/ci-run-tests` (af-myowqa). Le dernier tient le coût d'un
   ordre déclenché à chaque fermeture de bead : `planning-artifacts-close`,
   sans convoi fermé depuis sa dernière passe finie, s'arrête après une
-  seule lecture courte du suivi (af-ktxsfi).
+  seule lecture courte du suivi (af-ktxsfi). Le dernier tient la relève
+  en direct de `factory-observe` : les beads non fermés lus une seule
+  fois, lus avec les sessions et les PR en même temps (af-ufug19).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -188,7 +191,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   tous les convois fermés, l'état des convois marqués et leurs documents
   même quand aucun convoi ne s'était fermé : 12 s pour la seule liste à une
   charge de 20, budget de 30 s coupé sept fois de suite à une charge de 8,
-  af-f8aglj).
+  af-f8aglj) ;
+  af-ufug19 (`factory-observe live`, dernière section de
+  `factory-watchdog`, lisait l'un après l'autre trois listes de beads,
+  les sessions et les PR, chaque lecture à environ 4 s quel que soit
+  son contenu : 73 s à une charge de 11 à 15, après 49 s de sections
+  1 à 9, budget de 150 s coupé sept fois de suite, af-ri69fn).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à
