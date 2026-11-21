@@ -45,6 +45,13 @@ grep -q new1 "$TMP/archived" && fail "a message younger than the cutoff was arch
 cp "$TMP/inbox.json" "$TMP/small.json"; cp "$TMP/big.json" "$TMP/inbox.json"; rm -f "$TMP/archived"
 out=$(run) || fail "a backlog larger than a batch failed: $out"
 [ "$(wc -l <"$TMP/archived")" = "200" ] || fail "one batch of 200 expected from a large backlog"
+
+# A spent time budget stops after the chunk in flight and exits 0: the 120 s
+# kill of 21/11 16:14 Paris must not come back as an order failure.
+cp "$TMP/big.json" "$TMP/inbox.json"; rm -f "$TMP/archived"
+out=$(HUMAN_MAIL_ARCHIVE_BUDGET_SECONDS=0 run) || fail "a spent budget exited non-zero: $out"
+[ "$(wc -l <"$TMP/archived")" = "10" ] || fail "a spent budget should stop after one chunk of 10"
+grep -q "time budget" <<<"$out" || fail "a spent budget was not reported: $out"
 cp "$TMP/small.json" "$TMP/inbox.json"
 
 FAKE_INBOX_FAILS=1 run 2>/dev/null && fail "an unreadable mailbox exited 0"

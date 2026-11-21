@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # human-mail-archive — archive the mail addressed to `human` once it is older
 # than HUMAN_MAIL_ARCHIVE_DAYS (3), at most HUMAN_MAIL_ARCHIVE_BATCH (200)
-# messages a run (orders/human-mail-archive.toml, af-q55qqx.10).
+# messages a run, in chunks of HUMAN_MAIL_ARCHIVE_CHUNK (10), no new chunk once
+# HUMAN_MAIL_ARCHIVE_BUDGET_SECONDS (60) are spent (orders/human-mail-archive.toml,
+# af-q55qqx.10).
 #
 # Nobody reads that mailbox: Benjamin answers in the Cockpit, and what waits
 # on him is the gc.needs_benjamin field of a bead, never a mail. On 21/11/2026
@@ -20,11 +22,13 @@ set -uo pipefail
 GC_BIN="${GC_BIN:-gc}"
 DAYS="${HUMAN_MAIL_ARCHIVE_DAYS:-3}"
 BATCH="${HUMAN_MAIL_ARCHIVE_BATCH:-200}"
+CHUNK="${HUMAN_MAIL_ARCHIVE_CHUNK:-10}"
+BUDGET="${HUMAN_MAIL_ARCHIVE_BUDGET_SECONDS:-60}"
 DRY=0
 case "${1:-}" in
   --dry-run) DRY=1 ;;
   "") ;;
-  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "human-mail-archive: unknown argument: $1" >&2; exit 2 ;;
 esac
 
@@ -42,7 +46,28 @@ if [ "$DRY" = 1 ]; then
   echo "human-mail-archive: would archive $count message(s) to human older than $DAYS days"
   exit 0
 fi
-# shellcheck disable=SC2086  # one id per word
-"$GC_BIN" mail archive $ids >/dev/null \
-  || { echo "human-mail-archive: gc mail archive failed for $count message(s)" >&2; exit 1; }
-echo "human-mail-archive: archived $count message(s) to human older than $DAYS days"
+# Archive in chunks under a time budget. On 21/11 16:14 Paris, a single
+# `gc mail archive` of 200 ids ran past the order's 120 s under Dolt load
+# (~1.3 s a message) and was killed after ~75. A chunk is started only while
+# the budget lasts; what is left waits for the next run.
+start=$SECONDS
+done_n=0
+chunk=()
+flush() {
+  [ "${#chunk[@]}" -gt 0 ] || return 0
+  "$GC_BIN" mail archive "${chunk[@]}" >/dev/null \
+    || { echo "human-mail-archive: gc mail archive failed after $done_n of $count message(s)" >&2; exit 1; }
+  done_n=$((done_n + ${#chunk[@]}))
+  chunk=()
+}
+while read -r id; do
+  chunk+=("$id")
+  [ "${#chunk[@]}" -lt "$CHUNK" ] && continue
+  flush
+  if [ $((SECONDS - start)) -ge "$BUDGET" ]; then
+    echo "human-mail-archive: archived $done_n of $count message(s) to human older than $DAYS days; time budget (${BUDGET}s) spent, the rest waits for the next run"
+    exit 0
+  fi
+done <<<"$ids"
+flush
+echo "human-mail-archive: archived $done_n message(s) to human older than $DAYS days"
