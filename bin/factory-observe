@@ -31,6 +31,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -245,30 +246,37 @@ def github_repo() -> str:
     return match.group(1)
 
 
+def has_key(issue: Any, key: str) -> bool:
+    return isinstance(issue, dict) and isinstance(issue.get("metadata"), dict) and key in issue["metadata"]
+
+
 def collect_live_snapshot() -> tuple[dict[str, dict[str, Any]], set[str]]:
-    marked = command_json([
-        GC_BIN, "bd", "list", "--status", "open,in_progress,blocked",
-        "--has-metadata-key", "gc.flow.mark",
-        "--brief", "--limit", "0", "--json",
-    ])
-    held = command_json([
-        GC_BIN, "bd", "list", "--status", "in_progress,blocked",
-        "--brief", "--limit", "0", "--json",
-    ])
-    requests = command_json([
-        GC_BIN, "bd", "list", "--status", "open,in_progress,blocked,deferred",
-        "--has-metadata-key", "gc.needs_benjamin",
-        "--brief", "--limit", "0", "--json",
-    ])
-    sessions_doc = command_json([GC_BIN, "session", "list", "--json", "--template", "factory-worker"])
+    # af-ufug19: each gc read costs about 4 s whatever it returns (1 bead or
+    # 153), and 15 s under a load of 15: the four reads one after the other
+    # took 73 s of the watchdog's 150 s. The beads not closed are read once
+    # and split here; that read, the sessions and the pull requests run
+    # together, so the pass costs its slowest read, not their sum.
+    repo = github_repo()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        unclosed_read = pool.submit(command_json, [
+            GC_BIN, "bd", "list", "--status", "open,in_progress,blocked,deferred",
+            "--brief", "--limit", "0", "--json",
+        ])
+        sessions_read = pool.submit(command_json, [GC_BIN, "session", "list", "--json", "--template", "factory-worker"])
+        prs_read = pool.submit(command_json, [
+            GH_BIN, "pr", "list", "--repo", repo, "--state", "all", "--limit", "50",
+            "--json", "number,state,isDraft,headRefName,headRefOid,baseRefName,statusCheckRollup,closedAt,mergedAt",
+        ])
+        unclosed, sessions_doc, prs = unclosed_read.result(), sessions_read.result(), prs_read.result()
     sessions = sessions_doc.get("sessions") if isinstance(sessions_doc, dict) else None
-    if (
-        not isinstance(marked, list)
-        or not isinstance(held, list)
-        or not isinstance(requests, list)
-        or not isinstance(sessions, list)
-    ):
+    if not isinstance(unclosed, list) or not isinstance(sessions, list):
         raise fo.ObservePolicyError("live Beads/session sources returned unexpected JSON")
+    marked = [
+        issue for issue in unclosed
+        if has_key(issue, "gc.flow.mark") and issue.get("status") in ("open", "in_progress", "blocked")
+    ]
+    held = [issue for issue in unclosed if isinstance(issue, dict) and issue.get("status") in ("in_progress", "blocked")]
+    requests = [issue for issue in unclosed if has_key(issue, "gc.needs_benjamin")]
     live_sessions = {
         str(value)
         for session in sessions
@@ -297,11 +305,6 @@ def collect_live_snapshot() -> tuple[dict[str, dict[str, Any]], set[str]]:
         if isinstance(issue, dict) and issue.get("id"):
             areas["human_requests"][str(issue["id"])] = human_request_fact(issue)
 
-    repo = github_repo()
-    prs = command_json([
-        GH_BIN, "pr", "list", "--repo", repo, "--state", "all", "--limit", "50",
-        "--json", "number,state,isDraft,headRefName,headRefOid,baseRefName,statusCheckRollup,closedAt,mergedAt",
-    ])
     if not isinstance(prs, list):
         raise fo.ObservePolicyError("GitHub source must return a JSON array")
     driven_branches: set[str] = set()
