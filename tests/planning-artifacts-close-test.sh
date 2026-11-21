@@ -317,7 +317,7 @@ grep -q "closed=2 skipped=2 failed=0" <<<"$out" || { echo "$out" >&2; fail "expe
 
 # =============================================================================
 # 7. A loaded host slows every tracker call (af-p1d8ka): a run cut by the
-#    tool's own budget, below the order's 60 s timeout, is deferred (exit 0)
+#    tool's own budget, below the order's timeout, is deferred (exit 0)
 #    and closes nothing half-way; only runs cut three times in a row fail,
 #    and a run that finishes clears the count.
 # =============================================================================
@@ -359,8 +359,8 @@ grep -q "closed=2 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "the 
 [ ! -e "$DEFERRED_FILE" ] || fail "a run that finishes must clear the count of runs cut in a row"
 
 # =============================================================================
-# 8. The order runs on every bead close, and most close no convoy
-#    (af-ktxsfi): after a pass that finished, a run that finds no convoy
+# 8. Most runs follow no convoy close (af-ktxsfi, when the order ran on
+#    every bead close): after a pass that finished, a run that finds no convoy
 #    closed since it asks the tracker once and stops -- no list of every
 #    closed convoy, no state command, no bd show. A convoy closed since, or
 #    a record older than the full-pass period, makes the whole pass again;
@@ -425,4 +425,23 @@ jq -n '[{
 out=$(PLANNING_ARTIFACTS_CLOSE_FULL_PASS_SECONDS=0 run_tool)
 grep -q "closed=1 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "a record older than the full-pass period did not make the whole pass"; }
 
-echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run, a run slowed past its budget deferred until cut three times in a row, a run with no convoy closed since the last pass stops after one tracker call)"
+# =============================================================================
+# 9. The whole pass lasts 25 to 50 s at loadavg 5 to 13 (af-c8m2gh): under
+#    a 30 s budget it never finished, so its record never moved and every
+#    run made it again, cut each time. The budget leaves the measured pass
+#    twice its room, the order's timeout holds order-pause's 20 s read, the
+#    budget and its 3 s kill, and the order no longer fires on every bead
+#    close.
+# =============================================================================
+
+ORDER="$REPO_ROOT/orders/planning-artifacts-close.toml"
+budget=$(sed -n 's/^BUDGET_SECONDS="${PLANNING_ARTIFACTS_CLOSE_BUDGET_SECONDS:-\([0-9][0-9]*\)}"$/\1/p' "$TOOL")
+order_timeout=$(sed -n 's/^timeout = "\([0-9][0-9]*\)s"$/\1/p' "$ORDER")
+[ -n "$budget" ] && [ -n "$order_timeout" ] || fail "could not read the tool's budget ($budget) or the order's timeout in seconds ($order_timeout)"
+[ "$budget" -ge 100 ] || fail "a budget of ${budget}s leaves the whole pass (50 s measured at loadavg 5) less than twice its room"
+[ $(( 20 + budget + 3 )) -le "$order_timeout" ] \
+  || fail "the order's ${order_timeout}s timeout does not hold order-pause's 20 s, the ${budget}s budget and its 3 s kill"
+grep -qx 'trigger = "cooldown"' "$ORDER" || fail "the order must be a cooldown, not fired on every bead close"
+grep -q '^on = ' "$ORDER" && fail "the order still names an event"
+
+echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run, a run slowed past its budget deferred until cut three times in a row, a run with no convoy closed since the last pass stops after one tracker call, budget and order timeout hold the whole pass)"
