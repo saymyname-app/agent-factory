@@ -180,11 +180,20 @@ class BoundedProcessTest(unittest.TestCase):
             program = (
                 "import pathlib,subprocess,sys,time; "
                 "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); "
-                "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(60)"
+                "mark=pathlib.Path(sys.argv[1]); part=mark.with_suffix('.part'); "
+                "part.write_text(str(child.pid)); part.replace(mark); time.sleep(60)"
             )
             try:
-                with self.assertRaises(subprocess.TimeoutExpired):
-                    bounded_run([sys.executable, "-c", program, str(child_pid)], timeout=1)
+                # The deadline must fall once the descendant is there: under
+                # load the command may not have made it within 1 s, and the
+                # test read a pid file not yet written (af-tjnggf).
+                for seconds in (1, 2, 4, 8, 16):
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        bounded_run([sys.executable, "-c", program, str(child_pid)], timeout=seconds)
+                    if child_pid.exists():
+                        break
+                else:
+                    self.fail("the command never made its descendant before its deadline")
                 pid = int(child_pid.read_text())
                 deadline = time.monotonic() + 2
                 while alive(pid) and time.monotonic() < deadline:
