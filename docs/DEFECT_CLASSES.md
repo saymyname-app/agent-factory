@@ -511,6 +511,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/isolated-city-stop-guard-test.sh`,
   `bash tests/ci-apt-install-test.sh`,
   `python3 tests/bounded-process-test.py BoundedProcessTest.test_an_exception_keeps_its_name_when_lines_move_around_it`,
+  `bash tests/trial-lock-held-test.sh`,
+  `python3 tests/bounded-process-test.py BoundedProcessTest.test_timeout_kills_the_commands_descendants`,
   `python3 tests/cockpit-stop-test.py StopDriverTest.test_a_reading_begun_before_the_forced_session_stopped_does_not_say_its_assignment_kept` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor), et qu'un bead pris
@@ -583,7 +585,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   ligne : une ligne ajoutée ailleurs dans le fichier ne rougit plus un
   travail sans rapport. Le contrôle `cockpit-stop` refuse qu'après un arrêt
   forcé le Cockpit dise une affectation gardée sur une lecture des tickets
-  commencée avant que le superviseur ait arrêté la session.
+  commencée avant que le superviseur ait arrêté la session. Le contrôle
+  `trial-lock-held` refuse dans `tests/*.sh` un `timeout <N> bash -c` dont
+  le script pose un `trap` : l'échéance fixe peut tomber, sous la charge,
+  avant que le piège soit posé ; l'essai dit qu'il est armé, puis le test
+  signale son groupe. `bounded-process` fait tomber l'échéance qu'il
+  éprouve une fois le descendant né, en la doublant jusqu'à 16 s.
 - Occurrences : #651, #679, #688, #717 ; af-npz9v1.50 ; #767 (armement local
   annoncé mais `autoMergeRequest=null`, af-npz9v1.50.1) ; af-ncg9qy ; #778
   (demande directe acceptée localement mais encore `AWAITING_CHECKS`,
@@ -652,8 +659,15 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   entre les deux disait « affectation gardée » d'un ticket perdu) ; af-jnvjh5 (le 18/11/2026,
   `factory-observe live` a réveillé le Mayor sept fois de suite pour les
   vérifications de #909, ouverte par une session opérateur, sans rien à
-  faire).
-- Ouvertes : aucune connue.
+  faire) ;
+  af-tjnggf (le 22/11/2026, la file de fusion a refusé #925, sans rapport,
+  sous une charge de 12 à 28 : `tests/trial-lock-held-test.sh` arrêtait
+  son essai par `timeout 3`, tombé avant que l'essai ait pris son verrou
+  et posé son nettoyage, et son dossier restait ; même échéance fixe dans
+  `tests/bounded-process-test.py`, qui lisait le pid d'un descendant pas
+  encore écrit).
+- Ouvertes : af-dc8eqb (`tests/host-slots-test.py`, budget `timeout 3`
+  d'un essai d'une seconde, qui peut couper sous la charge).
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
 

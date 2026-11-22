@@ -120,12 +120,41 @@ mkdir -p "$DONE"
 bash -c ". '$ROOT/tests/lib/isolated-city.sh'; isolated_city_hold_trial '$DONE'; isolated_city_remove '$DONE'"
 for _ in $(seq 50); do [ -e "$DONE.trial" ] || break; sleep 0.1; done
 [ ! -e "$DONE.trial" ] || fail "a trial that removed its directory left its lock file"
-# A deadline stops the trial's whole group, the lock's holder with it.
+# A deadline stops the trial's whole group, the lock's holder with it: it
+# falls once the trial holds its lock and has armed its cleanup, as `timeout`
+# does, SIGTERM to the group. A fixed `timeout 3` fell before them under a
+# load of 12 to 28: the trial died with no cleanup and its directory stayed,
+# a false red in the merge queue (af-tjnggf).
 STOPPED="$WORK_ROOT/af-stopped.XXXX"
 mkdir -p "$STOPPED"
-timeout 3 bash -c ". '$ROOT/tests/lib/isolated-city.sh'; isolated_city_hold_trial '$STOPPED'
-  trap \"isolated_city_remove '$STOPPED'\" EXIT; sleep 30" || true
+setsid bash -c ". '$ROOT/tests/lib/isolated-city.sh'; isolated_city_hold_trial '$STOPPED'
+  trap \"isolated_city_remove '$STOPPED'\" EXIT; : > '$TMP/armed'; sleep 30" </dev/null &
+group=$!
+PIDS+=("$group")
+for _ in $(seq 600); do [ -e "$TMP/armed" ] && break; sleep 0.1; done
+[ -e "$TMP/armed" ] || fail "the trial stopped by a deadline did not arm its cleanup within 60 s"
+[ "$group" -gt 1 ] && [ "$(ps -o pgid= -p "$group" | tr -d ' ')" = "$group" ] \
+  || fail "the trial stopped by a deadline does not lead a group of its own"
+kill -TERM -- "-$group"
+wait "$group" 2>/dev/null || true
 for _ in $(seq 50); do [ -e "$STOPPED.trial" ] || break; sleep 0.1; done
 [ ! -d "$STOPPED" ] || fail "the trial stopped by its deadline did not remove its directory"
 [ ! -e "$STOPPED.trial" ] || fail "a trial stopped with its group by a deadline left its lock file"
 echo "OK 3: a trial that removes its directory leaves no lock file"
+
+# --- 4. no test's fixed deadline falls before the trial arms its cleanup ------
+# `timeout <N> bash -c '...trap...'` asserts what the trap did, though on a
+# loaded host N seconds can end before the trap is set (af-tjnggf).
+deadline_before_trap() {
+  awk '/^[[:space:]]*#/ { next }
+       /timeout[[:space:]]+[0-9.]+[smh]?[[:space:]]+(bash|sh)[[:space:]]+-c/ { left = 4; at = FNR }
+       left > 0 { if ($0 ~ /(^|[^[:alnum:]_])trap[[:space:]]/) { print at; left = 0 } else left-- }' "$1"
+}
+for f in "$ROOT"/tests/*.sh; do
+  [ "$(basename -- "$f")" = "$SELF" ] && continue
+  at=$(deadline_before_trap "$f")
+  [ -z "$at" ] || fail "$(basename -- "$f"):$at stops a trial at a fixed deadline that can fall before its trap is set: let the trial say it is armed, then signal its group"
+done
+printf 'timeout 3 bash -c "hold\n  trap cleanup EXIT; sleep 30" || true\n' > "$TMP/deadline.sh"
+[ -n "$(deadline_before_trap "$TMP/deadline.sh")" ] || fail "the check accepts a fixed deadline that can fall before the trial's trap"
+echo "OK 4: no test stops a trial at a fixed deadline before it arms its cleanup"
