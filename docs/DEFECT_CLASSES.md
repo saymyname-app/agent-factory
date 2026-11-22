@@ -75,7 +75,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/factory-guard-time-budget-test.sh`,
   `bash tests/trial-lock-held-test.sh`,
   `bash tests/planning-artifacts-close-test.sh`,
-  `python3 tests/factory-observe-test.py LiveObservationTest.test_the_beads_sessions_and_pull_requests_are_read_together_beads_once`
+  `python3 tests/factory-observe-test.py LiveObservationTest.test_the_beads_sessions_and_pull_requests_are_read_together_beads_once`,
+  `bash tests/factory-watchdog-test.sh` (cas 1c)
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -143,7 +144,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   dans son budget, lui-même dans le délai de l'ordre, et l'ordre ne part
   plus à chaque fermeture de bead (af-c8m2gh). Le dernier tient la relève
   en direct de `factory-observe` : les beads non fermés lus une seule
-  fois, lus avec les sessions et les PR en même temps (af-ufug19).
+  fois, lus avec les sessions et les PR en même temps (af-ufug19). Le
+  cas 1c de `factory-watchdog-test.sh` tient ses sections 1 à 9 : les
+  lectures qui ne dépendent de rien d'autre dans la passe partent
+  ensemble (af-1oo6zy).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -203,7 +207,13 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `factory-watchdog`, lisait l'un après l'autre trois listes de beads,
   les sessions et les PR, chaque lecture à environ 4 s quel que soit
   son contenu : 73 s à une charge de 11 à 15, après 49 s de sections
-  1 à 9, budget de 150 s coupé sept fois de suite, af-ri69fn).
+  1 à 9, budget de 150 s coupé sept fois de suite, af-ri69fn) ;
+  af-1oo6zy (les sections 1 à 9 de `factory-watchdog` lisaient encore
+  l'une après l'autre portes, PR, workflows fermés, `gh auth`, rigs puis
+  quarantaines, sessions puis convois : 61 s d'une passe de 69 s à une
+  charge de 28, la relève en direct coupée trois passes de suite, cinq
+  échecs de l'ordre en trois heures le 22/11 ; lues ensemble, 31 s ->
+  13 s sur la ville).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

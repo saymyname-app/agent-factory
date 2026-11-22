@@ -198,8 +198,73 @@ gate_on_operator_list() {  # gate_on_operator_list <gate-id> -> 0 + holder id if
   [ -n "$holder" ] && printf '%s' "$holder"
 }
 
+# --- reads, all together ------------------------------------------------------
+# af-1oo6zy: each gc read costs 3 to 13 s under load whatever it returns, and
+# sections 1 to 9 made theirs one after the other -- 61 s of a 69 s pass at a
+# load of 28, before the live observation even started, so the pass was cut
+# whenever the load spiked. Every read that depends on nothing else this pass
+# starts here, together; each section waits for its own. What a section reads
+# after acting (a bead it just filed, a nudge stamp) is still read in place.
+QUARANTINE_BEAD_PREFIX="[watchdog] quarantine:"
+STALL_PREFIX="[watchdog] ticket sans suite :"
+PREFETCH_DIR=$(mktemp -d)
+trap 'wait; rm -rf "$PREFETCH_DIR"' EXIT  # a read no section took still ends with the pass
+declare -A PREFETCH_PID=()
+prefetch() {  # prefetch <name> <command...>: start that read in the background
+  local name=$1; shift
+  ( "$@" > "$PREFETCH_DIR/$name" 2>/dev/null; echo $? > "$PREFETCH_DIR/$name.rc" ) &
+  PREFETCH_PID[$name]=$!
+}
+# Called in this shell, never in $(...) or <(...): a subshell cannot wait for
+# a read this shell started, and would take it half written.
+fetch() {  # fetch <name> <var>: wait for that read, put it in <var>; returns the read's status
+  [ -n "${PREFETCH_PID[$1]:-}" ] && wait "${PREFETCH_PID[$1]}" 2>/dev/null
+  printf -v "$2" '%s' "$(cat "$PREFETCH_DIR/$1" 2>/dev/null)"
+  return "$(cat "$PREFETCH_DIR/$1.rc" 2>/dev/null || echo 1)"
+}
+read_prs() {
+  # A fine-grained token cannot read check runs; rebuild them from Actions runs.
+  gh pr list --repo "$REPO" --state open --limit 50 \
+    --json number,isDraft,mergeStateStatus,statusCheckRollup,createdAt 2>/dev/null \
+  || gh pr list --repo "$REPO" --state open --limit 50 \
+    --json number,isDraft,mergeStateStatus,headRefOid,createdAt 2>/dev/null \
+    | "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$REPO" 2>/dev/null \
+  || echo '[]'
+}
+read_gh_auth() { gh auth status 2>&1; }
+read_quarantine() {  # every rig's quarantined beads, together: prints <file>\t<rig> per rig
+  local rigs_json rig_name rig_path n=0
+  rigs_json=$(gc rig list --json 2>/dev/null || echo '{}')
+  while IFS=$'\t' read -r rig_name rig_path; do
+    [ -z "$rig_name" ] && continue
+    [ -d "$rig_path" ] || continue
+    n=$((n + 1))
+    (cd "$rig_path" && gc bd list --label gc:control-quarantined --all --limit 0 --json 2>/dev/null || echo '[]') \
+      > "$PREFETCH_DIR/quarantine.$n" &
+    printf '%s\t%s\n' "$PREFETCH_DIR/quarantine.$n" "$rig_name"
+  done < <(printf '%s' "$rigs_json" | jq -r '.rigs[]? | [.name, .path] | @tsv')
+  wait
+}
+prefetch gates gc bd gate list --json
+cutoff=$(date -u -d "-${WORKFLOW_LOOKBACK_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)
+prefetch workflows gc bd list --status closed --metadata-field gc.kind=workflow --updated-after "$cutoff" --json
+if command -v gh >/dev/null 2>&1; then
+  prefetch prs read_prs
+  prefetch gh_auth read_gh_auth
+fi
+prefetch quarantine read_quarantine
+if [ -x "$CONVOY_STATE" ]; then
+  prefetch sessions gc session list --json
+  prefetch convoys "$CONVOY_STATE" list
+fi
+if [ "$CHECK_ONLY" != "1" ]; then
+  # Open alerts to withdraw: one filed later this pass is active, so never withdrawn.
+  prefetch quarantine_alerts gc bd list --status open --title-contains "$QUARANTINE_BEAD_PREFIX" --json
+  prefetch stall_alerts gc bd list --status open --title-contains "$STALL_PREFIX" --json
+fi
+
 # --- 1. aged human gates ------------------------------------------------------
-gates_json=$(gc bd gate list --json 2>/dev/null || echo '[]')
+fetch gates gates_json || gates_json='[]'
 [ -n "$gates_json" ] || gates_json='[]'
 while IFS=$'\t' read -r gate_id code msg; do
   [ -z "$gate_id" ] && continue
@@ -219,13 +284,7 @@ done < <(printf '%s' "$gates_json" | FACTORY_WATCHDOG_GATE_MINUTES="$GATE_MINUTE
 
 # --- 2. stuck Factory-repo PRs (conflicting, or CI never ran) ----------------
 if command -v gh >/dev/null 2>&1; then
-  # A fine-grained token cannot read check runs; rebuild them from Actions runs.
-  prs_json=$(gh pr list --repo "$REPO" --state open --limit 50 \
-    --json number,isDraft,mergeStateStatus,statusCheckRollup,createdAt 2>/dev/null \
-    || gh pr list --repo "$REPO" --state open --limit 50 \
-      --json number,isDraft,mergeStateStatus,headRefOid,createdAt 2>/dev/null \
-      | "$(dirname "${BASH_SOURCE[0]}")/factory-gh-rollup" "$REPO" 2>/dev/null \
-    || echo '[]')
+  fetch prs prs_json
   [ -n "$prs_json" ] || prs_json='[]'
   while IFS=$'\t' read -r pr_num code msg; do
     [ -z "$pr_num" ] && continue
@@ -259,9 +318,7 @@ else
 fi
 
 # --- 3. false-success workflow closes -----------------------------------------
-cutoff=$(date -u -d "-${WORKFLOW_LOOKBACK_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)
-workflows_json=$(gc bd list --status closed --metadata-field gc.kind=workflow \
-  --updated-after "$cutoff" --json 2>/dev/null || echo '[]')
+fetch workflows workflows_json || workflows_json='[]'
 [ -n "$workflows_json" ] || workflows_json='[]'
 while IFS=$'\t' read -r bead_id code msg; do
   [ -z "$bead_id" ] && continue
@@ -323,7 +380,7 @@ done < <(printf '%s' "$workflows_json" | python3 "$LIB/factory_watchdog.py" work
 GH_AUTH_SCRIPTS="reversibility-check, factory-guard, pr-autopilot, factory-do-work-workspace, factory-gh-rollup, factory-delivery-guard, deliver-close, factory-watchdog, factory-main-gate"
 GH_AUTH_BEAD_TITLE="[watchdog] gh auth unreachable"
 if command -v gh >/dev/null 2>&1; then
-  gh_auth_out=$(gh auth status 2>&1); gh_auth_rc=$?
+  fetch gh_auth gh_auth_out; gh_auth_rc=$?
   gh_auth_verdict=$(printf '%s' "$gh_auth_out" | python3 "$LIB/factory_watchdog.py" gh-auth "$gh_auth_rc" 2>/dev/null)
   if [ -n "$gh_auth_verdict" ]; then
     gh_msg=${gh_auth_verdict#*$'\t'}
@@ -373,14 +430,12 @@ fi
 # days with the same failure_reason raised zero signal because nothing
 # aggregated them. One alert per (rig, failure_reason) group, never one per
 # bead; auto-resolves once no new quarantine lands in the rolling window.
-QUARANTINE_BEAD_PREFIX="[watchdog] quarantine:"
 if command -v gc >/dev/null 2>&1; then
-  rigs_json=$(gc rig list --json 2>/dev/null || echo '{}')
   quarantine_active_titles=$(mktemp)
-  while IFS=$'\t' read -r rig_name rig_path; do
+  fetch quarantine quarantine_rigs
+  while IFS=$'\t' read -r quarantine_file rig_name; do
     [ -z "$rig_name" ] && continue
-    [ -d "$rig_path" ] || continue
-    quarantine_json=$(cd "$rig_path" && gc bd list --label gc:control-quarantined --all --limit 0 --json 2>/dev/null || echo '[]')
+    quarantine_json=$(cat "$quarantine_file" 2>/dev/null)
     [ -n "$quarantine_json" ] || quarantine_json='[]'
     while IFS=$'\t' read -r reason code msg; do
       [ -z "$reason" ] && continue
@@ -413,18 +468,18 @@ Detected by factory-watchdog from $rig_name's gc:control-quarantined beads. Obse
       fi
     done < <(printf '%s' "$quarantine_json" | FACTORY_WATCHDOG_QUARANTINE_WINDOW_HOURS="$QUARANTINE_WINDOW_HOURS" \
       python3 "$LIB/factory_watchdog.py" quarantine "$rig_name" 2>/dev/null)
-  done < <(printf '%s' "$rigs_json" | jq -r '.rigs[]? | [.name, .path] | @tsv')
+  done <<<"$quarantine_rigs"
   if [ "$CHECK_ONLY" != "1" ]; then
-    while IFS= read -r existing_id; do
+    fetch quarantine_alerts quarantine_alerts_json
+    while IFS=$'\t' read -r existing_id existing_title; do
       [ -z "$existing_id" ] && continue
-      existing_title=$(gc bd show "$existing_id" --json 2>/dev/null | jq -r '(.[0].title // "")')
       if ! grep -Fxq "$existing_title" "$quarantine_active_titles" 2>/dev/null; then
         gc bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
           --append-notes "no new control-step quarantine in this group for ${QUARANTINE_WINDOW_HOURS}h; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
           && did "auto-resolved recovered control-quarantine bead $existing_id"
       fi
     # open only: an alert already taken for repair is closed by its repair, not by this sweep.
-    done < <(gc bd list --status open --title-contains "$QUARANTINE_BEAD_PREFIX" --json 2>/dev/null | jq -r '.[].id')
+    done < <(jq -r '.[] | [.id, .title] | @tsv' <<<"$quarantine_alerts_json" 2>/dev/null)
   fi
   rm -f "$quarantine_active_titles"
 else
@@ -436,7 +491,6 @@ fi
 # without a next step, withdrawn once it moves again. A defect of the
 # Factory's code carries no motif of ADR-0036's closed list: since J3 the
 # door hands the request to the Mayor (maintenance), not to Benjamin.
-STALL_PREFIX="[watchdog] ticket sans suite :"
 stall_request() {  # stall_request <ticket> <message> -> the escalation-door benjamin JSON
   local since=${2#*sans suite depuis } language
   since=${since%% (*}
@@ -454,10 +508,12 @@ stall_request() {  # stall_request <ticket> <message> -> the escalation-door ben
 if [ -x "$CONVOY_STATE" ]; then
   # A convoy-state show runs to megabytes: kept in files, never in an argument.
   stall_active=$(mktemp); stall_show=$(mktemp); stall_payload=$(mktemp)
-  alive_json=$(gc session list --json 2>/dev/null | jq -c '[.sessions[]? | select((.closed | not) and .state != "closed") | (.id, .name, .session_name, .alias) | select(. != null) | tostring]' 2>/dev/null)
+  fetch sessions sessions_json
+  alive_json=$(printf '%s' "$sessions_json" | jq -c '[.sessions[]? | select((.closed | not) and .state != "closed") | (.id, .name, .session_name, .alias) | select(. != null) | tostring]' 2>/dev/null)
   [ -n "$alive_json" ] || alive_json='[]'
   stall_ok=1
-  for convoy_id in $("$CONVOY_STATE" list 2>/dev/null | jq -r '.convoys[]?' 2>/dev/null); do
+  fetch convoys convoys_json
+  for convoy_id in $(printf '%s' "$convoys_json" | jq -r '.convoys[]?' 2>/dev/null); do
     "$CONVOY_STATE" show "$convoy_id" > "$stall_show" 2>/dev/null || { stall_ok=0; continue; }
     open_ids=(); listed_ids=(); blocked_ids=()
     mapfile -t lookup_ids < <(python3 "$LIB/factory_watchdog.py" ticket-lookups < "$stall_show" 2>/dev/null)
@@ -498,6 +554,7 @@ Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is st
   done
   # Withdrawn only on a complete reading: an unreadable convoy or bead keeps the request.
   if [ "$CHECK_ONLY" != "1" ] && [ "$stall_ok" = "1" ]; then
+    fetch stall_alerts stall_alerts_json
     while IFS=$'\t' read -r existing_id existing_title; do
       [ -z "$existing_id" ] && continue
       grep -Fxq "$existing_title" "$stall_active" 2>/dev/null && continue
@@ -506,7 +563,7 @@ Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is st
           --append-notes "the ticket moves again; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
         && did "auto-resolved ticket without a next step $existing_id"
     # open only: an alert already taken for repair is closed by its repair, not by this sweep.
-    done < <(gc bd list --status open --title-contains "$STALL_PREFIX" --json 2>/dev/null | jq -r '.[] | [.id, .title] | @tsv')
+    done < <(jq -r '.[] | [.id, .title] | @tsv' <<<"$stall_alerts_json" 2>/dev/null)
   fi
   rm -f "$stall_active" "$stall_show" "$stall_payload"
 else
