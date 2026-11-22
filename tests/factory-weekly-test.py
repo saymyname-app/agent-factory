@@ -5,6 +5,7 @@ records, deduplicated and attributed, and says what it cannot measure
 import gzip
 import json
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -147,6 +148,21 @@ class FactoryWeeklyTest(unittest.TestCase):
         folder = os.path.join(self.root, "var/weekly")
         self.assertEqual(table, Path(folder, "2026-W46.md").read_text(encoding="utf-8"))
         self.assertEqual("2026-W46", json.loads(Path(folder, "2026-W46.json").read_text(encoding="utf-8"))["week"])
+
+    def test_the_mayor_cost_is_observed_per_day(self):
+        # af-yzo8fo: the Mayor's weighted cost, read for the Sonnet trial against the Opus weeks.
+        # The Mayor is the live-root session whose transcript opens on « # Mayor »; its
+        # subagents count with it; another live-root session does not.
+        folder = os.path.join(self.claude, re.sub(r"[^A-Za-z0-9]", "-", self.root))
+        head = json.dumps({"type": "user", "message": {"content": "# Mayor\n"}})
+        write(os.path.join(folder, "s1.jsonl"), head + "\n" + assistant("m10", "2026-11-11T10:00:00Z", 100, "/h") + "\n")
+        write(os.path.join(folder, "s1/subagents/a.jsonl"), assistant("m11", "2026-11-12T10:00:00Z", 100, "/h") + "\n")
+        write(os.path.join(folder, "s2.jsonl"), assistant("m12", "2026-11-12T10:00:00Z", 100, "/h") + "\n")
+        out = json.loads(self.weekly("--week", "2026-W46", "--json"))
+        mayor = out["observed"]["mayor_cost"]
+        self.assertEqual(1040, mayor["total"])
+        self.assertEqual({"2026-11-11": 520, "2026-11-12": 520}, mayor["per_day"])
+        self.assertIn("Coût du Mayor", self.weekly("--week", "2026-W46"))
 
     def test_a_malformed_week_is_refused_before_anything_is_read(self):
         run = subprocess.run([TOOL, "--week", "46"], env=self.env, capture_output=True, text=True)

@@ -203,7 +203,8 @@ class Resolution(unittest.TestCase):
         an isolated Codex outage now visibly moves every target to Claude."""
         self.exhaust("openai")
         self.assertEqual(("claude-standard", "fallback"), (self.pick()["provider"], self.pick()["reason"]))
-        self.assertEqual("claude-standard", self.pick("mayor")["provider"])
+        # The Mayor's Claude fallback is Sonnet during its trial (af-yzo8fo, 21/11/2026).
+        self.assertEqual("claude-sonnet", self.pick("mayor")["provider"])
         self.assertEqual("claude", self.pick("ux-reviewer")["provider"])
 
     def test_a_provider_error_fails_over_like_exhaustion(self):
@@ -421,7 +422,7 @@ class Resolution(unittest.TestCase):
         self.exhaust("openai")
         text, effective = pf.render_overlay(self.policy, pf.resolve(self.policy, self.state, NOW), {})
         self.assertIn('[workspace]\nprovider = "claude-standard"', text)
-        self.assertIn('[[patches.agent]]\nname = "mayor"\nprovider = "claude-standard"', text)
+        self.assertIn('[[patches.agent]]\nname = "mayor"\nprovider = "claude-sonnet"', text)
         self.assertEqual("claude", effective["ux-reviewer"])
         # Nothing available: keep what was running rather than silently falling
         # back to whatever city.toml happens to say.

@@ -168,12 +168,27 @@ def attribute(raw, sides):
     return "product" if product > factory else "factory" if factory else "unattributed"
 
 
-def token_costs(start, end, sides, weights):
+def is_mayor(path):
+    """A live-root session whose transcript opens on « # Mayor » (its own
+    file, or its parent's for a subagent): the Mayor (af-yzo8fo)."""
+    folder = os.path.join(CLAUDE, re.sub(r"[^A-Za-z0-9]", "-", ROOT))
+    parts = os.path.relpath(path, folder).split(os.sep)
+    if parts[0] == os.pardir:
+        return False
+    main = os.path.join(folder, parts[0] + ".jsonl") if len(parts) > 1 else path
+    try:
+        with open(main, "rb") as fh:
+            return b"# Mayor" in fh.read(20000)
+    except OSError:
+        return False
+
+
+def token_costs(start, end, sides, weights, mayor=None):
     cost = Counter()
     for path in glob.glob(os.path.join(CLAUDE, "**", "*.jsonl"), recursive=True):
         if os.path.getmtime(path) < start:
             continue
-        raw, seen = Path(path).read_bytes(), {}
+        raw, seen, days = Path(path).read_bytes(), {}, {}
         for line in raw.splitlines():
             if b'"usage"' not in line:
                 continue
@@ -188,7 +203,11 @@ def token_costs(start, end, sides, weights):
                     weights["input"] * (u.get("input_tokens") or 0) + weights["output"] * (u.get("output_tokens") or 0)
                     + weights["cache_read"] * (u.get("cache_read_input_tokens") or 0)
                     + weights["cache_write"] * (u.get("cache_creation_input_tokens") or 0))
+                days[msg.get("id") or len(days)] = datetime.fromtimestamp(at, PARIS).date().isoformat()
         cost[attribute(raw, sides)] += sum(seen.values())
+        if mayor is not None and seen and is_mayor(path):
+            for key, value in seen.items():
+                mayor[days[key]] += value
     for path in glob.glob(os.path.join(CODEX, "**", "*.jsonl"), recursive=True):
         if os.path.getmtime(path) < start:
             continue
@@ -251,10 +270,16 @@ def measure(week):
     days = human_requests(start, end)
     put("human_requests_max_per_day", max(days.values(), default=0), 1, "<=", requests=sum(days.values()), per_day=dict(sorted(days.items())))
     weights = json.loads(Path(ROOT, "config/token-cost-weights.json").read_text(encoding="utf-8"))["weights"]
-    cost = token_costs(start, end, sides, weights)
+    mayor = Counter()
+    cost = token_costs(start, end, sides, weights, mayor)
     spent = sum(cost.values())
     put("product_cost_share", cost["product"] / spent if spent else None, 0.50, ">=", "no transcript usage this week",
         **{k: round(cost[k]) for k in ("product", "factory", "unattributed")})
+    # Observed, no threshold: the Mayor's model trial (af-yzo8fo, Sonnet from
+    # 21/11/2026) is compared per day with the Opus weeks.
+    out["observed"] = {"mayor_cost": {"total": round(sum(mayor.values())),
+                                      "share": round(sum(mayor.values()) / spent, 3) if spent else None,
+                                      "per_day": {d: round(v) for d, v in sorted(mayor.items())}}}
     out["not_measured"] = {
         "integration_branch_age": "not computed here (FACTORY_OBJECTIVE.md principle 2)",
         "requests_in_closed_list": "escalations carry no ADR-0016 effect field yet (J3)",
@@ -281,6 +306,10 @@ def markdown(out):
         target = f"{m['comparison']} {fmt.format(m['target'])}"
         state = {"ok": "OK", "ko": "KO", "unmeasured": f"non mesuré : {m.get('reason')}"}[m["status"]]
         lines.append(f"| {label} | {target} | {value} | {state} |")
+    mc = out["observed"]["mayor_cost"]
+    share = "—" if mc["share"] is None else f"{mc['share']:.0%}"
+    lines += ["", f"Coût du Mayor (observé, sans seuil, af-yzo8fo) : {mc['total'] / 1e6:.1f} M pondérés, {share} du total ; par jour : "
+              + (", ".join(f"{d[8:10]}/{d[5:7]} {v / 1e6:.1f} M" for d, v in mc["per_day"].items()) or "aucun")]
     lines += ["", "Non mesuré : " + " ; ".join(f"{k} ({v})" for k, v in out["not_measured"].items())]
     return "\n".join(lines) + "\n"
 

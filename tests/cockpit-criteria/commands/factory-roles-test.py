@@ -212,7 +212,9 @@ class FactoryRoles(unittest.TestCase):
         commit = reconfigure(self.tree, {
             "config/delivery-flow.json": json_edit(flow),
             "config/provider-policy.json": json_edit(policy),
-            "city.toml": replaced('effort = "medium"', 'effort = "low"'),
+            # The author's profile, by its section: other profiles say the same effort.
+            "city.toml": replaced('[providers.claude-standard.option_defaults]\npermission_mode = "unrestricted"\neffort = "medium"',
+                                  '[providers.claude-standard.option_defaults]\npermission_mode = "unrestricted"\neffort = "low"'),
         })
         address = self.tree.launch("health-content", commit)
         author = self.select(address, "Auteur")

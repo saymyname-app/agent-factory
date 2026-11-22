@@ -93,6 +93,29 @@ DISABLE_AUTOUPDATER = "1"
 permission_mode = "unrestricted"
 effort = "medium"
 
+# Sonnet profile for the Mayor's one-week trial (af-yzo8fo). Same account,
+# command, tools and effort as [providers.claude-standard]; only the model
+# differs. Benjamin, his words, 2026-11-21 19:08 Paris: « b) Essai Sonnet »
+# (option b: Sonnet 5.5 for the Mayor for one measured week, back to Opus at
+# the first incident). Rollback, one command, host-local and immediate:
+#   bin/provider-failover set --action force --args '{"target":"mayor","provider":"claude-standard"}' --by <who>
+# then revert this PR. Review on af-yzo8fo on 2026-11-28.
+[providers.claude-sonnet]
+base = "builtin:claude"
+command = "/home/benja/.local/bin/claude"
+accept_startup_dialogs = true
+args_append = ["--disallowedTools", "AskUserQuestion,EnterPlanMode,ExitPlanMode,CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,SendMessage,Workflow",
+               "--strict-mcp-config",
+               "--model", "claude-sonnet-5-5"]
+
+[providers.claude-sonnet.env]
+CLAUDE_CONFIG_DIR = "/home/benja/.claude"
+DISABLE_AUTOUPDATER = "1"
+
+[providers.claude-sonnet.option_defaults]
+permission_mode = "unrestricted"
+effort = "medium"
+
 # Read-only profile for the delivery roles that must not write: the reviewer
 # and the Evaluator (T03, af-pbxbgj, Spec af-wf4w5r §1). Same account, model
 # and effort as [providers.claude]; the only difference is `command`: gc 1.4.1
