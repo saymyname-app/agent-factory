@@ -6,7 +6,8 @@ fake-bd` does, from the JSON list of beads in $FAKE_BD_STATE_FILE -- plain
 `list` hides closed beads, `list --all` does not, and the beads kept apart
 (`ephemeral`) are listed only with `--include-ephemeral` -- and it writes as the real
 `bd` does what the doors of the Factory and the cockpit's own gestures write
-there: `update` (metadata, notes, status), `create`, `show`. So a gesture
+there: `update` (metadata, notes, status), `create`, `show`, and the one
+`sql` read of bin/order-pause. So a gesture
 done on an isolated cockpit goes through the doors it goes through in
 service, and is read back from this tracker, which lives in the home of the
 launch and nowhere else.
@@ -18,6 +19,7 @@ is refused, loudly.
 import fcntl
 import json
 import os
+import re
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -198,7 +200,24 @@ def cmd_create(args):
         sys.stdout.write("Created issue: %s\n" % bead["id"])
 
 
-COMMANDS = {"list": cmd_list, "show": cmd_show, "update": cmd_update, "create": cmd_create}
+def cmd_sql(args):
+    """The one raw read the Factory makes: the open beads that carry a
+    metadata key (bin/order-pause, PAUSES_SQL). Rows as the real `bd sql
+    --json` writes them: id, status, and metadata as JSON text."""
+    positionals, found = options(args, ())
+    query = " ".join(positionals)
+    match = re.fullmatch(r"SELECT id, status, metadata FROM issues WHERE status = 'open' "
+                         r"AND JSON_EXTRACT\(metadata, '\$\.\"([^\"]+)\"'\) IS NOT NULL", query)
+    if "--json" not in found or not match:
+        fail("no answer for: bd sql %s" % " ".join(args))
+    with tracker() as beads:
+        rows = [{"id": b["id"], "status": b["status"], "metadata": json.dumps(b.get("metadata") or {})}
+                for b in beads if not b.get("ephemeral") and b.get("status") == "open"
+                and match.group(1) in (b.get("metadata") or {})]
+    sys.stdout.write(json.dumps(rows, ensure_ascii=False))
+
+
+COMMANDS = {"list": cmd_list, "show": cmd_show, "update": cmd_update, "create": cmd_create, "sql": cmd_sql}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:

@@ -49,6 +49,13 @@ ROOT = Path(os.environ.get("ORDER_PAUSE_ROOT") or Path(__file__).resolve().paren
 GC = os.environ.get("GC_BIN", "gc")
 LABEL = "order-pause"
 KEY = "gc.order_pause"
+# The gate reads the open pauses on every run of every gated order (~9 runs a
+# minute). `bd list --has-metadata-key` aggregates whole side tables before it
+# filters (UPSTREAM gastownhall/beads#7635): 6-9 s under load on 23/11/2026,
+# against 2.3-3.5 s for this read of the issues table alone (af-q55qqx.10).
+# Workaround: back to `bd list` once #7635 ships in our bd.
+PAUSES_SQL = ("SELECT id, status, metadata FROM issues WHERE status = 'open' "
+              f"AND JSON_EXTRACT(metadata, '$.\"{KEY}\"') IS NOT NULL")
 PARIS = ZoneInfo("Europe/Paris")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # A tracker read that hangs must not hold an order forever: past this, the
@@ -142,12 +149,14 @@ def gc_bd(*args: str, timeout: float | None = None, cwd: Path | None = ROOT) -> 
 
 def open_pauses(timeout: float | None = None, cwd: Path | None = ROOT) -> dict[str, list[dict]]:
     """{order: [open pause records, oldest first]}."""
-    out = gc_bd("list", "--has-metadata-key", KEY, "--status", "open", "--limit", "0", "--json", timeout=timeout,
-                cwd=cwd)
+    out = gc_bd("sql", "--json", PAUSES_SQL, timeout=timeout, cwd=cwd)
     try:
         beads = json.loads(out or "[]")
+        for bead in beads if isinstance(beads, list) else []:
+            if isinstance(bead.get("metadata"), str):  # a JSON column comes back as text
+                bead["metadata"] = json.loads(bead["metadata"])
     except json.JSONDecodeError as exc:
-        raise TrackerError(f"gc bd list : réponse illisible ({exc})") from exc
+        raise TrackerError(f"gc bd sql : réponse illisible ({exc})") from exc
     pauses: dict[str, list[dict]] = {}
     for bead in beads if isinstance(beads, list) else []:
         metadata = bead.get("metadata") or {}
