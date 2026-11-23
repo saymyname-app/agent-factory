@@ -313,10 +313,13 @@ class ByRuleTest(unittest.TestCase):
         self.assertLessEqual(set(range(717, 930)) - {714, 715, 716}, set(baseline))
         self.assertEqual("aucune", baseline[737]["rule"])
         self.assertEqual(("I.repair-resume", "premiere"), (baseline[783]["rule"], baseline[783]["nature"]))
-        decision = defect_classes.d1(baseline)
+        self.assertEqual("prevue", baseline[738]["nature"])
+        decision = defect_classes.d1(defect_classes.by_rule([], baseline, known)["fixes"], known)
         self.assertEqual("2026-12-21", decision["review"])
-        self.assertIn("I.repair-resume", decision["watched"])
-        self.assertEqual(decision["reference_slips"] // 2, decision["monthly_max"])
+        # The reference D1 was frozen on (comment of 23/11/2026 19:50 on af-56yoam).
+        self.assertEqual((86, 140), (decision["reference_share"]["slips"], decision["reference_share"]["fixes"]))
+        # No rule carries proof in the register that its passage point was delivered.
+        self.assertEqual(({}, []), (decision["closed_rules"], decision["closed_slips"]))
 
     def test_a_baseline_row_with_an_unknown_rule_or_nature_is_refused(self):
         for line, refusal in [("1\t2026-11-01\tP.nope\tpremiere\tx\n", "P.nope"),
@@ -382,8 +385,76 @@ class ByRuleTest(unittest.TestCase):
             self.assertEqual(0, proc.returncode, proc.stderr)
             out = json.loads(proc.stdout)
             self.assertEqual(1, out["rules"]["P.own"]["2026-12"]["glissement"])
-            self.assertIn("P.own", out["d1"]["watched"])
+            self.assertEqual({"start": "2026-12-01", "end": "2026-12-20", "slips": 1, "fixes": 1, "share": 1.0},
+                             out["d1"]["period_share"])
             self.assertEqual([], out["unclassified"])
+
+
+class D1Test(unittest.TestCase):
+    """af-56yoam.5: D1 as frozen on 23/11/2026, the share of slips among the
+    fix pull requests of a period, and zero slip on a closed rule."""
+
+    def test_the_share_of_slips_among_the_fixes_of_a_period(self):
+        fixes = [{"pr": 1, "date": "2026-11-30", "rule": "P.own", "nature": "glissement"},
+                 {"pr": 2, "date": "2026-12-01", "rule": "P.own", "nature": "glissement"},
+                 {"pr": 3, "date": "2026-12-10", "rule": "P.load", "nature": "premiere"},
+                 {"pr": 4, "date": "2026-12-20", "rule": "P.load", "nature": "prevue"},
+                 {"pr": 5, "date": "2026-12-21", "rule": "P.own", "nature": "glissement"}]
+        cases = [
+            # (start, end, slips, fixes, share): both days included; no fix, no share.
+            ("2026-12-01", "2026-12-20", 1, 3, 0.333),
+            ("2026-11-30", "2026-12-01", 2, 2, 1.0),
+            ("2026-12-02", "2026-12-09", 0, 0, None),
+            ("2026-12-01", "2026-11-24", 0, 0, None),
+        ]
+        for start, end, slips, count, share in cases:
+            with self.subTest(start=start, end=end):
+                self.assertEqual({"start": start, "end": end, "slips": slips, "fixes": count, "share": share},
+                                 defect_classes.slip_share(fixes, start, end))
+
+    def test_a_slip_on_a_closed_rule_counts_only_after_the_day_it_was_closed(self):
+        known = {"P.own": {"closed": {"date": "2026-12-05", "pr": 950}}, "P.load": {}}
+        cases = [
+            # (fix, counted as a slip on a closed rule)
+            ({"pr": 960, "date": "2026-12-06", "rule": "P.own", "nature": "glissement"}, True),
+            ({"pr": 950, "date": "2026-12-05", "rule": "P.own", "nature": "glissement"}, False),
+            ({"pr": 940, "date": "2026-12-01", "rule": "P.own", "nature": "glissement"}, False),
+            ({"pr": 961, "date": "2026-12-07", "rule": "P.own", "nature": "prevue"}, False),
+            ({"pr": 962, "date": "2026-12-07", "rule": "P.load", "nature": "glissement"}, False),
+        ]
+        for fix, counted in cases:
+            with self.subTest(fix=fix):
+                expected = [{"rule": "P.own", "pr": fix["pr"], "date": fix["date"],
+                             "closed": {"date": "2026-12-05", "pr": 950}}] if counted else []
+                self.assertEqual(expected, defect_classes.closed_slips([fix], known))
+        decision = defect_classes.d1([], known, until="2026-11-24")
+        self.assertEqual({"P.own": {"date": "2026-12-05", "pr": 950}}, decision["closed_rules"])
+        self.assertEqual(("2026-12-01", "2026-11-24", None), (decision["period_share"]["start"],
+                         decision["period_share"]["end"], decision["period_share"]["share"]))
+
+    def test_the_closed_mark_of_a_rule_is_read_from_the_register(self):
+        head = "## P — x\n\n- Invariant : y\n- Règles :\n"
+        tail = "- Contrôle : aucun — z\n- Occurrences : #1\n- Ouvertes : aucune connue.\n"
+        cases = [
+            # (rule line, (passage, closed) or the refusal)
+            ("  - `P.own` : A. Passage : `lib/b.py`. Fermée le 05/12/2026 par #950.\n",
+             ("`lib/b.py`", {"date": "2026-12-05", "pr": 950})),
+            ("  - `P.own` : A. Passage : `lib/b.py`.\n    Fermée le 05/12/2026 par #950.\n",
+             ("`lib/b.py`", {"date": "2026-12-05", "pr": 950})),
+            ("  - `P.own` : A. Passage : `lib/b.py`.\n", ("`lib/b.py`", None)),
+            ("  - `P.own` : A. Passage : `lib/b.py`. Fermée le 5 décembre.\n", "JJ/MM/AAAA"),
+            ("  - `P.own` : A. Passage : aucun. Fermée le 05/12/2026 par #950.\n", "sans point de passage"),
+        ]
+        for line, expected in cases:
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as tmp:
+                registry = Path(tmp) / "r.md"
+                registry.write_text(head + line + tail, encoding="utf-8")
+                if isinstance(expected, str):
+                    with self.assertRaisesRegex(defect_classes.RegistryError, expected):
+                        defect_classes.load(registry)
+                    continue
+                rule = defect_classes.load(registry)["P"]["rules"]["P.own"]
+                self.assertEqual(expected, (rule["passage"], rule.get("closed")))
 
 
 if __name__ == "__main__":

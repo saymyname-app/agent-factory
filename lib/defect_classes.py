@@ -35,6 +35,10 @@ on the whole class.
   (docs/defect-rules-baseline.tsv) are read from it; a later one from its
   `Règle :` line: « prévue » on that line marks a planned repeat, a rule
   already fixed by an earlier merged PR is a slip, otherwise a first fix.
+- `d1` gives decision D1 (af-56yoam.5): the share of slips among the fix
+  pull requests of a period, and the slips on a closed rule (« Fermée le
+  JJ/MM/AAAA par #N. » after its passage in the register) merged after the
+  day it was closed.
 """
 from __future__ import annotations
 
@@ -85,11 +89,21 @@ NATURES = ("premiere", "prevue", "glissement")
 # A rule `<CODE>.autre` holds the isolated defects of a family: never a slip.
 ISOLATED = ".autre"
 PARIS = ZoneInfo("Europe/Paris")
-# Decision D1 (Benjamin, 23/11/2026 17:19 Paris, « Oui, les trois »): zero slip
-# on the rules that come back, monthly slips halved; review on 21/12/2026
-# (af-56yoam.4). Mechanism (agent interpretation): the rules that slipped at
-# least twice in the baseline; the reference is November 2026 in the baseline.
-D1 = {"review": "2026-12-21", "reference_month": "2026-11", "bead": "af-56yoam.4"}
+# Decision D1, frozen on 23/11/2026 (Benjamin, 19:41 Paris, « Fait », to the
+# proposal to apply its new form if the blind judge agreed at 70 % or more;
+# comment of 19:50 on af-56yoam): the share of slips among the fix pull
+# requests (baseline rows other than `aucune`, then the `Règle :` lines) is at
+# most 30 % from 01/12 to 20/12/2026, against 86/140 = 61 % from 01/11 to
+# 23/11; and zero slip on a closed rule. Review on 21/12/2026 (af-56yoam.4).
+# Stop criterion (Benjamin, 24/11/2026 00:06 Paris, « Oui, ajoute-le »): at the
+# review, a share still above 45 %, or more than one refusal of the gate in
+# three judged unjustified, withdraws the required check « Maintenance form ».
+D1 = {"review": "2026-12-21", "bead": "af-56yoam.4", "period": ["2026-12-01", "2026-12-20"],
+      "target_share": 0.30, "reference": ["2026-11-01", "2026-11-23"],
+      "stop": {"share_above": 0.45, "unjustified_refusals_above": "1/3"}}
+# « Fermée le JJ/MM/AAAA par #N. » after a rule's passage: its single passage
+# point was delivered by that pull request. Any later slip on it reopens it.
+CLOSED = re.compile(r"\s*Fermée le (\d{2})/(\d{2})/(\d{4}) par #(\d+)\.?\s*$", re.I)
 
 
 class RegistryError(Exception):
@@ -156,7 +170,17 @@ def load(path: Path = REGISTRY) -> dict[str, dict]:
             sentence, *passage = PASSAGE.split(item.pop("text"), maxsplit=1)
             if not passage or not sentence.strip() or not passage[0].strip():
                 raise RegistryError(f"règle {rule_id} sans sa phrase ou son « Passage : » dans {path}")
-            item.update(family=code, rule=sentence.strip(), passage=passage[0].strip().rstrip("."))
+            passage, closed = passage[0], CLOSED.search(passage[0])
+            if closed:
+                passage = passage[:closed.start()]
+                day, month, year, pr = closed.groups()
+                item["closed"] = {"date": f"{year}-{month}-{day}", "pr": int(pr)}
+            elif re.search(r"fermée le", passage, re.I):
+                raise RegistryError(f"règle {rule_id} : « Fermée le JJ/MM/AAAA par #N. » attendu dans {path}")
+            passage = passage.strip().rstrip(".")
+            if closed and passage.lower().startswith("aucun"):
+                raise RegistryError(f"règle {rule_id} fermée sans point de passage dans {path}")
+            item.update(family=code, rule=sentence.strip(), passage=passage)
     return classes
 
 
@@ -322,8 +346,8 @@ def load_baseline(path: Path = BASELINE, known: dict | None = None) -> dict[int,
     return baseline
 
 
-def paris_month(merged_at: str) -> str:
-    return datetime.fromisoformat(merged_at.replace("Z", "+00:00")).astimezone(PARIS).strftime("%Y-%m")
+def paris_date(merged_at: str) -> str:
+    return datetime.fromisoformat(merged_at.replace("Z", "+00:00")).astimezone(PARIS).strftime("%Y-%m-%d")
 
 
 def by_rule(prs: list[dict], baseline: dict[int, dict], known: dict, since: str = "") -> dict:
@@ -340,13 +364,13 @@ def by_rule(prs: list[dict], baseline: dict[int, dict], known: dict, since: str 
             unclassified.append(pr["number"])
             continue
         rule, rest = found
-        month = paris_month(pr["mergedAt"])
+        day = paris_date(pr["mergedAt"])
         if rule == NO_CLASS:
-            rows[pr["number"]] = {"pr": pr["number"], "rule": rule, "nature": "-", "month": month}
+            rows[pr["number"]] = {"pr": pr["number"], "rule": rule, "nature": "-", "date": day, "month": day[:7]}
             continue
         nature = ("prevue" if re.search(r"pr[ée]vue", rest, re.I) else
                   "glissement" if rule in seen and not rule.endswith(ISOLATED) else "premiere")
-        rows[pr["number"]] = {"pr": pr["number"], "rule": rule, "nature": nature, "month": month}
+        rows[pr["number"]] = {"pr": pr["number"], "rule": rule, "nature": nature, "date": day, "month": day[:7]}
         seen.add(rule)
     table: dict[str, dict[str, dict[str, int]]] = {}
     months: dict[str, dict[str, int]] = {}
@@ -361,26 +385,36 @@ def by_rule(prs: list[dict], baseline: dict[int, dict], known: dict, since: str 
             slips.setdefault(row["rule"], []).append(row["pr"])
     return {"rules": dict(sorted(table.items())), "months": dict(sorted(months.items())),
             "slips": dict(sorted(slips.items(), key=lambda kv: (-len(kv[1]), kv[0]))),
+            "fixes": [{k: row[k] for k in ("pr", "date", "rule", "nature")}
+                      for row in sorted(rows.values(), key=lambda r: r["pr"]) if row["nature"] in NATURES],
             "no_defect": sorted(n for n, r in rows.items() if r["rule"] == NO_CLASS),
             "unclassified": sorted(unclassified)}
 
 
-def watched(baseline: dict[int, dict], minimum: int = 2) -> list[str]:
-    """The rules D1 holds at zero slip: those that slipped at least twice in
-    the baseline, the rules that really come back."""
-    slips: dict[str, int] = {}
-    for row in baseline.values():
-        if row["nature"] == "glissement":
-            slips[row["rule"]] = slips.get(row["rule"], 0) + 1
-    return sorted(rule for rule, n in slips.items() if n >= minimum)
+def slip_share(fixes: list[dict], start: str, end: str) -> dict:
+    """The slips among the fix pull requests merged from `start` to `end`
+    (Paris dates, both included); `share` is None without a fix."""
+    window = [f for f in fixes if start <= f["date"] <= end]
+    slips = sum(f["nature"] == "glissement" for f in window)
+    return {"start": start, "end": end, "slips": slips, "fixes": len(window),
+            "share": round(slips / len(window), 3) if window else None}
 
 
-def d1(baseline: dict[int, dict]) -> dict:
-    """Decision D1 with its figures from the baseline: the watched rules, the
-    slips of the reference month and the monthly ceiling, half of them."""
-    reference = sum(1 for row in baseline.values()
-                    if row["nature"] == "glissement" and row["date"][:7] == D1["reference_month"])
-    return dict(D1, watched=watched(baseline), reference_slips=reference, monthly_max=reference // 2)
+def closed_slips(fixes: list[dict], known: dict) -> list[dict]:
+    """Every slip on a closed rule merged after the day it was closed."""
+    return [{"rule": f["rule"], "pr": f["pr"], "date": f["date"], "closed": known[f["rule"]]["closed"]}
+            for f in fixes if f["nature"] == "glissement" and known.get(f["rule"], {}).get("closed")
+            and f["date"] > known[f["rule"]]["closed"]["date"]]
+
+
+def d1(fixes: list[dict], known: dict, until: str = "9999-12-31") -> dict:
+    """Decision D1 with its figures: the share of slips of the reference and
+    of the period (cut at `until`), the closed rules and the slips on them."""
+    start, end = D1["period"]
+    return dict(D1, reference_share=slip_share(fixes, *D1["reference"]),
+                period_share=slip_share(fixes, start, min(end, until)),
+                closed_rules={rule_id: rule["closed"] for rule_id, rule in sorted(known.items()) if rule.get("closed")},
+                closed_slips=closed_slips(fixes, known))
 
 
 def main(argv: list[str]) -> int:
@@ -424,7 +458,9 @@ def main(argv: list[str]) -> int:
             known = rules(classes)
             baseline = load_baseline(args.baseline, known)
             counted = by_rule(prs, baseline, known, args.since)
-            print(json.dumps({"since": args.since, "d1": d1(baseline), **counted},
+            # D1 reads the whole baseline, whatever --since cuts from the table.
+            decision = d1(by_rule(prs, baseline, known)["fixes"], known)
+            print(json.dumps({"since": args.since, "d1": decision, **counted},
                              indent=2, ensure_ascii=False))
             return 0
         print(json.dumps({"since": args.since, **count(prs, classes)}, indent=2, ensure_ascii=False))

@@ -675,8 +675,12 @@ fix repaired the place it was seen and wrote the rest « hors périmètre ».
   rule and per month the first fixes, the planned repeats and the slips (a
   rule already fixed that comes back), from `docs/defect-rules-baseline.tsv`
   for the pull requests merged from 22/10 to 23/11/2026 and from the
-  `Règle :` line after. `bin/factory-weekly` shows the month's slips against
-  decision D1.
+  `Règle :` line after. `bin/factory-weekly` shows the month's slips and
+  decision D1 as frozen on 23/11/2026 (af-56yoam.5): the share of slips
+  among the fix pull requests from 01/12 to 20/12/2026 (at most 30 %), the
+  slips on a rule the register marks « Fermée le JJ/MM/AAAA par #N. » (zero),
+  the pull requests the « Maintenance form » check refused, the review on
+  21/12 and its stop criterion (`docs/DEFECT_CLASSES.md`).
 
 | Kind of change | Where CI runs | Before the pull request | Why |
 |---|---|---|---|

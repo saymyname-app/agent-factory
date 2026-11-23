@@ -2355,9 +2355,24 @@ la semaine (Paris), `observed.rule_recurrence` donne les glissements, les
 répétitions prévues et les premières corrections par règle concrète de
 `docs/DEFECT_CLASSES.md`, lues par `lib/defect_classes.py` dans
 `docs/defect-rules-baseline.tsv` puis sur la ligne `Règle :` des PR plus
-récentes, et les juge contre l'objectif D1 : zéro glissement sur les règles
-qui ont glissé au moins deux fois dans la base, au plus la moitié des
-glissements de novembre 2026 par mois, revue le 21/12/2026 (af-56yoam.4).
+récentes. Il les juge contre l'objectif D1 tel que figé le 23/11/2026
+(af-56yoam.5), sous `observed.rule_recurrence.d1` :
+
+- `period_share` : la part des glissements parmi les PR de correction (les
+  lignes de la base hors `aucune`, puis les lignes `Règle :`) du 01/12 au
+  20/12/2026, coupée à la fin de la semaine ; objectif au plus 30 % ;
+  `reference_share` : 86/140 = 61 % du 01/11 au 23/11/2026 ;
+- `closed_rules` et `closed_slips` : les règles marquées « Fermée le
+  JJ/MM/AAAA par #N. » dans le registre (point de passage unique livré) et
+  chaque glissement sur l'une d'elles fusionné après le jour de sa
+  fermeture ; objectif 0 ;
+- `gate_refusals` : les PR dont le contrôle « Maintenance form » a échoué au
+  moins une fois depuis le 01/12 (dates de création des exécutions, UTC de
+  GitHub) ; dire lesquels étaient injustifiés reste un jugement de la revue ;
+- la revue du 21/12/2026 (af-56yoam.4) et son critère d'arrêt (Benjamin,
+  24/11/2026) : une part encore au-dessus de 45 %, ou plus d'un refus sur
+  trois injustifié, retire la porte obligatoire.
+
 Une PR sans ligne ni place dans la base est comptée « sans règle ».
 
 Une mesure sans source vaut `null`, état `unmeasured`, avec sa raison ;

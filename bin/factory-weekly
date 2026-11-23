@@ -37,9 +37,12 @@ and cannot tell product from Factory (its run ids are purged wisps).
 Récidives par règle (af-56yoam.1): the slips of the week's month (Paris) per
 concrete rule of docs/DEFECT_CLASSES.md, from `lib/defect_classes.py`
 (baseline docs/defect-rules-baseline.tsv, then the `Règle :` line of later
-pull requests), against decision D1: zero slip on the rules that come back,
-monthly slips at most half of November 2026's, review on 21/12/2026. Observed
-under "rule_recurrence"; a pull request with neither is counted unclassified.
+pull requests), against decision D1 as frozen on 23/11/2026 (af-56yoam.5): the
+share of slips among the fix pull requests at most 30 % from 01/12 to
+20/12/2026 (reference 01/11-23/11), zero slip on a closed rule, the refusals of
+the gate « Maintenance form », the review on 21/12/2026 and its stop
+criterion. Observed under "rule_recurrence"; a pull request with neither line
+nor baseline row is counted unclassified.
 
 A measure without a source is null, status "unmeasured", with its reason.
 Contract of the JSON: agent-factory-weekly-measure/v1 (read by the Cockpit).
@@ -249,16 +252,33 @@ def rule_recurrence(repo, end):
         counted = defect_classes.by_rule(defect_classes.merged_since(since, Path(ROOT), repo), baseline, known, since)
     except (defect_classes.RegistryError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
         return {"month": month, "status": "unmeasured", "reason": str(exc)[:200]}
-    decision = defect_classes.d1(baseline)
+    until = datetime.fromtimestamp(end - 1, PARIS).strftime("%Y-%m-%d")
+    decision = defect_classes.d1(counted["fixes"], known, until)
+    decision["gate_refusals"] = gate_refusals(repo, decision["period_share"]["start"], decision["period_share"]["end"])
     natures = counted["months"].get(month, dict.fromkeys(defect_classes.NATURES, 0))
     by_rule = {rule: cells[month]["glissement"] for rule, cells in counted["rules"].items()
                if cells.get(month, {}).get("glissement")}
-    watched = {rule: n for rule, n in by_rule.items() if rule in decision["watched"]}
-    ok = not watched and natures["glissement"] <= decision["monthly_max"]
+    share = decision["period_share"]["share"]
+    ok = not decision["closed_slips"] and (share is None or share <= decision["target_share"])
     return {"month": month, "status": "ok" if ok else "ko", "slips": natures["glissement"],
             "planned": natures["prevue"], "first": natures["premiere"],
             "slips_by_rule": dict(sorted(by_rule.items(), key=lambda kv: (-kv[1], kv[0]))),
-            "watched_slips": watched, "unclassified": len(counted["unclassified"]), "d1": decision}
+            "unclassified": len(counted["unclassified"]), "d1": decision}
+
+
+def gate_refusals(repo, start, end):
+    """The pull requests whose required check « Maintenance form » failed at
+    least once from `start` to `end` (run creation dates, GitHub's UTC): the
+    refusals of the gate. Whether each was justified is judged at D1's review."""
+    if end < start:
+        return {"prs": 0, "branches": []}
+    try:
+        runs = json.loads(run([GH, "run", "list", "-R", repo, "--workflow", "maintenance-form.yml", "--status", "failure",
+                               "--created", f"{start}..{end}", "--limit", "1000", "--json", "headBranch,event"]) or "[]")
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        return {"prs": None, "reason": str(exc)[:200]}
+    branches = sorted({r["headBranch"] for r in runs if r.get("event") == "pull_request"})
+    return {"prs": len(branches), "branches": branches}
 
 
 def week_bounds(week):
@@ -355,15 +375,35 @@ def recurrence_lines(r):
         return [f"Récidives par règle ({month}) : non mesuré : {r['reason']}"]
     d1 = r["d1"]
     rules = ", ".join(f"{rule} {n}" for rule, n in r["slips_by_rule"].items()) or "aucune"
-    watched = ", ".join(f"{rule} {n}" for rule, n in r["watched_slips"].items()) or "aucun"
-    review = datetime.strptime(d1["review"], "%Y-%m-%d").strftime("%d/%m/%Y")
+
+    def day(iso):
+        return datetime.strptime(iso, "%Y-%m-%d").strftime("%d/%m/%Y")
+
+    def share(s):
+        if s["share"] is None:
+            return "aucune PR de correction" if s["end"] >= s["start"] else "période pas commencée"
+        return f"{s['slips']}/{s['fixes']} = {s['share']:.0%} du {day(s['start'])} au {day(s['end'])}"
+
+    ref, (start, end) = d1["reference_share"], d1["period"]
+    closed = d1["closed_slips"]
+    slipped = ", ".join(f"{c['rule']} #{c['pr']} (fermée le {day(c['closed']['date'])})" for c in closed) or "0"
+    gate = d1["gate_refusals"]
+    refusals = (f"non mesuré : {gate['reason']}" if gate["prs"] is None
+                else f"{gate['prs']} PR" + (f" ({', '.join(gate['branches'])})" if gate["branches"] else ""))
     return [f"Récidives par règle ({month}, Paris, af-56yoam) : {r['slips']} glissements, {r['planned']} répétitions "
             f"prévues, {r['first']} premières corrections ; {r['unclassified']} PR fusionnées sans ligne « Règle : » "
             f"ni place dans la base de référence.",
             f"Glissements du mois par règle : {rules}.",
-            f"Objectif D1 (Benjamin, 23/11/2026) : 0 glissement sur les {len(d1['watched'])} règles qui reviennent "
-            f"(ce mois : {watched}) et au plus {d1['monthly_max']} glissements par mois, la moitié de novembre 2026 "
-            f"({d1['reference_slips']}) : {'OK' if r['status'] == 'ok' else 'KO'}. Revue le {review} ({d1['bead']})."]
+            f"D1 (Benjamin, 23/11/2026), part des glissements parmi les PR de correction : {share(d1['period_share'])} ; "
+            f"objectif au plus {d1['target_share']:.0%} du {day(start)} au {day(end)} ; référence {share(ref)}.",
+            f"D1, zéro glissement sur une règle fermée : {len(d1['closed_rules'])} règle(s) fermée(s) ; "
+            f"glissements après fermeture : {slipped}.",
+            f"Refus de la porte « Maintenance form » depuis le {day(start)} (contrôle en échec au moins une fois) : "
+            f"{refusals}.",
+            f"État D1 : {'OK' if r['status'] == 'ok' else 'KO'}. Revue le {day(d1['review'])} ({d1['bead']}). "
+            f"Critère d'arrêt (Benjamin, 24/11/2026) : à la revue, si la part des glissements dépasse encore "
+            f"{d1['stop']['share_above']:.0%}, ou si plus d'un refus sur trois est injustifié, on retire la porte "
+            f"obligatoire."]
 
 
 def main(argv):

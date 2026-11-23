@@ -176,12 +176,45 @@ class FactoryWeeklyTest(unittest.TestCase):
         r = out["observed"]["rule_recurrence"]
         self.assertEqual(("2026-11", november, 3), (r["month"], r["slips"], r["unclassified"]))
         self.assertEqual(november, sum(r["slips_by_rule"].values()))
-        self.assertEqual(november // 2, r["d1"]["monthly_max"])
-        self.assertEqual("ko", r["status"])
-        self.assertLessEqual(set(r["watched_slips"]), set(r["d1"]["watched"]))
+        # af-56yoam.5: before 01/12 the period has not started; nothing is closed: OK.
+        d1 = r["d1"]
+        self.assertEqual((86, 140), (d1["reference_share"]["slips"], d1["reference_share"]["fixes"]))
+        self.assertEqual((None, "2026-11-15"), (d1["period_share"]["share"], d1["period_share"]["end"]))
+        self.assertEqual(({}, [], 0), (d1["closed_rules"], d1["closed_slips"], d1["gate_refusals"]["prs"]))
+        self.assertEqual("ok", r["status"])
         table = self.weekly("--week", "2026-W46")
         self.assertIn(f"Récidives par règle (11/2026, Paris, af-56yoam) : {november} glissements", table)
+        self.assertIn("PR de correction : période pas commencée ; objectif au plus 30% du 01/12/2026 au 20/12/2026 ; "
+                      "référence 86/140 = 61% du 01/11/2026 au 23/11/2026.", table)
+        self.assertIn("D1, zéro glissement sur une règle fermée : 0 règle(s) fermée(s) ; glissements après fermeture : 0.",
+                      table)
         self.assertIn("Revue le 21/12/2026 (af-56yoam.4)", table)
+        self.assertIn("dépasse encore 45%, ou si plus d'un refus sur trois est injustifié", table)
+
+    def test_d1_in_december_reads_the_period_and_the_refusals_of_the_gate(self):
+        # A December fix that names an already fixed rule is a slip: 1/1 = 100 %, KO;
+        # two failed runs of « Maintenance form » on one branch are one refused PR.
+        gh = os.path.join(self.tmp.name, "bin", "gh")
+        write(gh, textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import json, sys
+            if sys.argv[1:3] == ["run", "list"]:
+                assert "maintenance-form.yml" in sys.argv and "2026-12-01..2026-12-06" in sys.argv, sys.argv
+                print(json.dumps([{"headBranch": "fix/a", "event": "pull_request"}] * 2))
+            elif "body" in " ".join(sys.argv):
+                print(json.dumps([{"number": 990, "title": "fix", "body": "Règle : P.own\\n", "mergedAt": "2026-12-02T10:00:00Z"}]))
+            else:
+                print("[]")
+            """), 0o755)
+        r = json.loads(self.weekly("--week", "2026-W49", "--json"))["observed"]["rule_recurrence"]
+        self.assertEqual({"start": "2026-12-01", "end": "2026-12-06", "slips": 1, "fixes": 1, "share": 1.0},
+                         r["d1"]["period_share"])
+        self.assertEqual({"prs": 1, "branches": ["fix/a"]}, r["d1"]["gate_refusals"])
+        self.assertEqual("ko", r["status"])
+        table = self.weekly("--week", "2026-W49")
+        self.assertIn("1/1 = 100% du 01/12/2026 au 06/12/2026", table)
+        self.assertIn("(contrôle en échec au moins une fois) : 1 PR (fix/a).", table)
+        self.assertIn("État D1 : KO.", table)
 
     def test_the_recurrence_is_unmeasured_not_fatal_when_gh_cannot_list_bodies(self):
         gh = os.path.join(self.tmp.name, "bin", "gh")

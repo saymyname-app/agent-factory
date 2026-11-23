@@ -53,13 +53,30 @@ concrète : une phrase vérifiable par du code, un identifiant stable, son
 point de passage unique. Une répétition est **prévue** quand un « où
 ailleurs » antérieur a ouvert un ticket pour ce site, ou qu'elle suit un
 découpage planifié ; c'est un **glissement** quand la règle avait déjà une
-correction fusionnée et revient. Objectif D1 : zéro glissement sur les
-règles qui ont glissé au moins deux fois dans la base de référence (les
-règles qui reviennent vraiment), et les glissements du mois divisés par
-deux par rapport à novembre 2026 (du 1er au 23, dans la base) ; revue le
-21/12/2026 (af-56yoam.4). Une règle `<CODE>.autre` range les défauts isolés d'une
-famille : elle ne glisse jamais, et trois PR de même cause en font une
-règle nommée.
+correction fusionnée et revient. Une règle `<CODE>.autre` range les
+défauts isolés d'une famille : elle ne glisse jamais, et trois PR de même
+cause en font une règle nommée.
+
+Intent (Benjamin, ses mots, 23/11/2026 19:41 Paris) : « Fait », à la
+proposition d'appliquer la nouvelle forme de D1 si le juge à l'aveugle
+s'accordait au moins à 70 % (il s'est accordé à 70 %) ; puis, 24/11/2026
+00:06 Paris, sur le critère d'arrêt : « Oui, ajoute-le ».
+Mechanism (interprétation de l'agent, af-56yoam.5) : objectif D1 figé,
+calculé par `lib/defect_classes.py` (`d1`) et affiché par
+`bin/factory-weekly` :
+
+- la part des glissements parmi les PR de correction (les lignes de la base
+  hors `aucune`, puis les lignes `Règle :`) est d'au plus 30 % du 01/12 au
+  20/12/2026 ; référence : 86/140 = 61 % du 01/11 au 23/11/2026 ;
+- zéro glissement sur une règle **fermée**, c'est-à-dire dont le point de
+  passage unique est livré : elle porte « Fermée le JJ/MM/AAAA par #N. »
+  après son `Passage :`, jamais sans ce point ni sans la PR qui l'a livré.
+  Un glissement fusionné après ce jour la rouvre : on corrige sa fonction
+  unique, on ne lui ajoute pas un cas ;
+- revue le 21/12/2026 (af-56yoam.4). Critère d'arrêt : à la revue, une part
+  encore au-dessus de 45 %, ou plus d'un refus de la porte « Maintenance
+  form » sur trois jugé injustifié, retire cette porte des contrôles
+  obligatoires de `main` ; seule la mesure reste.
 
 ## Format
 
@@ -76,7 +93,8 @@ espaces) :
 
 Et le champ `Règles` : la ligne `- Règles :`, puis une règle concrète par
 ligne `` - `<CODE>.<règle>` : <phrase vérifiable>. Passage : <point de
-passage unique, ou aucun>. `` indentée de deux espaces (sa suite de quatre).
+passage unique, ou aucun>. `` indentée de deux espaces (sa suite de quatre),
+et, quand ce point est livré, `` Fermée le JJ/MM/AAAA par #N. `` à sa suite.
 L'identifiant ne change plus une fois écrit : la base de référence et les
 PR le citent.
 
