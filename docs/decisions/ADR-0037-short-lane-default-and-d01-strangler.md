@@ -101,3 +101,29 @@ convoi `af-strhoy` déjà ouvert et figé.
 - Retour arrière : `bin/order-pause resume convoy-advance --by <acteur>
   --words "<raison>"` relance l'ordre ; le revert de la PR de cet ADR rend
   au flux D01 son statut.
+
+## Amendement du 23/11/2026 : SayMyName livré par une session directe, l'usine en challenger
+
+Intent (Benjamin, ses mots, 23/11/2026) :
+- 16:32 Paris : « J'aimerais tout de même retourner sur SayMyName pour avancer sur mon projet. L'usine doit rester travaillé en parallèle. »
+- 17:19 Paris, sa réponse à Q1 (« SayMyName en session directe sur le PC, l'usine en challenger ») : « Oui, les trois ».
+
+Mechanism (interprétation de l'agent), consigné sur `af-q55qqx` et `af-56yoam` :
+
+- **Point 1 amendé, pour le produit seulement.**
+  - SayMyName est livré par une session Claude Code directe sur le PC de Benjamin.
+  - Le circuit est le même que la voie courte : bead → PR → CI du produit → relecture par une session neuve → fusion automatique sur `dev`.
+  - La promotion `dev` → `main` reste à Benjamin.
+  - L'usine ne fait plus passage obligé pour le produit. Elle concourt sur le même carnet dès que la formule « tranche courte » existe.
+- **Point 3 décalé.**
+  - J6–J8 a lieu après la livraison de cette formule.
+  - On compare l'usine à la session directe, avec les mêmes seuils (délai médian ≤ 24 h, ≤ 30 min de Benjamin par tranche, ≤ 1 défaut échappé sur 5).
+  - Le rejeu des 5 tickets de `af-strhoy` reste prévu.
+- **Inchangé :** la voie courte reste le flux par défaut de l'usine. Les convois D01 restent en pause et la porte J14 garde sa date du 04/12.
+- **Faits du 23/11 :**
+  - Depuis le 27/09, 675 PR usine ont été fusionnées, contre aucune PR de fonctionnalité SayMyName.
+  - Depuis le 16/11, aucune tranche SayMyName n'est passée par l'usine.
+  - La formule tranche courte est absente de `formulas/`.
+  - Charge de la VM : 11,8 pour 8 vCPU.
+  - Côté produit, cette décision est la décision 28 de `Say-my-name-product`.
+- **Retour arrière :** revert de cet amendement. Le produit repasse alors par l'usine.
