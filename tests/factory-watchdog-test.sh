@@ -53,6 +53,12 @@ GC_SLEEP_DONE="$TMP/gc-sleep-done"; : > "$GC_SLEEP_DONE"
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
+if [[ -n "\${FACTORY_WATCHDOG_TEST_GC_SPAN_LOG:-}" ]]; then
+  # Every read lasts a second, and says when it ran: start and end, one line each.
+  printf 'start %s %s\n' "\$EPOCHREALTIME" "\$*" >> "\$FACTORY_WATCHDOG_TEST_GC_SPAN_LOG"
+  sleep 1
+  printf 'end %s %s\n' "\$EPOCHREALTIME" "\$*" >> "\$FACTORY_WATCHDOG_TEST_GC_SPAN_LOG"
+fi
 if [[ -n "\${FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH:-}" && "\$*" == "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_MATCH"* ]]; then
   sleep "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_SECONDS"
   printf 'done\n' > "\$FACTORY_WATCHDOG_TEST_GC_SLEEP_DONE"
@@ -228,6 +234,22 @@ set -e
 [ "$rc" = "2" ] || { echo "$out" >&2; fail "a failed live observation must exit 2 (was $rc)"; }
 grep -q 'live observation failed' <<<"$out" || { echo "$out" >&2; fail "a failed live observation must be named"; }
 [ ! -e "$DEFERRED_FILE" ] || fail "a pass that ran to its end must clear the deferred count"
+
+# 1c. the reads that depend on nothing else in the pass run together (af-1oo6zy):
+# one after the other, each costing seconds under load, they cut the pass.
+SPANS="$TMP/gc-spans.log"; : > "$SPANS"
+FACTORY_WATCHDOG_TEST_GC_SPAN_LOG="$SPANS" watchdog --check-only >/dev/null
+overlap=$(awk '$3" "$4" "$5 ~ /^(bd gate list|bd list --status|rig list --json|session list --json)$/ {
+    k = $3" "$4" "$5
+    if ($1 == "start" && (!(k in s))) s[k] = $2
+    if ($1 == "end" && (!(k in e))) e[k] = $2
+  }
+  END {
+    n = 0; last_start = 0; first_end = 0
+    for (k in s) { n++; if (s[k] > last_start) last_start = s[k]; if (first_end == 0 || e[k] < first_end) first_end = e[k] }
+    print (n == 4 && last_start < first_end) ? "together" : n " reads, one after the other"
+  }' "$SPANS")
+[ "$overlap" = "together" ] || { cat "$SPANS" >&2; fail "the gate, workflow, rig and session reads must run together ($overlap)"; }
 
 # 2. an aged human gate is paged, and throttled on immediate re-run ----------
 jq -n --arg c "$(iso $((NOW - 3000)))" '[{"id":"af-oihx","status":"open","await_type":"human","created_at":$c,"description":"Ad-hoc gate blocking af-u8id.4"}]' > "$GATES"

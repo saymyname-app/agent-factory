@@ -15,6 +15,8 @@
 #   4. a root-owned file in a worktree is reported (simulated via a `find`
 #      stub -- creating a real root-owned file needs privilege this test
 #      cannot assume).
+#   5. a HEAD behind some other remote branch is left alone, and no HEAD is
+#      tested once per remote head (af-9dcuga: ~900 heads made this 66 s).
 
 set -Eeuo pipefail
 
@@ -31,6 +33,7 @@ cleanup() {
   git -C "$TMP/repo" worktree remove --force "$RUNTIME_WT_ROOT/dirty-wt" 2>/dev/null || true
   git -C "$TMP/repo" worktree remove --force "$RUNTIME_WT_ROOT/fresh-wt" 2>/dev/null || true
   git -C "$TMP/repo" worktree remove --force "$RUNTIME_WT_ROOT/root-owned-wt" 2>/dev/null || true
+  git -C "$TMP/repo" worktree remove --force "$RUNTIME_WT_ROOT/behind-wt" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -64,7 +67,21 @@ git worktree add -q "$RUNTIME_WT_ROOT/root-owned-wt" -b do-work/root-owned main
 mkdir -p "$RUNTIME_WT_ROOT/root-owned-wt/build-cache"
 : > "$RUNTIME_WT_ROOT/root-owned-wt/.root-owned-marker"
 
+# 5. a worktree one commit behind feat/ahead, among 30 other remote branches.
+git push -q origin $(for i in $(seq 1 30); do printf 'main:refs/heads/other-%s ' "$i"; done)
+git branch -q feat/ahead main
+(git checkout -q feat/ahead && echo a1 > file && git commit -qam a1 && echo a2 > file && git commit -qam a2 \
+  && git push -q origin feat/ahead && git checkout -q main)
+git worktree add -q --detach "$RUNTIME_WT_ROOT/behind-wt" feat/ahead~1
+
 mkdir -p "$TMP/bin"
+REAL_GIT=$(command -v git)
+cat > "$TMP/bin/git" <<STUB
+#!/usr/bin/env bash
+case " \$* " in *" merge-base "*) printf '%s\\n' "\$*" >> "$TMP/merge-base.log" ;; esac
+exec "$REAL_GIT" "\$@"
+STUB
+chmod +x "$TMP/bin/git"
 cat > "$TMP/bin/find" <<'STUB'
 #!/usr/bin/env bash
 # Stand-in for the root-owned-file check. factory-guard only ever calls
@@ -92,6 +109,9 @@ grep -q "has uncommitted work (branch 'feat/dirty')" <<<"$out" \
   || { printf '%s\n' "$out" >&2; fail "guard did not flag the dirty worktree"; }
 
 grep -q "fresh-wt" <<<"$out" && fail "guard flagged a fresh branch sitting exactly on origin/main"
+grep -q "behind-wt" <<<"$out" && fail "guard flagged a HEAD that another remote branch already holds"
+grep -q "$DETACHED_SHA" "$TMP/merge-base.log" 2>/dev/null \
+  && fail "guard tested the detached HEAD once per remote head ($(grep -c "$DETACHED_SHA" "$TMP/merge-base.log") merge-base calls)"
 
 grep -q "root-owned-wt.*root-owned file.*build-cache/output.bin" <<<"$out" \
   || { printf '%s\n' "$out" >&2; fail "guard did not report the root-owned file"; }

@@ -7,4 +7,7 @@ exec = "/home/benja/agent-factory/bin/order-pause gate escalation-door-sweep -- 
 # One full list, then one action-time revalidation + write + mail per due page.
 # tests/escalation-door-test.sh holds this operation budget under slow calls;
 # lock contention is an explicit exit-75 deferral retried on the next pass.
-timeout = "60s"
+# af-kvi78c: 87 s at a load of 9 (22/11), list 13 to 45 s by itself, so 60 s
+# killed it. The sweep starts no page past 90 s, list included; 180 s = gate
+# + 10 s lock wait + 90 s + the page in flight (three calls).
+timeout = "180s"
