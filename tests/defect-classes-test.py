@@ -4,10 +4,13 @@ PR #720). The register is complete, every control it names exists, and a
 maintenance pull request without its three lines (« Catégorie : », « Où
 ailleurs : », « Contrôle de catégorie : ») is named as such: from 15 to
 22/10 every fix repaired the case it saw and wrote the rest « hors
-périmètre », and the rest came back."""
+périmètre », and the rest came back. Since af-56yoam.2 a fix also names its
+rule, its « Où ailleurs » is a command and its result, and a rule already
+fixed comes back « prévue (<bead>) » or as a slip through its passage point."""
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,7 +25,8 @@ TOOL = ROOT / "lib" / "defect_classes.py"
 BODY = """Corrige af-kky570.
 
 Catégorie : P — programme qui survit à son lanceur
-Où ailleurs : grep de `subprocess.run(..., timeout=` dans bin/ et lib/ : 6 chemins, af-npz9v1.26.
+Règle : P.own
+Où ailleurs : `grep -rn 'subprocess.run(.*timeout=' bin lib` → 6 chemins, af-npz9v1.26.
 Contrôle de catégorie : tests/project-launch-test.py, balayage d'un dossier supprimé.
 """
 
@@ -105,8 +109,8 @@ class PullRequestBodyTest(unittest.TestCase):
     def test_each_missing_line_is_named(self):
         problems = self.check("Corrige le cas observé.\n")
 
-        self.assertEqual(3, len(problems))
-        for label in ("Catégorie :", "Où ailleurs :", "Contrôle de catégorie :"):
+        self.assertEqual(4, len(problems))
+        for label in ("Catégorie :", "Où ailleurs :", "Contrôle de catégorie :", "Règle :"):
             self.assertTrue(any(label in p for p in problems), label)
 
     def test_a_class_missing_from_the_register_is_named(self):
@@ -118,23 +122,81 @@ class PullRequestBodyTest(unittest.TestCase):
     def test_a_change_that_fixes_no_defect_says_why(self):
         self.assertEqual([], self.check("Catégorie : aucune — ajoute une porte décidée par Benjamin\n"))
         self.assertEqual(1, len(self.check("Catégorie : aucune\n")))
-
-    def test_an_optional_rule_line_must_name_a_rule_of_the_register(self):
-        cases = [
-            ("", 0),
-            ("Règle : P.own\n", 0),
-            ("**Règle :** `I.repair-resume` — prévue (af-x)\n", 0),
-            ("Règle : aucune — décision\n", 0),
-            ("Règle : P.ownership\n", 1),
-            ("Règle : P\n", 1),
-        ]
-        for line, problems in cases:
-            with self.subTest(line=line):
-                found = self.check(BODY + line)
-                self.assertEqual(problems, len(found), found)
-                if problems:
-                    self.assertIn("Règle", found[0])
         self.assertEqual(1, len(self.check("Catégorie : aucune — doc\nRègle : X.y\n")))
+
+    def test_the_rule_and_where_else_lines_of_a_fix(self):
+        # af-56yoam.2: these rules already have a merged fix.
+        fixed = {"P.own", "I.repair-resume", "P.proc-gone", "S.autre"}
+        rule = "Règle : P.own\n"
+        first = BODY.replace(rule, "Règle : P.load\n")
+        cases = [
+            # (name, body, the words its one problem holds; [] when the body passes)
+            ("PR sans défaut", "Catégorie : aucune — décision D2 exécutée\n", []),
+            ("première correction", first, []),
+            ("prévue", BODY.replace(rule, "Règle : P.own — prévue (af-npz9v1.26)\n"), []),
+            ("prévue, gras et accents graves", BODY.replace(rule, "**Règle :** `P.own` — prévue (af-x)\n"), []),
+            ("prévue sans son bead", BODY.replace(rule, "Règle : P.own — prévue\n"), ["sans son bead"]),
+            ("règle déjà corrigée, ni prévue ni glissement", BODY, ["déjà corrigée", "glissement"]),
+            ("glissement sans point de passage", BODY.replace(rule, "Règle : P.own — glissement\n"),
+             ["sans ligne « Point de passage :"]),
+            ("glissement par le point de passage de la règle",
+             BODY.replace(rule, "Règle : P.own — glissement\nPoint de passage : `lib/bounded_process.py`\n"), []),
+            ("glissement par un autre point",
+             BODY.replace(rule, "Règle : P.own — glissement\nPoint de passage : `bin/ticket-end`\n"),
+             ["« `bin/ticket-end` »", "docs/DEFECT_CLASSES.md"]),
+            ("glissement d'une règle sans point de passage",
+             BODY.replace(rule, "Règle : P.proc-gone — glissement\nPoint de passage : `lib/procfs.py`\n"),
+             ["P.proc-gone", "aucun"]),
+            ("défaut isolé : .autre ne glisse jamais", BODY.replace(rule, "Règle : S.autre\n"), []),
+            ("identifiant inconnu", BODY.replace(rule, "Règle : P.ownership\n"), ["« P.ownership »"]),
+            ("famille sans règle", BODY.replace(rule, "Règle : P\n"), ["« P »"]),
+            ("règle aucune sur un correctif", BODY.replace(rule, "Règle : aucune — doc\n"), ["Règle : aucune"]),
+            ("règle absente", BODY.replace(rule, ""), ["« Règle : » absente"]),
+            ("Où ailleurs sans commande",
+             first.replace("`grep -rn 'subprocess.run(.*timeout=' bin lib` → 6", "grep dans bin/ et lib/ : 6"),
+             ["sans « `<commande>` → <résultat> »"]),
+            ("Où ailleurs sans résultat",
+             first.replace("→ 6 chemins, af-npz9v1.26.", ""), ["sans « `<commande>` → <résultat> »"]),
+            ("Où ailleurs avec ->", first.replace("→", "->"), []),
+        ]
+        for name, body, expected in cases:
+            with self.subTest(name):
+                found = defect_classes.check_pr_body(body, self.classes, fixed)
+                self.assertEqual(1 if expected else 0, len(found), found)
+                for words in expected:
+                    self.assertIn(words, found[0])
+
+    def test_a_slip_may_move_the_passage_point_in_its_own_register(self):
+        text = (ROOT / "docs" / "DEFECT_CLASSES.md").read_text(encoding="utf-8")
+        old = "erreur. Passage : aucun."
+        self.assertEqual(1, text.count(old))
+        body = BODY.replace("Règle : P.own\n", "Règle : P.proc-gone — glissement\nPoint de passage : `lib/procfs.py`\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "r.md"
+            registry.write_text(text.replace(old, "erreur. Passage : `proc_state` de `lib/procfs.py`."),
+                                encoding="utf-8")
+
+            self.assertEqual([], defect_classes.check_pr_body(body, defect_classes.load(registry), {"P.proc-gone"}))
+
+    def test_the_fixed_rules_are_asked_only_when_a_plain_rule_line_needs_them(self):
+        asked = []
+
+        def fixed():
+            asked.append(1)
+            return {"P.own"}
+
+        defect_classes.check_pr_body(BODY.replace("Règle : P.own", "Règle : P.own — prévue (af-x)"), self.classes, fixed)
+        defect_classes.check_pr_body("Catégorie : aucune — doc\n", self.classes, fixed)
+        self.assertEqual([], asked)
+        self.assertEqual(1, len(defect_classes.check_pr_body(BODY, self.classes, fixed)))
+        self.assertEqual([1], asked)
+
+    def test_the_fixed_rules_are_the_baseline_and_the_rule_lines_merged_since(self):
+        baseline = {10: row(10, "2026-10-30", "P.own", "premiere"), 12: row(12, "2026-11-03", "aucune", "-")}
+        prs = [{"number": 10, "body": "Règle : P.load\n"}, {"number": 20, "body": "Règle : P.load — prévue (af-x)\n"},
+               {"number": 21, "body": "Règle : P.nope\n"}, {"number": 22, "body": "Catégorie : aucune — doc\n"}]
+
+        self.assertEqual({"P.own", "P.load"}, defect_classes.fixed_rules(baseline, prs, KNOWN))
 
     def test_markdown_emphasis_is_read(self):
         body = BODY.replace("Catégorie : P", "**Catégorie :** `P`").replace("Où ailleurs :", "- **Où ailleurs :**")
@@ -147,9 +209,65 @@ class PullRequestBodyTest(unittest.TestCase):
 
         self.assertEqual(1, proc.returncode)
         self.assertIn("Où ailleurs :", proc.stdout)
-        ok = subprocess.run([sys.executable, str(TOOL), "check-pr-body"], input=BODY, text=True,
-                            capture_output=True)
+        planned = BODY.replace("Règle : P.own", "Règle : P.own — prévue (af-x)")
+        ok = subprocess.run([sys.executable, str(TOOL), "check-pr-body", "--branch", "fix/x"], input=planned,
+                            text=True, capture_output=True)
         self.assertEqual((0, ""), (ok.returncode, ok.stdout.strip()))
+
+    def test_the_command_line_reads_the_fixed_rules_from_the_baseline_and_gh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gh = Path(tmp) / "gh"
+            # Every named rule of the register has a fix in the baseline: two new ones.
+            registry = Path(tmp) / "r.md"
+            registry.write_text((ROOT / "docs" / "DEFECT_CLASSES.md").read_text(encoding="utf-8").replace(
+                "- Règles :\n", "- Règles :\n  - `P.fresh` : Une. Passage : aucun.\n"
+                "  - `P.fresher` : Deux. Passage : aucun.\n", 1), encoding="utf-8")
+            merged = [{"number": 9999, "body": "Règle : P.fresh\n", "mergedAt": "2026-12-01T10:00:00Z"}]
+            gh.write_text("#!/bin/sh\necho \"$*\" > \"$(dirname \"$0\")/args\"\n"
+                          f"cat <<'JSON'\n{json.dumps(merged)}\nJSON\n")
+            gh.chmod(0o755)
+            env = {**os.environ, "GH_BIN": str(gh)}
+            # P.own: in the baseline; P.fresh: merged since; P.fresher: neither.
+            for rule, code in [("P.own", 1), ("P.fresh", 1), ("P.fresher", 0)]:
+                with self.subTest(rule=rule):
+                    proc = subprocess.run([sys.executable, str(TOOL), "--registry", str(registry), "check-pr-body",
+                                           "--github-repo", "o/r"],
+                                          input=BODY.replace("P.own", rule), text=True, capture_output=True,
+                                          env=env, cwd=tmp)
+                    self.assertEqual(code, proc.returncode, proc.stdout + proc.stderr)
+            self.assertIn("-R o/r", (Path(tmp) / "args").read_text())
+            gh.write_text("#!/bin/sh\nexit 1\n")
+            proc = subprocess.run([sys.executable, str(TOOL), "check-pr-body"], input=BODY, text=True,
+                                  capture_output=True, env=env, cwd=tmp)
+            self.assertEqual(2, proc.returncode, "a list of fixed rules that cannot be read is never « not fixed »")
+
+    def test_the_maintenance_lines_are_written_out_in_one_place(self):
+        # af-56yoam.2: five copies of the form had drifted from docs/DELIVERY.md
+        # (three lines here, four there); the others point to it.
+        template = re.compile(r"^\W*(Où ailleurs|Contrôle de catégorie) : <", re.M)
+        found = []
+        for top in ("bin", "lib", "formulas", "agents", "orders", "docs", "config"):
+            for path in (ROOT / top).rglob("*"):
+                rel = path.relative_to(ROOT).as_posix()
+                if not path.is_file() or rel == "docs/DELIVERY.md" or rel.startswith("docs/research/"):
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8")
+                except (UnicodeDecodeError, OSError):
+                    continue
+                if template.search(text):
+                    found.append(rel)
+        self.assertTrue(template.search((ROOT / "docs" / "DELIVERY.md").read_text(encoding="utf-8")))
+        self.assertEqual([], found, "point to docs/DELIVERY.md, « Where else? », instead of copying its lines")
+
+    def test_a_branch_that_is_not_a_maintenance_branch_passes_unread(self):
+        listed = subprocess.run([sys.executable, str(TOOL), "maintenance-branches"], text=True, capture_output=True)
+        self.assertEqual(["fix/", "do-work/"], listed.stdout.split())
+        for branch, code in [("feat/cockpit", 0), ("maint/af-x", 0), ("do-work/af-x", 1), ("fix/x", 1)]:
+            with self.subTest(branch=branch):
+                proc = subprocess.run([sys.executable, str(TOOL), "check-pr-body", "--branch", branch],
+                                      input="rien\n", text=True, capture_output=True)
+                self.assertEqual(code, proc.returncode, proc.stdout + proc.stderr)
 
 
 class CountTest(unittest.TestCase):
