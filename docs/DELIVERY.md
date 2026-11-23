@@ -630,6 +630,21 @@ fix repaired the place it was seen and wrote the rest « hors périmètre ».
   the merged pull requests of each class from those lines. A class that
   comes back while it has a check means the check is incomplete: complete
   it and update its entry, not a ticket.
+- A family groups many concrete rules, so it cannot say whether a rule comes
+  back (af-56yoam.1). Each family of the register lists its rules, with a
+  stable id (`P.own`, `I.repair-resume`) and its single passage point. The
+  pull request may name its rule on an optional line, which `check-pr-body`
+  refuses when the id is unknown (af-56yoam.2 will make it required):
+
+  ```
+  Règle : <id> — or « <id> — prévue (<bead named by an earlier Où ailleurs>) »
+  ```
+
+  `python3 lib/defect_classes.py count --by-rule --since <date>` counts per
+  rule and per month the first fixes, the planned repeats and the slips (a
+  rule already fixed that comes back), from `docs/defect-rules-baseline.tsv`
+  for the pull requests merged from 22/10 to 23/11/2026 and from that line
+  after. `bin/factory-weekly` shows the month's slips against decision D1.
 
 | Kind of change | Where CI runs | Before the pull request | Why |
 |---|---|---|---|

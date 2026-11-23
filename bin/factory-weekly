@@ -34,6 +34,13 @@ reader (`gc costs`) deduplicates by idempotency_key; it misses the sessions gc
 does not ingest (the Mayor on Codex since 15/09/2026, interactive sessions)
 and cannot tell product from Factory (its run ids are purged wisps).
 
+Récidives par règle (af-56yoam.1): the slips of the week's month (Paris) per
+concrete rule of docs/DEFECT_CLASSES.md, from `lib/defect_classes.py`
+(baseline docs/defect-rules-baseline.tsv, then the `Règle :` line of later
+pull requests), against decision D1: zero slip on the rules that come back,
+monthly slips at most half of November 2026's, review on 21/12/2026. Observed
+under "rule_recurrence"; a pull request with neither is counted unclassified.
+
 A measure without a source is null, status "unmeasured", with its reason.
 Contract of the JSON: agent-factory-weekly-measure/v1 (read by the Cockpit).
 
@@ -47,6 +54,7 @@ from pathlib import Path
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import Counter
 from datetime import date, datetime, timedelta
@@ -55,6 +63,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
 from account_home import account_home  # noqa: E402
+import defect_classes  # noqa: E402
 
 ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
 GC = os.environ.get("GC_BIN", "gc")
@@ -228,6 +237,30 @@ def token_costs(start, end, sides, weights, mayor=None):
     return cost
 
 
+def rule_recurrence(repo, end):
+    """Slips, planned repeats and first fixes of the week's month per rule,
+    against D1 (af-56yoam.1). Unmeasured, with its reason, when the register,
+    the baseline or gh cannot be read."""
+    month = datetime.fromtimestamp(end - 1, PARIS).strftime("%Y-%m")
+    try:
+        known = defect_classes.rules(defect_classes.load())
+        baseline = defect_classes.load_baseline(known=known)
+        since = min(row["date"] for row in baseline.values())
+        counted = defect_classes.by_rule(defect_classes.merged_since(since, Path(ROOT), repo), baseline, known, since)
+    except (defect_classes.RegistryError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+        return {"month": month, "status": "unmeasured", "reason": str(exc)[:200]}
+    decision = defect_classes.d1(baseline)
+    natures = counted["months"].get(month, dict.fromkeys(defect_classes.NATURES, 0))
+    by_rule = {rule: cells[month]["glissement"] for rule, cells in counted["rules"].items()
+               if cells.get(month, {}).get("glissement")}
+    watched = {rule: n for rule, n in by_rule.items() if rule in decision["watched"]}
+    ok = not watched and natures["glissement"] <= decision["monthly_max"]
+    return {"month": month, "status": "ok" if ok else "ko", "slips": natures["glissement"],
+            "planned": natures["prevue"], "first": natures["premiere"],
+            "slips_by_rule": dict(sorted(by_rule.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "watched_slips": watched, "unclassified": len(counted["unclassified"]), "d1": decision}
+
+
 def week_bounds(week):
     if week:
         monday = date.fromisocalendar(int(week[:4]), int(week[-2:]), 1)
@@ -279,7 +312,8 @@ def measure(week):
     # 21/11/2026) is compared per day with the Opus weeks.
     out["observed"] = {"mayor_cost": {"total": round(sum(mayor.values())),
                                       "share": round(sum(mayor.values()) / spent, 3) if spent else None,
-                                      "per_day": {d: round(v) for d, v in sorted(mayor.items())}}}
+                                      "per_day": {d: round(v) for d, v in sorted(mayor.items())}},
+                       "rule_recurrence": rule_recurrence(sides["factory"], end)}
     out["not_measured"] = {
         "integration_branch_age": "not computed here (FACTORY_OBJECTIVE.md principle 2)",
         "requests_in_closed_list": "escalations carry no ADR-0016 effect field yet (J3)",
@@ -310,8 +344,26 @@ def markdown(out):
     share = "—" if mc["share"] is None else f"{mc['share']:.0%}"
     lines += ["", f"Coût du Mayor (observé, sans seuil, af-yzo8fo) : {mc['total'] / 1e6:.1f} M pondérés, {share} du total ; par jour : "
               + (", ".join(f"{d[8:10]}/{d[5:7]} {v / 1e6:.1f} M" for d, v in mc["per_day"].items()) or "aucun")]
+    lines += ["", *recurrence_lines(out["observed"]["rule_recurrence"])]
     lines += ["", "Non mesuré : " + " ; ".join(f"{k} ({v})" for k, v in out["not_measured"].items())]
     return "\n".join(lines) + "\n"
+
+
+def recurrence_lines(r):
+    month = f"{r['month'][5:7]}/{r['month'][:4]}"
+    if r["status"] == "unmeasured":
+        return [f"Récidives par règle ({month}) : non mesuré : {r['reason']}"]
+    d1 = r["d1"]
+    rules = ", ".join(f"{rule} {n}" for rule, n in r["slips_by_rule"].items()) or "aucune"
+    watched = ", ".join(f"{rule} {n}" for rule, n in r["watched_slips"].items()) or "aucun"
+    review = datetime.strptime(d1["review"], "%Y-%m-%d").strftime("%d/%m/%Y")
+    return [f"Récidives par règle ({month}, Paris, af-56yoam) : {r['slips']} glissements, {r['planned']} répétitions "
+            f"prévues, {r['first']} premières corrections ; {r['unclassified']} PR fusionnées sans ligne « Règle : » "
+            f"ni place dans la base de référence.",
+            f"Glissements du mois par règle : {rules}.",
+            f"Objectif D1 (Benjamin, 23/11/2026) : 0 glissement sur les {len(d1['watched'])} règles qui reviennent "
+            f"(ce mois : {watched}) et au plus {d1['monthly_max']} glissements par mois, la moitié de novembre 2026 "
+            f"({d1['reference_slips']}) : {'OK' if r['status'] == 'ok' else 'KO'}. Revue le {review} ({d1['bead']})."]
 
 
 def main(argv):
