@@ -214,8 +214,8 @@ def main(argv: list[str]) -> int:
     klass = {"code": entry["code"], "title": entry["title"], "invariant": entry["Invariant"],
              "open": entry["Ouvertes"], "control": entry["Contrôle"],
              "to_do": "Chercher et corriger les occurrences ouvertes de la même catégorie avec ce correctif ;"
-                      " poser ou compléter le contrôle de catégorie ; la PR écrit « Catégorie : », « Où ailleurs : »"
-                      " et « Contrôle de catégorie : »."}
+                      " poser ou compléter le contrôle de catégorie ; la PR écrit les lignes de maintenance"
+                      " de docs/DELIVERY.md, « Where else? »."}
     answer = {"ok": not (prs or branches or naming) and all(c["ok"] for c in control), "paths": args.paths,
               "class": klass, "control": control, "branch": own, "days": args.days,
               "prs": prs, "branches": branches, "decisions_naming": naming,

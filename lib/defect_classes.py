@@ -3,7 +3,8 @@
 that hold the method of study B (af-npz9v1.25,
 docs/research/2026-10-22-causes-racines-incidents.md, § 6).
 
-    defect_classes.py check-pr-body [--registry FILE] < body
+    defect_classes.py check-pr-body [--registry FILE] [--branch NAME] [--github-repo OWNER/NAME] < body
+    defect_classes.py maintenance-branches
     defect_classes.py count --since YYYY-MM-DD [--repo DIR]
     defect_classes.py count --by-rule --since YYYY-MM-DD [--repo DIR] [--baseline FILE]
 
@@ -16,11 +17,14 @@ on the whole class.
   the fields `Invariant`, `Contrôle`, `Occurrences` and `Ouvertes`, and an
   optional `Règles` list: the concrete rules of the class, each with a stable
   id `<CODE>.<slug>`, a checkable sentence and its single passage point.
-- `check-pr-body` names the lines a maintenance pull request lacks
-  (`Catégorie :` a code of the register, `Où ailleurs :`, `Contrôle de
-  catégorie :`); `bin/pr-autopilot` does not arm a fix without them. A
-  change that fixes no defect writes `Catégorie : aucune — <why>`. An
-  optional `Règle : <id>` line must name a rule of the register.
+- `check-pr-body` names what the body of a maintenance pull request lacks
+  against the lines `docs/DELIVERY.md` (« Where else? ») defines, the one
+  source of that form; `bin/pr-autopilot` does not arm a fix without them,
+  and the CI job « Maintenance form » is red without them (af-56yoam.2,
+  decision D2). Both read the maintenance branches from
+  `MAINTENANCE_BRANCHES` here. A rule already fixed by a merged pull request
+  (the baseline, then the `Règle :` lines merged since) comes back only as
+  « prévue (<bead>) » or as « glissement » through the rule's passage point.
 - `count` counts the merged pull requests of each class since a date, from
   those same lines: the measure of whether the method works. A class that
   comes back while it has a check means the check is incomplete.
@@ -63,9 +67,20 @@ PR_LINES = {
     "elsewhere": re.compile(r"^\W*Où ailleurs\W*:\s*(\S.*)$", re.M | re.I),
     "check": re.compile(r"^\W*Contrôle de catégorie\W*:\s*(\S.*)$", re.M | re.I),
     "rule": re.compile(r"^\W*Règle\W*:\s*(\S.*)$", re.M | re.I),
+    "passage": re.compile(r"^\W*Point de passage\W*:\s*(\S.*)$", re.M | re.I),
 }
 PR_LABELS = {"category": "Catégorie :", "elsewhere": "Où ailleurs :", "check": "Contrôle de catégorie :",
-             "rule": "Règle :"}
+             "rule": "Règle :", "passage": "Point de passage :"}
+# The branches of a maintenance pull request of the Factory: a fix, or a
+# do-work ticket of this repository. bin/pr-autopilot (maintenance_form_gate)
+# and the CI job « Maintenance form » read this one list.
+MAINTENANCE_BRANCHES = ("fix/", "do-work/")
+# « Où ailleurs : `<command>` → <result> »: a command between backticks, then
+# a result after the arrow. Whether the command lists the callers of the
+# decision point is for review (af-56yoam.3), not for this check.
+ELSEWHERE_FORM = re.compile(r"`[^`]+`.*?(?:→|->)\s*\S")
+PLANNED = re.compile(r"pr[ée]vue\s*\(\s*[^)\s]+\s*\)", re.I)
+SLIP = re.compile(r"glissement", re.I)
 NATURES = ("premiere", "prevue", "glissement")
 # A rule `<CODE>.autre` holds the isolated defects of a family: never a slip.
 ISOLATED = ".autre"
@@ -171,13 +186,20 @@ def pr_rule(body: str) -> tuple[str, str] | None:
     return head, value[len(head):]
 
 
-def check_pr_body(body: str, classes: dict[str, dict]) -> list[str]:
-    """What the body of a maintenance pull request lacks, empty when complete."""
+def is_maintenance_branch(branch: str) -> bool:
+    return branch.startswith(MAINTENANCE_BRANCHES)
+
+
+def check_pr_body(body: str, classes: dict[str, dict], fixed=frozenset()) -> list[str]:
+    """What the body of a maintenance pull request lacks, empty when complete.
+    `fixed`: the rules that already have a merged fix, or a function that
+    returns them, called only when a plain `Règle : <id>` needs the answer."""
     problems = []
+    known = rules(classes)
     rule = pr_rule(body)
-    if rule and rule[0].lower() != NO_CLASS and rule[0] not in rules(classes):
+    if rule and rule[0].lower() != NO_CLASS and rule[0] not in known:
         problems.append(f"règle « {rule[0]} » absente de docs/DEFECT_CLASSES.md (identifiants : "
-                        f"<CATÉGORIE>.<règle> du champ « Règles » de chaque catégorie, ou « {NO_CLASS} »)")
+                        f"<CATÉGORIE>.<règle> du champ « Règles » de chaque catégorie, ou <CATÉGORIE>.autre)")
     category = pr_category(body)
     if category is None:
         problems.append(f"ligne « {PR_LABELS['category']} » absente")
@@ -193,7 +215,61 @@ def check_pr_body(body: str, classes: dict[str, dict]) -> list[str]:
     for key in ("elsewhere", "check"):
         if not PR_LINES[key].search(body or ""):
             problems.append(f"ligne « {PR_LABELS[key]} » absente")
+    elsewhere = PR_LINES["elsewhere"].search(body or "")
+    if elsewhere and not ELSEWHERE_FORM.search(elsewhere.group(1)):
+        problems.append(f"ligne « {PR_LABELS['elsewhere']} » sans « `<commande>` → <résultat> » : la commande, "
+                        "entre accents graves, liste les appelants du point de décision ; son résultat suit « → »")
+    if rule is None:
+        problems.append(f"ligne « {PR_LABELS['rule']} » absente (la règle corrigée : <CATÉGORIE>.<règle> du "
+                        "registre, ou <CATÉGORIE>.autre pour un défaut isolé)")
+    elif rule[0].lower() == NO_CLASS:
+        problems.append(f"« {PR_LABELS['rule']} {NO_CLASS} » sur une PR qui corrige un défaut : nommer la règle, "
+                        "ou <CATÉGORIE>.autre pour un défaut isolé")
+    elif rule[0] in known:
+        problems += repeat_problems(body, known[rule[0]], rule[1], fixed)
     return problems
+
+
+def repeat_problems(body: str, rule: dict, rest: str, fixed) -> list[str]:
+    """A rule already fixed by a merged pull request comes back « prévue
+    (<bead>) », named by an earlier « où ailleurs », or as a « glissement »
+    whose fix goes through the rule's single passage point: the one the
+    register declares, or the one this pull request writes into its register."""
+    rule_id = rule["id"]
+    if PLANNED.search(rest):
+        return []
+    if re.search(r"pr[ée]vue", rest, re.I):
+        return [f"« {rule_id} — prévue » sans son bead : « Règle : {rule_id} — prévue (<bead>) »"]
+    if not SLIP.search(rest):
+        if rule_id.endswith(ISOLATED) or rule_id not in (fixed() if callable(fixed) else fixed):
+            return []
+        return [f"règle {rule_id} déjà corrigée par une PR fusionnée : « Règle : {rule_id} — prévue (<bead>) » "
+                "si un « où ailleurs » antérieur a nommé ce site, sinon « — glissement » et « Point de passage : »"]
+    if rule_id.endswith(ISOLATED):
+        return []
+    found = PR_LINES["passage"].search(body or "")
+    if not found:
+        return [f"glissement de {rule_id} sans ligne « {PR_LABELS['passage']} <fonction ou fichier> » : "
+                "le correctif passe par le point de passage unique de la règle"]
+    value = found.group(1).strip()
+    named = re.findall(r"`([^`]+)`", value) or [value.strip("*. ")]
+    declared = rule["passage"]
+    if declared.lower().startswith("aucun") or not all(name and name in declared for name in named):
+        return [f"point de passage « {value} » absent de celui de {rule_id} dans docs/DEFECT_CLASSES.md "
+                f"(« {declared} ») : nommer ce point, ou écrire dans le registre, dans cette PR, le point de "
+                "passage que le correctif crée ou déplace"]
+    return []
+
+
+def fixed_rules(baseline: dict[int, dict], prs: list[dict], known: dict) -> set[str]:
+    """The rules with a merged fix: those of the baseline, and those that the
+    `Règle :` line of a pull request merged since names."""
+    done = {row["rule"] for row in baseline.values() if row["nature"] in NATURES}
+    for pr in prs:
+        found = pr["number"] not in baseline and pr_rule(pr.get("body") or "")
+        if found and found[0] in known:
+            done.add(found[0])
+    return done
 
 
 def merged_since(since: str, repo: Path, name: str | None = None) -> list[dict]:
@@ -312,17 +388,35 @@ def main(argv: list[str]) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--registry", type=Path, default=REGISTRY)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("check-pr-body", help="the lines a maintenance PR body (stdin) lacks")
+    checking = sub.add_parser("check-pr-body", help="the lines a maintenance PR body (stdin) lacks")
+    checking.add_argument("--branch", help="the PR's head branch: a branch that is not a maintenance branch passes")
+    checking.add_argument("--github-repo", help="OWNER/NAME whose merged PRs say which rules are already fixed")
+    checking.add_argument("--baseline", type=Path, default=BASELINE)
+    sub.add_parser("maintenance-branches", help="the branch prefixes of a maintenance PR, one per line")
     counting = sub.add_parser("count", help="merged PRs by class (or by rule) since a date")
     counting.add_argument("--since", required=True)
     counting.add_argument("--repo", type=Path, default=Path("."))
     counting.add_argument("--by-rule", action="store_true", help="first fixes, planned repeats and slips per rule and month")
     counting.add_argument("--baseline", type=Path, default=BASELINE)
     args = parser.parse_args(argv)
+    if args.command == "maintenance-branches":
+        print("\n".join(MAINTENANCE_BRANCHES))
+        return 0
+    if args.command == "check-pr-body" and args.branch is not None and not is_maintenance_branch(args.branch):
+        print(f"branche « {args.branch} » : pas une PR de maintenance ({', '.join(MAINTENANCE_BRANCHES)}), "
+              "rien à vérifier", file=sys.stderr)
+        return 0
     try:
         classes = load(args.registry)
         if args.command == "check-pr-body":
-            problems = check_pr_body(sys.stdin.read(), classes)
+            known = rules(classes)
+
+            def fixed() -> set[str]:
+                baseline = load_baseline(args.baseline, known)
+                since = max(row["date"] for row in baseline.values())
+                return fixed_rules(baseline, merged_since(since, Path("."), args.github_repo), known)
+
+            problems = check_pr_body(sys.stdin.read(), classes, fixed)
             print("\n".join(problems))
             return 1 if problems else 0
         prs = merged_since(args.since, args.repo)

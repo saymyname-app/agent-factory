@@ -612,39 +612,71 @@ fix repaired the place it was seen and wrote the rest « hors périmètre ».
   class, or for an occurrence searched, named and handed to a Bead.
   ADR-0017 still holds: no refactor or audit without a defect.
 - The pull request of a Factory fix (branch `fix/…`, or a `do-work/…` of
-  this repository) carries three lines, which `bin/pr-autopilot` reads
-  before it arms the merge; without them it holds the pull request, label
-  `maintenance-form-missing`, explained once on it:
+  this repository: `MAINTENANCE_BRANCHES` of `lib/defect_classes.py`)
+  carries the maintenance lines below. **This block is their one source**:
+  the do-work formula, `bin/pr-autopilot`'s hold comment,
+  `bin/proposal-door` and `bin/factory-fix-preflight` point here instead of
+  copying it.
 
   ```
   Catégorie : <code> — <the class in a few words>
-  Où ailleurs : <the search made and what it found: fixed here, or a Bead per occurrence left>
+  Règle : <id>   — or « <id> — prévue (<bead>) », or « <id> — glissement »
+  Point de passage : <the function or file the fix changes or creates>   (a slip only)
+  Où ailleurs : `<command listing the callers of the decision point>` → <what it found: fixed here, or a Bead per occurrence left>
   Contrôle de catégorie : <the test or lint that fails on the next occurrence, or why there is none>
   ```
 
-  A change that fixes no defect (a decision carried out, a feature) writes
-  `Catégorie : aucune — <why>`. To complete a held pull request: `gh api -X
-  PATCH repos/<owner>/<repo>/pulls/<n> -F body=@<file>` (the host's `gh pr
-  edit` fails, see `tests/pr-autopilot-project-hold-test.sh`).
+  - `Règle :` names a concrete rule of the register (`P.own`,
+    `I.repair-resume`), or `<CODE>.autre` for an isolated defect of a
+    family. A family groups many concrete rules, so it cannot say whether a
+    rule comes back (af-56yoam.1).
+  - `Où ailleurs :` holds a command between backticks and its result after
+    `→`. The command lists the **callers of the decision point**, not only
+    the symbol fixed: a fix of one caller leaves the others. The check is
+    mechanical (a command, an arrow, a result); whether the command is the
+    right one is for review (af-56yoam.3).
+  - A rule **already fixed** by a merged pull request (the baseline
+    `docs/defect-rules-baseline.tsv`, then the `Règle :` lines merged
+    since) comes back in one of two ways. `— prévue (<bead>)`: an earlier
+    « où ailleurs » named this site and handed it to that bead.
+    `— glissement`: the rule slipped; the fix then goes through the rule's
+    single passage point, named on `Point de passage :`, which must be the
+    one the register declares for that rule, or one this pull request
+    writes into the register (a rule whose passage is « aucun » gets one).
+    A `<CODE>.autre` rule never slips.
+  - A change that fixes no defect (a decision carried out, a feature)
+    writes `Catégorie : aucune — <why>` and nothing else.
+
+  `python3 lib/defect_classes.py check-pr-body` reads these lines. Two
+  readers run it on the same body (af-56yoam.2):
+
+  - `bin/pr-autopilot` before it arms the merge; without the lines it holds
+    the pull request, label `maintenance-form-missing`, explained once on
+    it, and rereads the body each pass.
+  - The CI job « Maintenance form » (`.github/workflows/maintenance-form.yml`),
+    on every pull request into `main`: opened, pushed **and edited**, so a
+    corrected body turns it green without a push. It passes a branch that
+    is not a maintenance branch, and a merge-group commit, without reading
+    anything. Intent (Benjamin, his words, 23/11/2026 17:19 Paris, on D2):
+    « Oui, les trois ». Mechanism (agent interpretation): the check becomes
+    a required CI job on `main`, in its own workflow so that a body edit
+    does not cancel or rerun the battery of `Tests`. It is required once
+    the ruleset `AF-main-protection` names it beside `Tests`, set after
+    the job was seen green on `main` (af-56yoam.2).
+
+  To complete a held pull request: `gh api -X PATCH
+  repos/<owner>/<repo>/pulls/<n> -F body=@<file>` (the host's `gh pr edit`
+  fails, see `tests/pr-autopilot-project-hold-test.sh`).
 - The measure: `python3 lib/defect_classes.py count --since <date>` counts
   the merged pull requests of each class from those lines. A class that
   comes back while it has a check means the check is incomplete: complete
   it and update its entry, not a ticket.
-- A family groups many concrete rules, so it cannot say whether a rule comes
-  back (af-56yoam.1). Each family of the register lists its rules, with a
-  stable id (`P.own`, `I.repair-resume`) and its single passage point. The
-  pull request may name its rule on an optional line, which `check-pr-body`
-  refuses when the id is unknown (af-56yoam.2 will make it required):
-
-  ```
-  Règle : <id> — or « <id> — prévue (<bead named by an earlier Où ailleurs>) »
-  ```
-
   `python3 lib/defect_classes.py count --by-rule --since <date>` counts per
   rule and per month the first fixes, the planned repeats and the slips (a
   rule already fixed that comes back), from `docs/defect-rules-baseline.tsv`
-  for the pull requests merged from 22/10 to 23/11/2026 and from that line
-  after. `bin/factory-weekly` shows the month's slips against decision D1.
+  for the pull requests merged from 22/10 to 23/11/2026 and from the
+  `Règle :` line after. `bin/factory-weekly` shows the month's slips against
+  decision D1.
 
 | Kind of change | Where CI runs | Before the pull request | Why |
 |---|---|---|---|

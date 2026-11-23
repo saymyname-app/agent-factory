@@ -25,10 +25,11 @@ récidivé sont ceux qui ont posé un contrôle de toute la catégorie (#619,
   occurrences ouvertes, lance les commandes du champ `Contrôle`, refuse une
   catégorie absente d'ici (le correctif crée alors son entrée dans sa
   branche).
-- `bin/pr-autopilot` : n'arme pas la fusion d'une PR de maintenance de
-  l'usine (branche `fix/…` ou `do-work/…`) sans ses trois lignes
-  `Catégorie :`, `Où ailleurs :`, `Contrôle de catégorie :`
-  (`docs/DELIVERY.md`, « Maintenance de l'usine »).
+- `bin/pr-autopilot` et le job CI « Maintenance form » : n'arment pas la
+  fusion d'une PR de maintenance de l'usine (branche `fix/…` ou
+  `do-work/…`), et la tiennent rouge, sans ses lignes de maintenance ; leur
+  forme a une seule source, `docs/DELIVERY.md`, « Where else? ». Ils lisent
+  ici les catégories, les règles et leur point de passage.
 - `python3 lib/defect_classes.py count --since <date>` : les PR fusionnées
   de chaque catégorie depuis une date, lues sur ces mêmes lignes. C'est la
   mesure de la méthode : une catégorie qui revient alors qu'elle a un
@@ -39,8 +40,8 @@ récidivé sont ceux qui ont posé un contrôle de toute la catégorie (#619,
   répétitions prévues et les glissements (af-56yoam.1). Les PR fusionnées
   du 22/10 au 23/11/2026 sont reclassées dans
   `docs/defect-rules-baseline.tsv` ; une PR plus récente est lue sur sa
-  ligne facultative `Règle : <id>` (`Règle : <id> — prévue (<bead>)` pour
-  un site qu'un « où ailleurs » antérieur a nommé). `bin/factory-weekly`
+  ligne `Règle :`, obligatoire depuis af-56yoam.2 pour un correctif.
+  `bin/factory-weekly`
   en tire sa section « Récidives par règle ».
 
 Intent (Benjamin, ses mots, 23/11/2026 17:19 Paris, sur l'objectif D1) :

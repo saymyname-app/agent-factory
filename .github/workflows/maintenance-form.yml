@@ -1,0 +1,60 @@
+name: Maintenance form
+
+# The maintenance lines of a Factory fix, checked in CI (af-56yoam.2).
+# Intent (Benjamin, his words, 23/11/2026 17:19 Paris, on decision D2):
+# « Oui, les trois ». Mechanism (agent interpretation): the check
+# bin/pr-autopilot already made before arming (`maintenance_form_gate`)
+# becomes a CI job that the ruleset of main requires beside "Tests". Both
+# run `lib/defect_classes.py check-pr-body` on the same body; the lines and
+# their form: docs/DELIVERY.md, "Where else?".
+#
+# Its own workflow, not a job of ci.yml: a body edit must start this check
+# again, and in ci.yml the `edited` event would cancel the battery of the
+# same pull request (one concurrency group) or rerun it for a word changed.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+  # A required check must report on the merge queue's commit too, or
+  # nothing queued can merge. There is no body to read: it passes at once.
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
+
+concurrency:
+  group: maintenance-form-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  form:
+    name: Maintenance form
+    # Where Factory CI runs (vars.FACTORY_CI_RUNNER, docs/OPERATIONS.md).
+    runs-on: ${{ vars.FACTORY_CI_RUNNER == 'self-hosted' && 'factory-ci' || 'ubuntu-24.04' }}
+    steps:
+      - name: A merge-group commit has no body to check
+        if: github.event_name != 'pull_request'
+        run: echo "merge group - each pull request in it was checked on its own run"
+
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+
+      # The body is read live, not from the event: a run started again by
+      # hand reads the body as it is now. A branch that is not a maintenance
+      # branch (MAINTENANCE_BRANCHES of lib/defect_classes.py) passes.
+      # The register is the one of this pull request's merge commit: a fix
+      # that adds its class, rule or passage point is read with it.
+      - name: Check the maintenance lines of the pull request body
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$NUMBER" --jq '.body // ""' > "$RUNNER_TEMP/body"
+          python3 lib/defect_classes.py check-pr-body --branch "$BRANCH" --github-repo "$GITHUB_REPOSITORY" \
+            < "$RUNNER_TEMP/body"

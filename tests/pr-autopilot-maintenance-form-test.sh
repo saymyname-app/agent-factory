@@ -8,6 +8,10 @@
 # repaired the place it was seen and wrote the rest « hors périmètre ».
 # Without the lines the PR is held, labelled and explained once; a product
 # rig's PR, or a Factory PR that is not a fix branch, is not affected.
+# Since af-56yoam.2 the fix also names its rule, its « Où ailleurs » is a
+# command and its result, and a rule already fixed comes back « prévue
+# (<bead>) » or as a slip through its passage point: the same check as the
+# CI job « Maintenance form » (decision D2).
 
 set -Eeuo pipefail
 
@@ -34,17 +38,19 @@ pr() {  # number branch -> one green, unarmed PR of the operator
 # 1: fix/ without the lines       2: do-work/ with the three lines
 # 3: fix/ naming a class unknown on main, which its head adds
 # 4: feat/ without the lines      5: fix/ « Catégorie : aucune — raison »
-printf '[%s,%s,%s,%s,%s]\n' "$(pr 1 fix/launch-copies)" "$(pr 2 do-work/af-abc123)" "$(pr 3 fix/new-class)" \
-  "$(pr 4 feat/cockpit-page)" "$(pr 5 fix/decision-carried-out)" > "$TMP/factory-open.json"
+# 7: fix/ a slip of a rule already fixed, without its passage point
+printf '[%s,%s,%s,%s,%s,%s]\n' "$(pr 1 fix/launch-copies)" "$(pr 2 do-work/af-abc123)" "$(pr 3 fix/new-class)" \
+  "$(pr 4 feat/cockpit-page)" "$(pr 5 fix/decision-carried-out)" "$(pr 7 fix/slip)" > "$TMP/factory-open.json"
 printf '[%s]\n' "$(pr 6 fix/backend-thing)" > "$TMP/backend-open.json"
 printf 'Corrige le cas observé.\n' > "$TMP/bodies/1"
-printf 'Closes af-abc123.\n\nCatégorie : P — survit à son lanceur\nOù ailleurs : grep, 2 chemins corrigés ici\nContrôle de catégorie : tests/project-launch-test.py\n' > "$TMP/bodies/2"
-printf 'Catégorie : Q — nouvelle\nOù ailleurs : aucun autre chemin\nContrôle de catégorie : tests/q-test.py\n' > "$TMP/bodies/3"
+printf 'Closes af-abc123.\n\nCatégorie : P — survit à son lanceur\nRègle : P.own — prévue (af-abc999)\nOù ailleurs : `grep -rn Popen bin lib` → 2 chemins corrigés ici\nContrôle de catégorie : tests/project-launch-test.py\n' > "$TMP/bodies/2"
+printf 'Catégorie : Q — nouvelle\nRègle : Q.new\nOù ailleurs : `grep -rn q bin` → aucun autre chemin\nContrôle de catégorie : tests/q-test.py\n' > "$TMP/bodies/3"
+printf 'Catégorie : P — survit à son lanceur\nRègle : P.own — glissement\nOù ailleurs : `grep -rn Popen bin lib` → 1 chemin\nContrôle de catégorie : tests/project-launch-test.py\n' > "$TMP/bodies/7"
 printf 'Une page.\n' > "$TMP/bodies/4"
 printf 'Catégorie : aucune — exécute une décision de Benjamin\n' > "$TMP/bodies/5"
 printf 'rien\n' > "$TMP/bodies/6"
 { cat "$REPO_ROOT/docs/DEFECT_CLASSES.md"
-  printf '\n## Q — Nouvelle\n\n- Invariant : x.\n- Contrôle : aucun — y.\n- Occurrences : #3.\n- Ouvertes : aucune connue.\n'
+  printf '\n## Q — Nouvelle\n\n- Invariant : x.\n- Règles :\n  - `Q.new` : Phrase. Passage : aucun.\n- Contrôle : aucun — y.\n- Occurrences : #3.\n- Ouvertes : aucune connue.\n'
 } > "$TMP/head-registry-3.md"
 
 cat > "$TMP/bin/gh" <<STUB
@@ -112,6 +118,8 @@ armed 2 example-corp/factory || { echo "$out" >&2; fail "a do-work fix carrying 
 armed 3 example-corp/factory || { echo "$out" >&2; fail "a fix whose head adds its new class was not armed"; }
 armed 4 example-corp/factory || { echo "$out" >&2; fail "a feature branch was held by the maintenance form"; }
 armed 5 example-corp/factory || { echo "$out" >&2; fail "« Catégorie : aucune — raison » was not accepted"; }
+armed 7 example-corp/factory && fail "a slip without its passage point was armed"
+grep -qF "Point de passage :" "$TMP/comments-7.md" || { echo "$out" >&2; fail "PR 7's explanation does not ask for its passage point"; }
 armed 6 example-corp/example-backend || { echo "$out" >&2; fail "a product rig's PR was held by the maintenance form"; }
 grep -q "pr view 6 .*--json body" "$TMP/gh.log" && fail "the body of a product rig's PR was read"
 
