@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -163,6 +164,32 @@ class FactoryWeeklyTest(unittest.TestCase):
         self.assertEqual(1040, mayor["total"])
         self.assertEqual({"2026-11-11": 520, "2026-11-12": 520}, mayor["per_day"])
         self.assertIn("Coût du Mayor", self.weekly("--week", "2026-W46"))
+
+    def test_the_slips_of_the_month_are_shown_by_rule_against_d1(self):
+        # af-56yoam.1: the baseline answers for the PRs it holds; the fake's three
+        # Factory PRs have no « Règle : » line and are counted unclassified.
+        sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+        import defect_classes
+        baseline = defect_classes.load_baseline()
+        november = sum(1 for row in baseline.values() if row["nature"] == "glissement" and row["date"][:7] == "2026-11")
+        out = json.loads(self.weekly("--week", "2026-W46", "--json"))
+        r = out["observed"]["rule_recurrence"]
+        self.assertEqual(("2026-11", november, 3), (r["month"], r["slips"], r["unclassified"]))
+        self.assertEqual(november, sum(r["slips_by_rule"].values()))
+        self.assertEqual(november // 2, r["d1"]["monthly_max"])
+        self.assertEqual("ko", r["status"])
+        self.assertLessEqual(set(r["watched_slips"]), set(r["d1"]["watched"]))
+        table = self.weekly("--week", "2026-W46")
+        self.assertIn(f"Récidives par règle (11/2026, Paris, af-56yoam) : {november} glissements", table)
+        self.assertIn("Revue le 21/12/2026 (af-56yoam.4)", table)
+
+    def test_the_recurrence_is_unmeasured_not_fatal_when_gh_cannot_list_bodies(self):
+        gh = os.path.join(self.tmp.name, "bin", "gh")
+        write(gh, FAKE_GH.replace("import json, sys\n", "import json, sys\nif 'body' in ' '.join(sys.argv): sys.exit(1)\n"), 0o755)
+        out = json.loads(self.weekly("--week", "2026-W46", "--json"))
+        self.assertEqual("unmeasured", out["observed"]["rule_recurrence"]["status"])
+        self.assertEqual(0.6, out["measures"]["maintenance_share"]["value"])
+        self.assertIn("Récidives par règle (11/2026) : non mesuré", self.weekly("--week", "2026-W46"))
 
     def test_a_malformed_week_is_refused_before_anything_is_read(self):
         run = subprocess.run([TOOL, "--week", "46"], env=self.env, capture_output=True, text=True)

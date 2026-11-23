@@ -28,6 +28,16 @@ Il ne voit pas les sessions que gc n'ingère pas (le Mayor sur Codex depuis le
 usine (ses `run_id` sont des wisps purgés). Lire ce fichier, c'est
 dédoublonner par `idempotency_key`, jamais compter ses lignes.
 
+Récidives par règle (af-56yoam.1, sans seuil du tableau) : pour le mois de
+la semaine (Paris), `observed.rule_recurrence` donne les glissements, les
+répétitions prévues et les premières corrections par règle concrète de
+`docs/DEFECT_CLASSES.md`, lues par `lib/defect_classes.py` dans
+`docs/defect-rules-baseline.tsv` puis sur la ligne `Règle :` des PR plus
+récentes, et les juge contre l'objectif D1 : zéro glissement sur les règles
+qui ont glissé au moins deux fois dans la base, au plus la moitié des
+glissements de novembre 2026 par mois, revue le 21/12/2026 (af-56yoam.4).
+Une PR sans ligne ni place dans la base est comptée « sans règle ».
+
 Une mesure sans source vaut `null`, état `unmeasured`, avec sa raison ;
 `not_measured` nomme ce que l'outil ne calcule pas (âge des branches
 d'intégration, demandes hors liste fermée, défauts échappés, sessions du PC
