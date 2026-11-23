@@ -76,7 +76,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/trial-lock-held-test.sh`,
   `bash tests/planning-artifacts-close-test.sh`,
   `python3 tests/factory-observe-test.py LiveObservationTest.test_the_beads_sessions_and_pull_requests_are_read_together_beads_once`,
-  `bash tests/factory-watchdog-test.sh` (cas 1c)
+  `bash tests/factory-watchdog-test.sh` (cas 1c),
+  `bash tests/factory-guard-runtime-worktree-test.sh` (cas 5),
+  `bash tests/escalation-door-test.sh` (budget du balayage)
   — complet pour les commandes Python bornées de `bin/`, `lib/` et
   `tests/cockpit-criteria/` : un seul lanceur (`lib/bounded_process.py`)
   ouvre une session et tue son groupe au délai, et aussi quand l'appelant
@@ -147,7 +149,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   fois, lus avec les sessions et les PR en même temps (af-ufug19). Le
   cas 1c de `factory-watchdog-test.sh` tient ses sections 1 à 9 : les
   lectures qui ne dépendent de rien d'autre dans la passe partent
-  ensemble (af-1oo6zy).
+  ensemble (af-1oo6zy). Le cas 5 de `factory-guard-runtime-worktree-test.sh`
+  refuse un test d'ascendance par branche distante (af-9dcuga) ; celui du
+  balayage d'`escalation-door-test.sh` tient qu'un budget épuisé ne commence
+  plus de page et sort à 0 (af-kvi78c).
 - Occurrences : #624, #628, #629, #630, #631, #636, #647, #657, #658, #661,
   #667, #694, #696, #705, #706, #708, #710, #713, #721 ; copies orphelines du
   22/10 (sans PR) ; af-kky570 ; af-npz9v1.46 ; af-npz9v1.26 ; af-30zwwu ;
@@ -213,7 +218,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   quarantaines, sessions puis convois : 61 s d'une passe de 69 s à une
   charge de 28, la relève en direct coupée trois passes de suite, cinq
   échecs de l'ordre en trois heures le 22/11 ; lues ensemble, 31 s ->
-  13 s sur la ville).
+  13 s sur la ville) ; af-9dcuga (la section runtime-worktrees de
+  `factory-guard` lançait un `git merge-base` par branche distante, ~900,
+  pour une worktree hors d'origin : 66 s du budget de 150 s à une charge
+  de 12, sept sections non vérifiées ; un seul `rev-list`, 0,2 s) ;
+  af-kvi78c (`escalation-door sweep` : 87 s à une charge de 9 contre un
+  ordre à 60 s ; budget de 90 s, ordre à 180 s).
 - Ouvertes : les invocations directes antérieures hors des occurrences de
   l'étude B sont nommées une par une, avec leur date et leur motif, dans
   `config/bounded-process-exceptions.tsv` ; une vingtaine de délais écrits à

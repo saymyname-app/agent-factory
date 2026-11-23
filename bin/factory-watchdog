@@ -259,7 +259,9 @@ if [ -x "$CONVOY_STATE" ]; then
 fi
 if [ "$CHECK_ONLY" != "1" ]; then
   # Open alerts to withdraw: one filed later this pass is active, so never withdrawn.
+  # open only: an alert already taken for repair is closed by its repair, not by this sweep.
   prefetch quarantine_alerts gc bd list --status open --title-contains "$QUARANTINE_BEAD_PREFIX" --json
+  # open only: an alert already taken for repair is closed by its repair, not by this sweep.
   prefetch stall_alerts gc bd list --status open --title-contains "$STALL_PREFIX" --json
 fi
 
@@ -478,7 +480,6 @@ Detected by factory-watchdog from $rig_name's gc:control-quarantined beads. Obse
           --append-notes "no new control-step quarantine in this group for ${QUARANTINE_WINDOW_HOURS}h; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
           && did "auto-resolved recovered control-quarantine bead $existing_id"
       fi
-    # open only: an alert already taken for repair is closed by its repair, not by this sweep.
     done < <(jq -r '.[] | [.id, .title] | @tsv' <<<"$quarantine_alerts_json" 2>/dev/null)
   fi
   rm -f "$quarantine_active_titles"
@@ -562,7 +563,6 @@ Detected by factory-watchdog (af-1fvzns, af-xgd1rd, af-hnh16e): the ticket is st
         && gc bd update "$existing_id" --set-metadata gc.outcome=pass --status=closed \
           --append-notes "the ticket moves again; auto-resolved by factory-watchdog" >/tmp/edoor-out.log 2>&1 \
         && did "auto-resolved ticket without a next step $existing_id"
-    # open only: an alert already taken for repair is closed by its repair, not by this sweep.
     done < <(jq -r '.[] | [.id, .title] | @tsv' <<<"$stall_alerts_json" 2>/dev/null)
   fi
   rm -f "$stall_active" "$stall_show" "$stall_payload"

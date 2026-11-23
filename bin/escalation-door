@@ -132,7 +132,10 @@
 #                              af-kj34b5). If another escalation owns the
 #                              door, exits 75 so the periodic order retries
 #                              without reporting ordinary serialization as
-#                              a chronic failure.
+#                              a chronic failure. Starts no page once
+#                              $ESCALATION_DOOR_SWEEP_BUDGET_SECONDS (90),
+#                              list included, are spent: the rest waits for
+#                              the next pass (af-kvi78c).
 #   clear <bead>                Once the decision is resolved without a
 #                              recorded answer, clear gc.needs_benjamin and
 #                              any Mayor-first paging state on <bead>, and
@@ -166,6 +169,7 @@ PROGRAM_NAME="escalation-door"
 GC_BIN="${GC_BIN:-gc}"
 ESCALATION_RECIPIENT="${GC_ESCALATION_RECIPIENT:-human}"
 MAYOR_FIRST_GRACE_SECONDS="${ESCALATION_DOOR_MAYOR_GRACE_SECONDS:-7200}"
+SWEEP_BUDGET_SECONDS="${ESCALATION_DOOR_SWEEP_BUDGET_SECONDS:-90}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
 OPERATOR_CONFIG_BIN="${OPERATOR_CONFIG_BIN:-$ROOT/bin/operator-config}"
 PROPOSAL_DOOR_BIN="${PROPOSAL_DOOR_BIN:-$ROOT/bin/proposal-door}"
@@ -492,7 +496,7 @@ page_resolved_by_closing() {  # issue_json reason
 }
 
 cmd_sweep() {
-  local now due_json
+  local now due_json start=$SECONDS
   now=$(now_epoch)
   # --limit 0: `bd list` stops at 50 beads by default, and this list only
   # grows (below).
@@ -518,6 +522,15 @@ cmd_sweep() {
       if ! page_resolved_by_closing "$issue" "$reason" && ((age < MAYOR_FIRST_GRACE_SECONDS)); then
         continue
       fi
+    fi
+    # af-kvi78c: under load the list alone takes 13 to 45 s and each page acted
+    # on three more calls of 3 to 13 s; a pass ran 87 s at a load of 9 against
+    # the order's 60 s and was killed. A page is idempotent (stamped once), so
+    # one not started now is simply taken by the next pass.
+    if ((SECONDS - start >= SWEEP_BUDGET_SECONDS)); then
+      printf 'SWEPT: time budget (%ss) spent, %s and any page after it wait for the next pass\n' \
+        "$SWEEP_BUDGET_SECONDS" "$bead"
+      return 0
     fi
     issue=$(show_bead "$bead")
     paged_at=$(jq -r '.metadata["gc.escalation_mayor_paged_at"] // empty' <<<"$issue")

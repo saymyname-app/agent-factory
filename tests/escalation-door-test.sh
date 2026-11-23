@@ -604,6 +604,21 @@ grep -Fq "SWEPT: af-due overdue" <<<"$out" \
 [[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-later.json") == none ]] \
   || fail "the deadline check reminded the page that was not due"
 
+# A spent time budget starts no page and exits 0: the page waits for the next
+# pass instead of the order being killed past its timeout (af-kvi78c).
+reset_beads
+seed af-due "$(jq -nc --arg paged "$(date -u -d "@$T0" +%Y-%m-%dT%H:%M:%SZ)" '
+  {id: "af-due", status: "open",
+   metadata: {"gc.escalation_mayor_paged_at": $paged, "gc.escalation_mayor_reason": "stuck PR"},
+   notes: "", labels: []}')"
+TESTS_RUN=$((TESTS_RUN + 1))
+out=$(ESCALATION_DOOR_SWEEP_BUDGET_SECONDS=0 ESCALATION_DOOR_NOW=$((T0 + 7200)) door sweep) \
+  || fail "a sweep with its budget spent exited non-zero: $out"
+[[ $out == *"time budget (0s) spent, af-due"* ]] || { echo "$out" >&2; fail "a spent budget was not reported"; }
+[[ $(jq -r '.metadata["gc.escalation_mayor_overdue_at"] // "none"' "$TEST_TMP/beads/af-due.json") == none ]] \
+  || fail "a sweep with its budget spent still reminded a page"
+grep -Fq 'mail send' "$TEST_TMP/calls.log" && fail "a sweep with its budget spent still mailed"
+
 # A bead the list returns without its metadata is read, never skipped: a
 # pending page must not be lost to a thinner list.
 TESTS_RUN=$((TESTS_RUN + 1))

@@ -791,12 +791,18 @@ if [ -d "$RUNTIME_WT_ROOT" ]; then
       RT_ON_ORIGIN=unknown
       bad "worktree '$wt' not checked for unpushed commits (git ls-remote timed out)"
     fi
-    while read -r rsha _rref; do
-      [ -z "$rsha" ] && continue
-      if git -C "$wt" merge-base --is-ancestor "$RT_HEAD" "$rsha" 2>/dev/null; then
-        RT_ON_ORIGIN=1; break
-      fi
-    done <<<"${RT_REMOTE_CACHE[$RT_ORIGIN]}"
+    # One process, not one `merge-base --is-ancestor` per remote head (af-9dcuga):
+    # with ~900 heads on origin, a worktree whose HEAD is on none of them made
+    # this section 66 s of the 150 s budget at a load of 12 (2026-11-23), and
+    # every section after it went unchecked -- the class work-backup left on
+    # 2026-11-19 (af-abozjt). rev-list prints HEAD unless some remote head this
+    # worktree has reaches it; a head it does not have reaches nothing here.
+    if [ "$RT_ON_ORIGIN" = "0" ] && [ -n "${RT_REMOTE_CACHE[$RT_ORIGIN]}" ]; then
+      RT_UNREACHED=$(awk '{print $1}' <<<"${RT_REMOTE_CACHE[$RT_ORIGIN]}" \
+        | git -C "$wt" cat-file --batch-check='%(objectname)' 2>/dev/null | grep -v ' missing$' | sed 's/^/^/' \
+        | git -C "$wt" rev-list -n1 "$RT_HEAD" --stdin 2>/dev/null) \
+        && [ -z "$RT_UNREACHED" ] && RT_ON_ORIGIN=1
+    fi
 
     RT_DIRTY=$(git -C "$wt" status --porcelain --untracked-files=all 2>/dev/null | grep -c . || true)
     if [ "${RT_DIRTY:-0}" -gt 0 ]; then
