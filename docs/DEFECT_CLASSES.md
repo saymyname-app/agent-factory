@@ -34,6 +34,31 @@ récidivé sont ceux qui ont posé un contrôle de toute la catégorie (#619,
   mesure de la méthode : une catégorie qui revient alors qu'elle a un
   contrôle signale un contrôle incomplet, on complète le contrôle et on
   rouvre l'entrée ici, pas un ticket.
+- `python3 lib/defect_classes.py count --by-rule --since <date>` : par
+  règle concrète et par mois (Paris), les premières corrections, les
+  répétitions prévues et les glissements (af-56yoam.1). Les PR fusionnées
+  du 22/10 au 23/11/2026 sont reclassées dans
+  `docs/defect-rules-baseline.tsv` ; une PR plus récente est lue sur sa
+  ligne facultative `Règle : <id>` (`Règle : <id> — prévue (<bead>)` pour
+  un site qu'un « où ailleurs » antérieur a nommé). `bin/factory-weekly`
+  en tire sa section « Récidives par règle ».
+
+Intent (Benjamin, ses mots, 23/11/2026 17:19 Paris, sur l'objectif D1) :
+« Oui, les trois ».
+Mechanism (interprétation de l'agent, af-56yoam.1) : une famille range 3 à
+30 règles différentes, donc compter par famille ne dit pas si une règle
+revient (lecture de 152 PR le 23/11). L'unité de la mesure est la règle
+concrète : une phrase vérifiable par du code, un identifiant stable, son
+point de passage unique. Une répétition est **prévue** quand un « où
+ailleurs » antérieur a ouvert un ticket pour ce site, ou qu'elle suit un
+découpage planifié ; c'est un **glissement** quand la règle avait déjà une
+correction fusionnée et revient. Objectif D1 : zéro glissement sur les
+règles qui ont glissé au moins deux fois dans la base de référence (les
+règles qui reviennent vraiment), et les glissements du mois divisés par
+deux par rapport à novembre 2026 (du 1er au 23, dans la base) ; revue le
+21/12/2026 (af-56yoam.4). Une règle `<CODE>.autre` range les défauts isolés d'une
+famille : elle ne glisse jamais, et trois PR de même cause en font une
+règle nommée.
 
 ## Format
 
@@ -48,13 +73,39 @@ espaces) :
 - `Ouvertes` : les occurrences encore présentes dans le code et leurs Beads,
   ou `aucune connue`.
 
-`tests/defect-classes-test.py` refuse une entrée incomplète. Une catégorie
+Et le champ `Règles` : la ligne `- Règles :`, puis une règle concrète par
+ligne `` - `<CODE>.<règle>` : <phrase vérifiable>. Passage : <point de
+passage unique, ou aucun>. `` indentée de deux espaces (sa suite de quatre).
+L'identifiant ne change plus une fois écrit : la base de référence et les
+PR le citent.
+
+`tests/defect-classes-test.py` refuse une entrée incomplète, une règle sans
+phrase ou sans passage, ou rangée sous une autre catégorie. Une catégorie
 nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 ## P — Processus ou durée sans propriétaire ni budget mesuré
 
 - Invariant : Tout ce qu'un outil lance meurt avec lui, quelle que soit la
   façon dont il finit ; tout délai vient d'une mesure.
+- Règles :
+  - `P.own` : Tout processus qu'un outil, un ordre ou un test lance meurt
+    avec son propriétaire, quelle que soit la façon dont celui-ci finit.
+    Passage : `lib/bounded_process.py` pour le Python de `bin/` et `lib/`,
+    `lib/ci_test_reaper.py` pour les tests ; le bash, les formules et les
+    processus détachés restent hors passage.
+  - `P.budget` : Toute attente ou tout appel a un budget, et ce budget vient
+    d'une mesure faite sous la charge réelle, pas d'un chiffre écrit à la
+    main. Passage : `lib/test_budgets.py` pour les tests de ticket ; aucun
+    pour les ordres et les outils.
+  - `P.load` : Le coût d'une passe, d'un ordre, d'un test ou d'un lecteur ne
+    croît pas avec l'état (une lecture par élément, des lectures en série,
+    une relecture complète) et ne prend de l'hôte que sa part. Passage :
+    `lib/host_slots.py` pour les exécutions lourdes ; aucun pour les
+    lectures du suivi.
+  - `P.proc-gone` : Une lecture de l'état d'un processus (procfs) traite sa
+    disparition comme sa fin, jamais comme une erreur. Passage : aucun.
+  - `P.autre` : Défaut isolé de la famille, sans règle nommée. Passage :
+    aucun.
 - Contrôle : `python3 tests/bounded-process-test.py`,
   `python3 tests/project-launch-test.py`, `python3 tests/test-budgets-test.py`,
   `bash tests/agent-wait-polling-test.sh`,
@@ -238,6 +289,54 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Chaque arrêt, chaque parcage et chaque option proposée à
   Benjamin a un chemin de code qui fait bouger le ticket, ou dit « reste à
   Benjamin, par telle porte ».
+- Règles :
+  - `I.repair-resume` : Un ticket arrêté ou parqué en attente d'une
+    réparation liée reprend une fois, par une seule transition, quand la
+    livraison de cette réparation est prouvée dans l'arbre qu'il teste.
+    Passage : aucun (T4 d'af-56yoam : une machine d'états dans
+    `lib/convoy_state.py`).
+  - `I.convoy-unblock` : Une sortie codée vaut pour tout état de même forme,
+    jamais pour un convoi, un ticket ou un historique nommé. Passage :
+    aucun (T5 : un lint refuse un identifiant de ticket ou de convoi écrit
+    en dur).
+  - `I.option-exit` : Chaque option proposée à Benjamin, et chaque levée
+    d'arrêt, a un consommateur codé qui fait bouger le ticket comme elle
+    l'annonce. Passage : aucun ; contrôle
+    `tests/state-exit-contract-test.py`.
+  - `I.bound-fact` : Une borne de reprises ne compte que ce que le ticket a
+    fait, jamais un fait de l'usine ou une reprise ouverte par une réponse.
+    Passage : aucun.
+  - `I.frozen-succession` : Le test gelé d'un autre ticket ne change que
+    par une succession autorisée, décidée en un seul endroit. Passage :
+    `check_amend` de `bin/tdd-step` (des exceptions y sont encore écrites
+    en dur ; T5 : `succession_allowed()`).
+  - `I.route-deadline` : L'attente d'un rôle (relecteur, Evaluator) compte
+    son délai et sa borne depuis la prise de la route, jamais depuis son
+    envoi. Passage : aucun (T9 : `route_deadline()`).
+  - `I.ticket-own-changes` : Un changement apporté par la base fusionnée
+    n'est jamais imputé au ticket. Passage : aucun (T9 :
+    `ticket_own_changes()`).
+  - `I.answer-binding` : Une réponse de Benjamin compte pour la demande
+    qu'elle tranche et pour elle seule : ni perdue, ni consommée par une
+    autre reprise. Passage : aucun (T9 : `answer_for()`).
+  - `I.green-stop` : Un arrêt décidé sur un vert (critère déjà vert, rouge
+    non reproduit, preuve déplacée) a une sortie codée : rejouer, puis
+    clore ou reprendre une fois. Passage : aucun.
+  - `I.stale-verdict` : Un verdict ou un arrêt périmé (contrat changé,
+    nouvelle pointe) est rejugé ou renvoyé à son auteur, jamais tenu pour
+    terminal. Passage : aucun.
+  - `I.place-cap` : Une reprise comptée ou un tour de correction attend une
+    place sous le plafond N, dans l'ordre d'arrivée, et la prend. Passage :
+    aucun.
+  - `I.delivery-exit` : Un refus de la chaîne de livraison (file de fusion,
+    branche impoussable) a une sortie codée : retour à l'auteur ou constat
+    déposé une fois. Passage : aucun.
+  - `I.patch-refusal` : Un repair rédigé que la porte de patch refuse est
+    noté là où il a été rédigé et arrête son convoi. Passage : aucun.
+  - `I.integration-conflict` : La reprise de la branche protégée en conflit
+    dans une branche d'intégration a une sortie codée. Passage : aucun.
+  - `I.autre` : Défaut isolé de la famille, sans règle nommée. Passage :
+    aucun.
 - Contrôle : `python3 tests/state-exit-contract-test.py` — complet : sa table
   tient la liste fermée des raisons d'arrêt et de parcage, la cardinalité de
   chaque liste d'options proposée à Benjamin, et exige pour chaque ligne une
@@ -414,6 +513,30 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Un faux outil refuse ce que le vrai refuse ; un instrument qui
   juge est étalonné sur un cas connu avant de servir ; on juge l'état
   résultant, jamais un morceau.
+- Règles :
+  - `D.fake-tool` : Un faux `bd`, `gc` ou `gh` refuse ce que le vrai refuse
+    et rend la même forme (pages, drapeaux, état). Passage : aucun (T6 :
+    des transcriptions enregistrées sur les vrais outils) ; contrôle
+    `tests/fake-tool-contract-test.py`.
+  - `D.isolated-cockpit` : Le Cockpit d'essai et la cité isolée ont leurs
+    propres portes, verrous et état, et servent ce que le réel sert.
+    Passage : `bin/cockpit-isolated`.
+  - `D.resulting-state` : On juge l'état résultant entier (graphe, liste
+    complète des fichiers, suivi relu après l'écriture), jamais un morceau.
+    Passage : aucun.
+  - `D.merged-per-github` : « Fusionnée » se lit comme GitHub le dit (PR
+    fusionnée qui tient la tête), jamais par la seule ascendance Git, qu'une
+    fusion squash ne donne pas. Passage : aucun.
+  - `D.eval-datasets` : L'Évaluateur juge sur les jeux du ticket, dont ceux
+    de la démonstration et ceux que la branche apporte. Passage : aucun.
+  - `D.calibrated-judge` : Un instrument qui juge (relecteur, tolérance d'un
+    test) est étalonné sur un cas connu ; une règle vérifiable par du code
+    n'est pas laissée à un jugement. Passage : aucun.
+  - `D.adoption-trial` : L'essai d'adoption d'un rôle passe par le même
+    transport et les mêmes états que le réel, et ne touche que le
+    fournisseur ciblé. Passage : `bin/role-adoption-trial`.
+  - `D.autre` : Défaut isolé de la famille, sans règle nommée. Passage :
+    aucun.
 - Contrôle : `python3 tests/account-home-lint-test.py`,
   `python3 tests/fake-tool-contract-test.py`,
   `python3 tests/cockpit-isolated-https-test.py`,
@@ -475,6 +598,15 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une règle, une fonction : un écrivain et son lecteur, ou deux
   outils, lisent la règle au même endroit.
+- Règles :
+  - `R.ticket-evaluation-proof` : L'écrivain de la Ticket Evaluation et le
+    lecteur de fin de ticket lisent la preuve par la même fonction.
+    Passage : `evaluation_proven_by_test` de `lib/delivery_rules.py`.
+  - `R.close-rule` : Qui peut fermer un ticket du nouveau flux se lit en un
+    seul endroit, par tous les outils qui ferment. Passage :
+    `bin/convoy-state ticket`.
+  - `R.autre` : Une autre règle tenue à deux endroits, sans règle nommée.
+    Passage : `lib/delivery_rules.py` quand la paire y est.
 - Contrôle : `python3 tests/delivery-rules-test.py` tient les quatre paires
   connues sur leurs fonctions communes ; `bash tests/operator-bd-test.sh`
   tient l'identité `po-agent/<session>` entre l'écrivain opérateur et
@@ -512,6 +644,32 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 
 - Invariant : Une alerte dit vrai et une situation qui demande quelqu'un
   produit une alerte.
+- Règles :
+  - `S.load-cut` : Une passe d'ordre coupée ou ralentie par la charge, ou
+    qui ne fait que retrouver un constat déjà déposé, est reportée
+    (sortie 0) ; seules N passes coupées de suite sont un échec. Passage :
+    aucun (chaque ordre code son report ; T9 : `bounded-pass`).
+  - `S.watchdog-stall` : Le gardien signale un ticket sans suite si et
+    seulement si personne ne le fait bouger ni ne l'attend par choix de
+    Benjamin. Passage : `assess_ticket` de `lib/factory_watchdog.py`, avec
+    la règle de levée de `lib/delivery_rules.py`.
+  - `S.merge-confirmed` : Un état de PR (armée, fusionnée, relancée) n'est
+    annoncé qu'une fois relu sur GitHub. Passage : aucun (T9 :
+    `merge_and_confirm`).
+  - `S.fixed-deadline` : Un test attend l'événement qu'il éprouve, jamais
+    une échéance d'horloge fixe que la charge fait tomber. Passage :
+    `isolated_city_wait_for` (`tests/lib/isolated-city.sh`) pour les
+    essais en cité isolée ; aucun ailleurs (T9 : `wait_for_event`).
+  - `S.alert-dedup` : Une alerte cherche son double parmi tous les beads non
+    fermés et ne remonte pas un bead fermé. Passage : aucun ; contrôle
+    `tests/alert-dedup-status-test.py`.
+  - `S.human-request` : Seul ce qui attend vraiment Benjamin, sur la liste
+    fermée d'ADR-0036, lui est présenté comme tel. Passage :
+    `bin/escalation-door benjamin`.
+  - `S.failure-evidence` : Un échec garde sa preuve (nom du contrôle en
+    échec, dossier de l'essai). Passage : aucun.
+  - `S.autre` : Défaut isolé de la famille, sans règle nommée. Passage :
+    aucun.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
   `python3 tests/alert-dedup-status-test.py`,
   `python3 tests/factory-observe-test.py LiveObservationTest`,
@@ -695,6 +853,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lui : un outil qui le rouvre sans le relancer lui retire sa route
   (`gc.routed_to`) et la session de son dernier lancement (`gc.session_id`,
   `gc.session_name`), par `lib/work_route_release.sh`.
+- Règles :
+  - `L.route-release` : Un outil qui rouvre un ticket sans le relancer lui
+    retire sa route et sa session. Passage : `lib/work_route_release.sh`.
 - Contrôle : `python3 tests/work-route-release-test.py` — complet : chaque
   écriture de `bin/` et des formules qui rouvre un bead passe par
   `lib/work_route_release.sh`, ou est nommée dans sa table avec pourquoi elle
@@ -717,6 +878,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   exécute ou lit comme consigne : réglages et hooks des fournisseurs, serveurs
   MCP, mémoire, réglages et scripts de gc, répertoires de travail des autres
   sessions, formules.
+- Règles :
+  - `C.sandbox` : Un rôle confiné n'a en écriture rien qu'une session libre
+    exécute ou lit comme consigne. Passage : `bin/delivery-role-sandbox`.
 - Contrôle : `python3 tests/delivery-role-sandbox-config-test.py`
 - Occurrences : af-q55qqx (F7 de l'analyse du 16/11/2026 : `~/.claude` monté
   en écriture, un relecteur pouvait y poser un hook ; même voie par
@@ -732,6 +896,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Une écriture sur un bead existant ajoute à ses notes
   (`--append-notes`), elle ne les remplace jamais (`--notes`) ; seul
   `bd create --notes` reste permis, un bead neuf n'ayant rien à perdre.
+- Règles :
+  - `H.append-notes` : Une écriture sur un bead existant ajoute à ses notes
+    et ne les remplace jamais. Passage : aucun ; contrôle
+    `tests/bead-notes-append-test.py`.
 - Contrôle : `python3 tests/bead-notes-append-test.py`,
   `bash tests/deliver-close-test.sh`
 - Occurrences : af-2cuvon (le 11/11 puis le 17/11/2026, la fermeture
@@ -748,6 +916,10 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   (`gc --city`) prend FACTORY_ROOT, sinon `lib/factory_city.py` : depuis la
   copie de travail d'un agent, c'est le dossier principal de l'usine, jamais
   la copie, à qui manque le `city.provider.toml` généré.
+- Règles :
+  - `W.city-root` : Un outil qui nomme une ville à gc prend la racine de
+    l'usine, jamais la copie de travail d'où il est lancé. Passage :
+    `lib/factory_city.py`.
 - Contrôle : `python3 tests/factory-city-test.py`,
   `bash tests/factory-work-dispatch-test.sh`
 - Occurrences : af-zry5xu (le 17/11/2026, `bin/proposal-door` lancé par un
@@ -764,6 +936,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
 - Invariant : Aucun invariant commun : une PR rangée ici dit pourquoi elle
   n'entre dans aucune autre catégorie ; trois PR de même cause font une
   catégorie nouvelle.
+- Règles :
+  - `A.reload-code` : Un processus long de l'usine recharge le code fusionné
+    qui le change, et dit la révision qu'il a chargée. Passage :
+    `bin/factory-guard` (redémarrage du Cockpit).
+  - `A.autre` : Défaut isolé sans famille ni règle nommée. Passage : aucun.
 - Contrôle : aucun — catégorie de tri.
 - Occurrences : #619, #622, #639, #655, #677 ; tests nocturnes #634, #663,
   #670, #707 ; af-8hdaf1 (`bin/pr-autopilot` : la lecture de tout
