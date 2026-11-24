@@ -688,8 +688,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
     `isolated_city_wait_for` (`tests/lib/isolated-city.sh`) pour les
     essais en cité isolée ; aucun ailleurs (T9 : `wait_for_event`).
   - `S.alert-dedup` : Une alerte cherche son double parmi tous les beads non
-    fermés et ne remonte pas un bead fermé. Passage : aucun ; contrôle
-    `tests/alert-dedup-status-test.py`.
+    fermés et ne remonte pas un bead fermé ; une tâche planifiée a au plus
+    un bead on-order-failed non fermé, une nouvelle série s'y ajoute en
+    commentaire. Passage : `alert_dedup_unfinished` de
+    `lib/alert_dedup.sh` (clé en métadonnée, ici `gc.order_subject`) ;
+    contrôle `tests/alert-dedup-status-test.py`.
   - `S.human-request` : Seul ce qui attend vraiment Benjamin, sur la liste
     fermée d'ADR-0036, lui est présenté comme tel. Passage :
     `bin/escalation-door benjamin`.
@@ -722,9 +725,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/cockpit-stop-test.py StopDriverTest.test_a_reading_begun_before_the_forced_session_stopped_does_not_say_its_assignment_kept` — partiel : le premier
   tient la frontière entre un report explicite (sortie 75, rejoué sans
   alerte) et une vraie panne répétée (bead et page Mayor), et qu'un bead pris
-  en réparation ou parqué répond encore à sa panne ; `alert-dedup-status`
-  refuse dans `bin/` une recherche d'alerte par titre qui ne lit que les beads
-  `open` : elle lit `open,in_progress,blocked,deferred`, ou c'est un balayage
+  en réparation ou parqué répond encore à sa panne, et qu'une nouvelle série
+  d'un ordre dont le bead n'est pas fermé devient un commentaire sur ce bead,
+  jamais un second bead ; `alert-dedup-status`
+  refuse dans `bin/` et `lib/` une recherche d'alerte par titre ou par
+  métadonnée qui ne lit que les beads `open`, et qu'on-order-failed cherche
+  son bead ailleurs que par `lib/alert_dedup.sh` : elle lit `open,in_progress,blocked,deferred`, ou c'est un balayage
   qui ne ferme que les alertes que personne n'a prises et le dit
   (`# open only:`) ; le deuxième tient
   la collecte VM Beads/Git/GitHub, le silence sur état inchangé, la route

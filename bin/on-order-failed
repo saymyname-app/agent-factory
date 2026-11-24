@@ -20,6 +20,13 @@
 # still the bead of its cause: read as open only, the in_progress af-65mbq2
 # let three duplicates through during its repair (af-yzojic, 2026-11-13).
 #
+# One unfinished bead per order (af-56yoam.8): the order's name is the key
+# (metadata gc.order_subject), looked up through lib/alert_dedup.sh, the
+# passage point of S.alert-dedup. A new series of FAILURE_STREAK failures
+# while that bead is still unfinished is a comment on it (date, count, latest
+# error), not a new bead and not a new page; gc.order_series_at marks the
+# latest failure already told, so a series is told once.
+#
 # Observe-and-page only (ADR-0016 section 7): this never retries, disables,
 # or fixes the failing order itself. Runs as an exec order (no LLM).
 #
@@ -28,6 +35,7 @@ set -uo pipefail
 
 ROOT="${FACTORY_ROOT:-/home/benja/agent-factory}"
 ESCALATION_DOOR="$(dirname "${BASH_SOURCE[0]}")/escalation-door"
+. "$(dirname "${BASH_SOURCE[0]}")/../lib/alert_dedup.sh"
 CHECK_ONLY=0
 QUIET=0
 LOOKBACK="${ON_ORDER_FAILED_LOOKBACK:-3h}"
@@ -89,20 +97,33 @@ while IFS= read -r subject; do
   count=$(printf '%s\n' "$EVENTS" | jq --arg s "$subject" -s '[.[] | select(.subject == $s)] | length')
   [ "${count:-0}" -ge "$FAILURE_STREAK" ] || continue
   last_message=$(printf '%s\n' "$EVENTS" | jq -r --arg s "$subject" 'select(.subject == $s) | .message' | tail -1)
+  last_ts=$(printf '%s\n' "$EVENTS" | jq -r --arg s "$subject" 'select(.subject == $s) | .ts' | tail -1)
 
   title="[on-order-failed] $subject failing repeatedly"
-  existing=$(gc bd list --status open,in_progress,blocked,deferred --title-contains "$title" --json 2>/dev/null | jq 'length' 2>/dev/null)
-  if [ -z "$existing" ]; then
+  key="gc.order_subject=$subject"
+  if ! unfinished=$(alert_dedup_unfinished "$key"); then
     say "on-order-failed: could not read the open beads for $subject, nothing filed this run"
     continue
   fi
-  if [ "$existing" != "0" ]; then
-    say "on-order-failed: $subject already flagged ($count/$LOOKBACK)"
+  existing=$(jq -r '.[0].id // empty' <<<"$unfinished")
+  if [ -n "$existing" ]; then
+    told=$(jq -r '.[0] | .metadata["gc.order_series_at"] // .created_at // empty' <<<"$unfinished")
+    series=$(failures_after "$subject" "${told:-1970-01-01T00:00:00Z}")
+    if [ "${series:-0}" -lt "$FAILURE_STREAK" ]; then
+      say "on-order-failed: $subject already flagged on $existing ($series failure(s) since ${told:-its filing})"
+      continue
+    fi
+    [ "$CHECK_ONLY" = "1" ] && { say "on-order-failed: would note a new series of $subject on $existing ($series)"; continue; }
+    if ! gc bd comments add "$existing" "New failure series of order '$subject': $series failures since $told, latest at $last_ts (latest: $last_message)." >/dev/null 2>&1; then
+      say "on-order-failed: could not comment on $existing for $subject"
+      continue
+    fi
+    gc bd update "$existing" --set-metadata "gc.order_series_at=$last_ts" >/dev/null 2>&1 \
+      || say "on-order-failed: could not mark the series told on $existing, it may be told again"
+    say "on-order-failed: noted a new series of $subject on $existing ($series since $told)"
     continue
   fi
-  last_closed=$(gc bd list --status closed --limit 0 --title-contains "$title" --json 2>/dev/null \
-    | jq -r '[.[].closed_at // empty] | max // "none"' 2>/dev/null)
-  if [ -z "$last_closed" ]; then
+  if ! last_closed=$(alert_dedup_last_closed "$key"); then
     say "on-order-failed: could not read the closed beads for $subject, nothing filed this run"
     continue
   fi
@@ -119,7 +140,8 @@ while IFS= read -r subject; do
     -d "Order '$subject' failed $count times in the last $LOOKBACK (latest: $last_message).
 
 Gas City does not retry, back off, or notify on order failure by itself (upstream contract, engdocs/architecture/orders.md) -- a chronic failure is otherwise silent forever. Diagnose the order's command or config, fix it, then close this bead with the cause." \
-    --metadata "$(jq -n --arg subject "$subject" '{"gc.source":"on-order-failed","gc.order_subject":$subject}')" \
+    --metadata "$(jq -n --arg subject "$subject" --arg told "$last_ts" \
+      '{"gc.source":"on-order-failed","gc.order_subject":$subject,"gc.order_series_at":$told}')" \
     --json 2>/dev/null | jq -r '(.[0]?.id // .id // empty)')
   if [ -z "$created" ]; then
     say "on-order-failed: could not file a bead for $subject"

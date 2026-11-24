@@ -7,8 +7,10 @@
 # canned order.failed lines, and asserts: below the streak threshold, nothing
 # happens; at or above it, exactly one bead is filed and the Mayor is paged
 # once; a second run recognises the still-open bead, or the same bead taken
-# for repair, and does not duplicate it;
-# a different subject is tracked independently; --check-only files nothing.
+# for repair, and does not duplicate it; a new series of the same order while
+# its bead is unfinished is a comment on it, never a second bead
+# (af-56yoam.8); a different order gets its own bead; --check-only files
+# nothing.
 
 set -Eeuo pipefail
 
@@ -29,64 +31,79 @@ mkdir -p "$TMP/bin" "$TMP/beads"
 CALLS="$TMP/calls.log"; : > "$CALLS"
 EVENTS_FILE="$TMP/events.jsonl"
 
-events_n() {  # events_n <subject> <count> [message]
-  local subject=$1 count=$2 message=${3:-exit status 1} i
-  : > "$EVENTS_FILE"
-  for ((i = 0; i < count; i++)); do
+events_add() {  # events_add <subject> <count> <first minute> [message]: one failure a minute from 12:<first>
+  local subject=$1 count=$2 first=$3 message=${4:-exit status 1} i
+  for ((i = first; i < first + count; i++)); do
     jq -nc --arg message "$message" --arg subject "$subject" --arg ts "2026-09-17T12:$(printf '%02d' "$i"):00Z" \
       '{actor:"controller",message:$message,payload:{},subject:$subject,ts:$ts,type:"order.failed",ok:true}' \
       >> "$EVENTS_FILE"
   done
 }
+events_n() {  # events_n <subject> <count> [message]: only these failures, from 12:00
+  : > "$EVENTS_FILE"
+  events_add "$1" "$2" 0 "${3:-exit status 1}"
+}
 
-cat > "$TMP/bin/gc" <<STUB
+# The tracker stub: $TMP/beads/filed holds one bead per line,
+# <id> TAB <order> TAB <gc.order_series_at> TAB <created_at>, all of the status
+# in $TMP/beads/filed-status (open when absent); $TMP/beads/closed-at is the
+# closing time of an older, closed bead of any order.
+cat > "$TMP/bin/gc" <<'STUB'
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$CALLS"
-if [[ \${1:-} == events ]]; then
-  cat "$EVENTS_FILE" 2>/dev/null
+TMP=@TMP@
+printf '%s\n' "$*" >> "$TMP/calls.log"
+if [[ ${1:-} == events ]]; then
+  cat "$TMP/events.jsonl" 2>/dev/null
   exit 0
 fi
-if [[ \${1:-} == bd && \${2:-} == list ]]; then
+if [[ ${1:-} == bd && ${2:-} == list ]]; then
   [[ -f "$TMP/beads/list-fails" ]] && exit 1
-  title=""; status=""
-  args=("\$@")
-  for i in "\${!args[@]}"; do
-    [[ \${args[\$i]} == --title-contains ]] && title="\${args[\$((i+1))]}"
-    [[ \${args[\$i]} == --status ]] && status="\${args[\$((i+1))]}"
+  field=""; status=""
+  args=("$@")
+  for i in "${!args[@]}"; do
+    [[ ${args[$i]} == --metadata-field ]] && field="${args[$((i+1))]}"
+    [[ ${args[$i]} == --status ]] && status="${args[$((i+1))]}"
   done
-  if [[ \$status == closed ]]; then
+  order=${field#gc.order_subject=}
+  if [[ $status == closed ]]; then
     if [[ -f "$TMP/beads/closed-at" ]]; then
-      echo '[{"id":"af-old","closed_at":"'"\$(cat "$TMP/beads/closed-at")"'"}]'
+      echo '[{"id":"af-old","closed_at":"'"$(cat "$TMP/beads/closed-at")"'"}]'
     else
       echo '[]'
     fi
     exit 0
   fi
-  filed_status=open; [[ -f "$TMP/beads/filed-status" ]] && filed_status=\$(cat "$TMP/beads/filed-status")
-  if [[ -n \$title && -f "$TMP/beads/filed" && ",\$status," == *",\$filed_status,"* ]] && grep -qF "\$title" "$TMP/beads/filed"; then
-    echo '[{"id":"af-existing"}]'
-  else
-    echo '[]'
-  fi
+  filed_status=open; [[ -f "$TMP/beads/filed-status" ]] && filed_status=$(cat "$TMP/beads/filed-status")
+  if [[ ",$status," != *",$filed_status,"* || ! -f "$TMP/beads/filed" ]]; then echo '[]'; exit 0; fi
+  awk -F'\t' -v o="$order" '$2 == o' "$TMP/beads/filed" \
+    | jq -Rsc 'split("\n") | map(select(length > 0) | split("\t")
+        | {id: .[0], created_at: .[3], metadata: ({"gc.order_subject": .[1]}
+           + (if .[2] == "" then {} else {"gc.order_series_at": .[2]} end))})'
   exit 0
 fi
-if [[ \${1:-} == bd && \${2:-} == create ]]; then
-  title="\${3:-}"
-  echo "\$title" >> "$TMP/beads/filed"
-  echo '{"id":"af-new1"}'
+if [[ ${1:-} == bd && ${2:-} == create ]]; then
+  meta=""; args=("$@")
+  for i in "${!args[@]}"; do [[ ${args[$i]} == --metadata ]] && meta="${args[$((i+1))]}"; done
+  id="af-new$(( $(cat "$TMP/beads/filed" 2>/dev/null | wc -l) + 1 ))"
+  printf '%s\t%s\t%s\t%s\n' "$id" "$(jq -r '.["gc.order_subject"]' <<<"$meta")" \
+    "$(jq -r '.["gc.order_series_at"] // ""' <<<"$meta")" "2026-09-17T11:00:00Z" >> "$TMP/beads/filed"
+  echo '{"id":"'"$id"'"}'
   exit 0
 fi
-if [[ \${1:-} == bd && \${2:-} == show ]]; then
+if [[ ${1:-} == bd && ${2:-} == update && ${4:-} == --set-metadata && ${5:-} == gc.order_series_at=* ]]; then
+  awk -F'\t' -v OFS='\t' -v id="$3" -v at="${5#gc.order_series_at=}" '$1 == id { $3 = at } 1' \
+    "$TMP/beads/filed" > "$TMP/beads/filed.new" && mv "$TMP/beads/filed.new" "$TMP/beads/filed"
+  exit 0
+fi
+if [[ ${1:-} == bd && ${2:-} == show ]]; then
   # escalation-door's own show_bead call -- every id on the mayor path here
   # is a bead this test just filed, so a minimal open bead is always valid.
-  echo '[{"id":"'"\${3:-}"'","status":"open","metadata":{}}]'
-  exit 0
-fi
-if [[ \${1:-} == mail && \${2:-} == send ]]; then
+  echo '[{"id":"'"${3:-}"'","status":"open","metadata":{}}]'
   exit 0
 fi
 exit 0
 STUB
+sed -i "s|@TMP@|$TMP|" "$TMP/bin/gc"
 chmod +x "$TMP/bin/gc"
 export PATH="$TMP/bin:$PATH"
 export GC_BIN="$TMP/bin/gc"
@@ -128,6 +145,44 @@ grep -q "consecutive failures" "$CALLS" && fail "the page words a total count as
 out=$(run)
 grep -q "^bd create" "$CALLS" && fail "duplicated an already-open finding"
 grep -q "^mail send mayor" "$CALLS" && fail "re-paged an already-open finding"
+grep -q "^bd comments add" "$CALLS" && fail "told again a series its bead already holds"
+
+# --- two more series of the same order: one bead, two comments (af-56yoam.8) -
+# Live: one bead per series, about a hundred [on-order-failed] beads since October.
+: > "$CALLS"
+events_add dolt-remotes-patrol 5 10 "exit status 1: second series"
+out=$(run)
+events_add dolt-remotes-patrol 5 20 "exit status 1: third series"
+out+=$(run)
+out+=$(run)
+grep -q "^bd create" "$CALLS" && { echo "$out" >&2; fail "filed a second bead for a new series of an unfinished one"; }
+grep -q "^mail send" "$CALLS" && fail "paged again for a new series of an unfinished bead"
+[ "$(grep -c '^bd comments add af-new1 ' "$CALLS")" = "2" ] || { cat "$CALLS" >&2; fail "two new series are not two comments on the one bead"; }
+grep -q "^bd comments add af-new1 New failure series of order 'dolt-remotes-patrol': 5 failures since 2026-09-17T12:04:00Z, latest at 2026-09-17T12:14:00Z (latest: exit status 1: second series)" "$CALLS" \
+  || { cat "$CALLS" >&2; fail "the comment does not give the series' count, dates and latest error"; }
+grep -q "^bd comments add af-new1 .*: 5 failures since 2026-09-17T12:14:00Z, latest at 2026-09-17T12:24:00Z" "$CALLS" \
+  || { cat "$CALLS" >&2; fail "the second comment does not start after the first series told"; }
+
+# --- an open bead filed before the series mark counts from its creation -------
+# The one live open bead (pr-autopilot, 2026-11-24) carries no gc.order_series_at.
+printf 'af-legacy\tlegacy-order\t\t2026-09-17T12:02:30Z\n' > "$TMP/beads/filed"; : > "$CALLS"
+events_n legacy-order 8
+out=$(run)
+grep -q "^bd create" "$CALLS" && fail "filed a bead beside an open one filed before the series mark"
+grep -q "^bd comments add af-legacy .*: 5 failures since 2026-09-17T12:02:30Z" "$CALLS" \
+  || { echo "$out" >&2; cat "$CALLS" >&2; fail "an unmarked open bead does not count the series from its creation"; }
+rm -f "$TMP/beads/filed"
+
+# --- two different orders: two beads -----------------------------------------
+: > "$CALLS"
+events_n dolt-remotes-patrol 5
+events_add factory-guard 5 10
+out=$(run)
+[ "$(grep -c '^bd create' "$CALLS")" = "2" ] || { echo "$out" >&2; fail "two failing orders did not get a bead each"; }
+grep -q "^bd create \[on-order-failed\] factory-guard failing repeatedly" "$CALLS" || fail "the second order has no bead of its own"
+grep -q "^bd comments add" "$CALLS" && fail "an order's series was told on another order's bead"
+printf 'af-new1\tdolt-remotes-patrol\t2026-09-17T12:04:00Z\t2026-09-17T11:00:00Z\n' > "$TMP/beads/filed"
+events_n dolt-remotes-patrol 5
 
 # --- a bead taken for repair still answers its cause (af-yzojic) -------------
 # Live: af-65mbq2 in_progress under its repair, three duplicates filed beside it.
@@ -155,7 +210,7 @@ out=$(run)
 grep -q "^bd create" "$CALLS" && { echo "$out" >&2; fail "refiled a bead for failures its closed bead already answered"; }
 grep -q "2 failure(s) since its last bead closed" <<<"$out" || { echo "$out" >&2; fail "did not say how many failures follow the closing"; }
 
-# ...and the streak counts again from that closing.
+# ...and the streak counts again from that closing: a new bead.
 : > "$CALLS"
 events_n dolt-remotes-patrol 8
 out=$(run)
