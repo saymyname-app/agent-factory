@@ -29,7 +29,7 @@ pr	date	regle	nature	preuve
 735	2026-10-26	S.autre	premiere	test nocturne : état de refus figé (af-o76086)
 736	2026-10-27	A.autre	premiere	test nocturne : sessions d'essai de correction réutilisées (af-maa11n)
 737	2026-10-27	aucune	-	met en place la méthode de l'étude B (af-npz9v1.25)
-738	2026-10-27	P.own	glissement	copies project-launch orphelines (af-kky570)
+738	2026-10-27	P.own	prevue	copies project-launch orphelines (af-kky570) ; #737 annonçait « PR suivante » (juge, 23/11)
 739	2026-10-27	R.autre	premiere	commit utile du remplacement ignoré par son lecteur (af-npz9v1.24)
 740	2026-10-27	P.load	prevue	série du vert qui grossit à chaque ticket (étude C T4, af-npz9v1.31)
 741	2026-10-27	A.autre	premiere	révision rejugée en entier (af-npz9v1.23) ; l'auteur la dit 2e de cette cause après #725

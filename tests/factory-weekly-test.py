@@ -176,11 +176,12 @@ class FactoryWeeklyTest(unittest.TestCase):
         r = out["observed"]["rule_recurrence"]
         self.assertEqual(("2026-11", november, 3), (r["month"], r["slips"], r["unclassified"]))
         self.assertEqual(november, sum(r["slips_by_rule"].values()))
-        self.assertEqual(november // 2, r["d1"]["monthly_max"])
-        self.assertEqual("ko", r["status"])
-        self.assertLessEqual(set(r["watched_slips"]), set(r["d1"]["watched"]))
+        # af-56yoam.5: D1 is the slip share (61 % in November, at most 30 %) and zero slip on a closed rule.
+        self.assertEqual((0.61, 0.61, 0.3), (r["slip_share"], r["d1"]["reference_share"], r["d1"]["max_slip_share"]))
+        self.assertEqual(("ko", []), (r["status"], r["closed_slips"]))
         table = self.weekly("--week", "2026-W46")
         self.assertIn(f"Récidives par règle (11/2026, Paris, af-56yoam) : {november} glissements", table)
+        self.assertIn("part des glissements dans les PR de défaut 61 %, au plus 30 % du 01/12 au 20/12", table)
         self.assertIn("Revue le 21/12/2026 (af-56yoam.4)", table)
 
     def test_the_recurrence_is_unmeasured_not_fatal_when_gh_cannot_list_bodies(self):
