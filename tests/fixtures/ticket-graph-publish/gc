@@ -9,7 +9,8 @@ timeout, the way a loaded host answers late (af-usvfdb); later mails answer.
 TICKET_GRAPH_GC_MAIL_SLOW_LANDS=<path> makes every mail store its --dedup key
 in <path> then hang, the way a host that stays loaded answers every resend
 late (af-hlg74k); `bd list --type message --metadata-field
-mail.dedup_key=<key>` reads that store back.
+mail.dedup_key=<key>` reads that store back, or, under SLOW_ONCE, the mark
+of the first mail.
 
 It also serves the two tracker calls bin/convoy-state makes (`gc bd show <id>
 --json`, `gc bd update <id> [--status S] [--add-label L] [--unset-metadata k] --set-metadata k=v ...`) on the same store as the
@@ -54,10 +55,15 @@ if command[:3] == ["mail", "send", "mayor"]:
         import time
         time.sleep(30)
     raise SystemExit(0)
-if command[:4] == ["bd", "list", "--type", "message"] and os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_LANDS"):
+if command[:4] == ["bd", "list", "--type", "message"] and (
+    os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_LANDS") or os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_ONCE")
+):
     key = command[command.index("--metadata-field") + 1].partition("=")[2]
-    store = Path(os.environ["TICKET_GRAPH_GC_MAIL_SLOW_LANDS"])
-    landed = store.exists() and key in store.read_text(encoding="utf-8").split()
+    if os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_LANDS"):
+        store = Path(os.environ["TICKET_GRAPH_GC_MAIL_SLOW_LANDS"])
+        landed = store.exists() and key in store.read_text(encoding="utf-8").split()
+    else:  # one publish, one key: the first mail landed when it left its mark
+        landed = Path(os.environ["TICKET_GRAPH_GC_MAIL_SLOW_ONCE"]).exists()
     print(json.dumps([{"id": "af-msg", "metadata": {"mail.dedup_key": key}}] if landed else []))
     raise SystemExit(0)
 

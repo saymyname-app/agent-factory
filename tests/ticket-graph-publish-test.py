@@ -408,7 +408,7 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         self.assertIs(True, result["mayor_notified"])
         self.assertNotIn("NOT woken", proc.stderr)
         calls = [json.loads(line) for line in gc_log.read_text().splitlines()]
-        self.assertEqual(1, len([call for call in calls if "send" in call]))
+        self.assertEqual(1, len([call for call in calls if "message" in call]))
 
     def test_bd_publish_accepts_a_spec_claimed_by_a_to_tickets_session(self):
         # Spec handoff (docs/agents/issue-tracker.md): the Spec offered for

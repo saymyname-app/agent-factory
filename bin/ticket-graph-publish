@@ -1791,11 +1791,9 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict
     if os.environ.get(SKIP_MAYOR_NOTIFY_ENV):
         return {"mayor_notified": None}
     city = mayor_city()
-    # A loaded host can create the mail yet overrun the timeout (af-usvfdb), on
-    # the retry too (af-hlg74k): a timed-out send is confirmed by reading its
-    # message back under its --dedup key, and the retry's key is suppressed
-    # (exit 0) if the first landed. The key is drawn per call so a later
-    # publish of the same graph still wakes the Mayor.
+    # A loaded host can create the mail yet overrun the timeout (af-usvfdb): the
+    # retry's --dedup key is suppressed (exit 0) if the first landed, and is
+    # drawn per call so a later publish of the same graph still wakes the Mayor.
     dedup = f"ticket-graph-{command}:{graph_digest}:{os.urandom(6).hex()}"
     subject = f"ticket-graph-{command}: {graph_digest}"
     body = (
@@ -1814,14 +1812,16 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict
                 cwd=str(city), check=False, capture_output=True, text=True, timeout=MAYOR_NOTIFY_TIMEOUT_SECONDS,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            if isinstance(exc, subprocess.TimeoutExpired) and mail_landed(GC_BIN, dedup, city=city):
-                return {"mayor_notified": True, "mayor_city": str(city)}
             error = f"could not run gc mail send: {exc}"
         else:
             if proc.returncode == 0:
                 return {"mayor_notified": True, "mayor_city": str(city)}
             detail = (proc.stderr or proc.stdout or "").strip() or "no output"
             error = f"gc mail send exited {proc.returncode}: {detail}"
+    # The retry can time out as well when the host stays loaded (af-hlg74k):
+    # whatever gc answered, the mail found under its key was delivered.
+    if mail_landed(GC_BIN, dedup, city=city):
+        return {"mayor_notified": True, "mayor_city": str(city)}
     print(
         f"{PROGRAM}: WARNING: {command} succeeded but the Mayor was NOT woken "
         f"(city {city}): {error}",
