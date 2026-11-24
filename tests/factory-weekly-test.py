@@ -183,6 +183,34 @@ class FactoryWeeklyTest(unittest.TestCase):
         self.assertIn(f"Récidives par règle (11/2026, Paris, af-56yoam) : {november} glissements", table)
         self.assertIn("part des glissements dans les PR de défaut 61 %, au plus 30 % du 01/12 au 20/12", table)
         self.assertIn("Revue le 21/12/2026 (af-56yoam.4)", table)
+        # af-56yoam.9: before 01/12 no refusal is read; the stop criterion is shown.
+        self.assertEqual({"prs": 0, "branches": []}, r["d1"]["gate_refusals"])
+        self.assertEqual({"share_above": 0.45, "unjustified_refusals_above": "1/3"}, r["d1"]["stop"])
+        self.assertIn("Refus de la porte « Maintenance form » du 01/12 au 20/12 (contrôle en échec au moins une fois) : "
+                      "0 PR.", table)
+        self.assertIn("dépasse encore 45 %, ou si plus d'un refus sur 3 est injustifié, on retire la porte obligatoire",
+                      table)
+
+    def test_d1_in_december_counts_the_refusals_of_the_gate(self):
+        # af-56yoam.9: a December fix naming an already fixed rule is a slip (1/1, KO);
+        # two failed runs of « Maintenance form » on one branch are one refused PR.
+        gh = os.path.join(self.tmp.name, "bin", "gh")
+        write(gh, textwrap.dedent("""\
+            #!/usr/bin/env python3
+            import json, sys
+            if sys.argv[1:3] == ["run", "list"]:
+                assert "maintenance-form.yml" in sys.argv and "2026-12-01..2026-12-06" in sys.argv, sys.argv
+                print(json.dumps([{"headBranch": "fix/a", "event": "pull_request"}] * 2
+                                 + [{"headBranch": "main", "event": "merge_group"}]))
+            elif "body" in " ".join(sys.argv):
+                print(json.dumps([{"number": 990, "title": "fix", "body": "Règle : P.own", "mergedAt": "2026-12-02T10:00:00Z"}]))
+            else:
+                print("[]")
+            """), 0o755)
+        r = json.loads(self.weekly("--week", "2026-W49", "--json"))["observed"]["rule_recurrence"]
+        self.assertEqual(({"prs": 1, "branches": ["fix/a"]}, 1.0, "ko"),
+                         (r["d1"]["gate_refusals"], r["slip_share"], r["status"]))
+        self.assertIn("(contrôle en échec au moins une fois) : 1 PR (fix/a).", self.weekly("--week", "2026-W49"))
 
     def test_the_recurrence_is_unmeasured_not_fatal_when_gh_cannot_list_bodies(self):
         gh = os.path.join(self.tmp.name, "bin", "gh")

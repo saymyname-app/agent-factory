@@ -96,9 +96,13 @@ PARIS = ZoneInfo("Europe/Paris")
 # most 30 % from 01 to 20/12/2026 (November 2026 in the baseline: 61 %), and
 # zero slip on a closed rule, one whose single function is delivered; review
 # on 21/12/2026 (af-56yoam.4). It replaces the ceiling of T1 (18 rules at zero,
-# 43 slips a month).
+# 43 slips a month). Stop criterion (Benjamin, 24/11/2026 00:06 Paris, « Oui,
+# ajoute-le »): at the review, a share still above 45 %, or more than one
+# refusal of the gate « Maintenance form » in three judged unjustified,
+# withdraws that required check; the measure stays (af-56yoam.9).
 D1 = {"review": "2026-12-21", "reference_month": "2026-11", "period": ["2026-12-01", "2026-12-20"],
-      "max_slip_share": 0.30, "bead": "af-56yoam.4"}
+      "max_slip_share": 0.30, "bead": "af-56yoam.4",
+      "stop": {"share_above": 0.45, "unjustified_refusals_above": "1/3"}}
 
 
 class RegistryError(Exception):

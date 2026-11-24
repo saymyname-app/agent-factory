@@ -36,7 +36,12 @@ répétitions prévues et les premières corrections par règle concrète de
 récentes, et les juge contre l'objectif D1 (af-56yoam.5) : la part des PR
 de défaut du mois qui sont des glissements, au plus 30 % (novembre 2026 :
 61 %), et zéro glissement sur une règle que le registre marque « Fermée le
-<date> par #<PR> », revue le 21/12/2026 (af-56yoam.4).
+<date> par #<PR> », revue le 21/12/2026 (af-56yoam.4). Sous
+`d1.gate_refusals`, les PR dont le contrôle « Maintenance form » a échoué
+au moins une fois du 01/12 au 20/12 (dates de création des exécutions, UTC
+de GitHub) ; sous `d1.stop`, le critère d'arrêt (Benjamin, 24/11/2026) :
+à la revue, une part encore au-dessus de 45 %, ou plus d'un refus sur trois
+jugé injustifié, retire la porte obligatoire (af-56yoam.9).
 Une PR sans ligne ni place dans la base est comptée « sans règle ».
 
 Une mesure sans source vaut `null`, état `unmeasured`, avec sa raison ;

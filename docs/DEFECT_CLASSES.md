@@ -70,7 +70,15 @@ ou non » (20 PR). Mechanism (interprétation de l'agent, af-56yoam.5) :
    est livrée : sa ligne porte `Fermée le <AAAA-MM-JJ> par #<PR>.` après
    son passage. Un glissement sur une règle fermée rouvre sa fonction
    unique : on ne lui ajoute pas un cas ;
-3. revue le 21/12/2026 (af-56yoam.4).
+3. revue le 21/12/2026 (af-56yoam.4), avec son critère d'arrêt. Intent
+   (Benjamin, ses mots, 24/11/2026 00:06 Paris) : « Oui, ajoute-le ».
+   Mechanism (interprétation de l'agent, af-56yoam.9) : à la revue, une
+   part encore au-dessus de 45 %, ou plus d'un refus de la porte
+   « Maintenance form » sur trois jugé injustifié, retire cette porte des
+   contrôles obligatoires de `main` ; seule la mesure reste. Le relevé
+   compte ces refus (les PR dont le contrôle a échoué au moins une fois
+   pendant la période) ; dire lesquels étaient injustifiés reste un
+   jugement de la revue.
 
 Cette forme remplace celle de af-56yoam.1 (18 règles à zéro, plafond de 43
 glissements par mois). `lib/defect_classes.py` la calcule (`d1`) et
