@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""bounded-pass — run one pass of an order within its budget; a pass cut by
+the budget is deferred, only DEFER_LIMIT passes cut in a row fail
+(S.load-cut, af-56yoam.7).
+
+    bounded-pass ORDER --budget SECONDS [--kill-after SECONDS]
+                 [--deferred-exit CODE] -- COMMAND [ARGUMENTS...]
+
+Intent (Benjamin, ses mots, 23/11/2026 17:19 Paris, sur l'objectif D1) :
+« Oui, les trois ». Mechanism (agent interpretation, af-56yoam §9.3 rank 6):
+a loaded host slows every read of a healthy pass, none is wedged. From
+af-onrwp8 to af-pmbhlh four orders each wrote their own deferral -- a
+`timeout` around itself, a count file, a limit of 3 -- and a fifth would
+have copied it again. This is that deferral, once.
+
+The pass runs in a session of its own whose group dies with this process
+(`lib/bounded_process.py`). At the budget the group gets SIGTERM, then
+SIGKILL after --kill-after seconds; every process the pass left in another
+group (a `timeout(1)` it started) carries BOUNDED_PASS_ID in its
+environment and is killed too. A pass that exits CODE given by
+--deferred-exit gave up by itself within the budget: it counts as cut.
+
+A cut pass loses nothing -- the next one reads the same state again -- so it
+exits 0, and its count of passes cut in a row grows in
+`$FACTORY_ROOT/.gc/runtime/<ORDER>-deferred-passes`. The DEFER_LIMIT-th in
+a row exits 2: the order fails, `on-order-failed` sees it. A pass that ends
+otherwise clears the count and exits with its own code.
+
+Exits: the pass's own code when it ends; 0 a pass deferred; 2 DEFER_LIMIT
+passes cut in a row, or a usage error.
+Doc: docs/FACTORY_TOOLS.md (`bounded-pass`).
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+import bounded_process  # noqa: E402
+
+PROGRAM = "bounded-pass"
+# The one place N is read: the N-th pass cut in a row fails its order.
+DEFER_LIMIT = 3
+MARK = "BOUNDED_PASS_ID"
+NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def positive(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number of seconds: {text!r}")
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be above 0: {text!r}")
+    return value
+
+
+def count_file(order: str) -> Path:
+    root = Path(os.environ.get("FACTORY_ROOT") or ROOT)
+    return root / ".gc" / "runtime" / f"{order}-deferred-passes"
+
+
+def kill_marked(mark: str) -> None:
+    """SIGKILL every process whose environment carries `mark`."""
+    wanted = f"{MARK}={mark}".encode()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if wanted in (entry / "environ").read_bytes().split(b"\0"):
+                os.kill(int(entry.name), signal.SIGKILL)
+        except (OSError, ValueError):
+            pass
+
+
+def run_pass(command: list[str], budget: float, kill_after: float) -> int | None:
+    """The pass's exit code, or None when the budget cut it."""
+    mark = f"{os.getpid()}-{time.time_ns()}"
+    env = dict(os.environ, **{MARK: mark})
+    try:
+        process = bounded_process.popen(command, env=env)
+    except OSError as exc:
+        print(f"{PROGRAM}: cannot run {command[0]}: {exc}", file=sys.stderr)
+        return 127
+    try:
+        code = process.wait(timeout=budget)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=kill_after)
+        except subprocess.TimeoutExpired:
+            pass
+        bounded_process.kill_group(process)
+        process.wait()
+        kill_marked(mark)
+        return None
+    bounded_process.release(process)
+    return 128 - code if code < 0 else code
+
+
+def loadavg() -> str:
+    try:
+        return " ".join(Path("/proc/loadavg").read_text().split()[:3])
+    except OSError:
+        return "?"
+
+
+def main(argv: list[str]) -> int:
+    if "--" not in argv:
+        print(f"usage: {PROGRAM} ORDER --budget SECONDS [--kill-after SECONDS] "
+              "[--deferred-exit CODE] -- COMMAND [ARGUMENTS...]", file=sys.stderr)
+        return 2
+    split = argv.index("--")
+    options, command = argv[:split], argv[split + 1:]
+    parser = argparse.ArgumentParser(prog=PROGRAM, description="Run one pass of an order within its budget.")
+    parser.add_argument("order", metavar="ORDER")
+    parser.add_argument("--budget", required=True, type=positive, help="seconds the pass may take")
+    parser.add_argument("--kill-after", type=positive, default=5.0,
+                        help="seconds between SIGTERM and SIGKILL at the budget (5)")
+    parser.add_argument("--deferred-exit", type=int, help="the pass's own exit for « gave up, nothing lost »")
+    try:
+        args = parser.parse_args(options)
+    except SystemExit as exc:
+        return 2 if exc.code else 0
+    if not NAME.match(args.order):
+        print(f"{PROGRAM}: not an order name: {args.order!r}", file=sys.stderr)
+        return 2
+    if not command:
+        print(f"{PROGRAM}: no command after --", file=sys.stderr)
+        return 2
+
+    budget_text = f"{args.budget:g}s"
+    code = run_pass(command, args.budget, args.kill_after)
+    if code is None:
+        cut = f"budget exceeded after {budget_text}"
+    elif args.deferred_exit is not None and code == args.deferred_exit:
+        cut = f"pass gave up within its {budget_text} budget (exit {code})"
+    else:
+        count_file(args.order).unlink(missing_ok=True)
+        return code
+
+    counts = count_file(args.order)
+    try:
+        in_a_row = int(counts.read_text().strip() or 0) + 1
+    except (OSError, ValueError):
+        in_a_row = 1
+    try:
+        counts.parent.mkdir(parents=True, exist_ok=True)
+        counts.write_text(f"{in_a_row}\n")
+        written = True
+    except OSError:
+        written = False
+    if written and in_a_row < DEFER_LIMIT:
+        print(f"{args.order}: {cut} — pass deferred ({in_a_row} of {DEFER_LIMIT} in a row, loadavg {loadavg()})",
+              flush=True)
+        return 0
+    print(f"{args.order}: {cut} — {in_a_row} passes in a row cut short (loadavg {loadavg()})", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

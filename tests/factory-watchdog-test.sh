@@ -184,7 +184,8 @@ creates() { grep -c '^bd create' "$CALLS" || true; }
 reset_logs() { : > "$CALLS"; : > "$MAIL"; }
 
 # 0. the watchdog owns a budget below the order's 180-second deadline -------
-# A pass cut by it under load is deferred; only passes cut in a row fail.
+# A pass cut by it under load is deferred through bin/bounded-pass, which
+# alone holds the count and its limit (tests/bounded-pass-test.py).
 DEFERRED_FILE="$TMP/city/.gc/runtime/factory-watchdog-deferred-passes"
 cut_pass() {
   FACTORY_WATCHDOG_BUDGET_SECONDS=0.1 \
@@ -199,16 +200,10 @@ out=$(cut_pass); rc=$?
 set -e
 elapsed_ns=$(( $(date +%s%N) - started_ns ))
 [ "$rc" = "0" ] || { echo "$out" >&2; fail "one pass cut by the budget must be deferred, not failed (was $rc)"; }
-grep -q 'internal budget exceeded after 0.1s — pass deferred (1 of 3 in a row' <<<"$out" \
+grep -q 'factory-watchdog: budget exceeded after 0.1s — pass deferred (1 of 3 in a row' <<<"$out" \
   || { echo "$out" >&2; fail "a deferred pass must name its own deadline and its count"; }
 [ "$elapsed_ns" -lt 2000000000 ] \
   || fail "a hung child must return before the watchdog's outer deadline"
-set +e
-cut_pass >/dev/null; out=$(cut_pass); rc=$?
-set -e
-[ "$rc" = "2" ] || { echo "$out" >&2; fail "a third pass cut in a row must exit 2 (was $rc)"; }
-grep -q 'internal budget exceeded after 0.1s — 3 passes in a row cut short' <<<"$out" \
-  || { echo "$out" >&2; fail "a repeated budget expiry must say it is repeated"; }
 sleep 3
 [ ! -s "$GC_SLEEP_DONE" ] || fail "the hung child survived the watchdog budget"
 
@@ -226,7 +221,8 @@ out=$(FACTORY_WATCHDOG_BUDGET_SECONDS=7 FACTORY_WATCHDOG_TEST_OBSERVE_SLEEP=30 \
   FACTORY_ROOT="$TMP/city" "$WATCHDOG" 2>&1); rc=$?
 set -e
 [ "$rc" = "0" ] || { echo "$out" >&2; fail "a slow live observation must be deferred (was $rc)"; }
-grep -q 'live observation deferred: it did not fit in the 7s budget — pass deferred (1 of 3' <<<"$out" \
+grep -q 'live observation — deferred to the next pass' <<<"$out" \
+  && grep -q 'pass gave up within its 7s budget (exit 75) — pass deferred (1 of 3' <<<"$out" \
   || { echo "$out" >&2; fail "a deferred live observation must say so"; }
 set +e
 out=$(FACTORY_WATCHDOG_TEST_OBSERVE_RC=2 FACTORY_ROOT="$TMP/city" "$WATCHDOG" 2>&1); rc=$?

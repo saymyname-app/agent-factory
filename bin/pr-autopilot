@@ -62,44 +62,20 @@ done
 # order's deadline, with a margin for bin/order-pause and the controller. A
 # pass cut by this stop loses nothing -- every write is re-read on the next
 # tick, 3 min later, and a cut call is already "unknown" -- so it is deferred
-# (exit 0), and only PR_AUTOPILOT_DEFER_LIMIT passes cut in a row fail the
-# order (exit 2). The count is reset by any pass that finishes.
+# (exit 0), and only three passes cut in a row fail the order (exit 2). The
+# count is reset by any pass that finishes. `bin/bounded-pass` holds that rule
+# for every order (S.load-cut, af-56yoam.7).
 AP_STOP="${PR_AUTOPILOT_STOP_SECONDS:-105}"    # + 5 s kill stays 10 s under the order's 120 s
-AP_DEFER_LIMIT="${PR_AUTOPILOT_DEFER_LIMIT:-3}"
-AP_DEFERRED_FILE="$FACTORY/.gc/runtime/pr-autopilot-deferred-passes"
 if [ "${PR_AUTOPILOT_STOP_ACTIVE:-0}" != "1" ]; then
-  for _v in "$AP_STOP" "$AP_DEFER_LIMIT"; do
-    case "$_v" in *[!0-9]*|'') echo "invalid pr-autopilot stop: '$_v'" >&2; exit 2 ;; esac
-  done
   # The run's scratch dir is owned here: a run killed at the stop never
-  # reaches its own EXIT trap.
+  # reaches its own EXIT trap. Each bounded() call is a timeout(1) in a group
+  # of its own, so a call in flight outlived the cut run until its own cap
+  # (af-i9llwm): bounded-pass kills every process the run started, whatever
+  # its group.
   PR_AUTOPILOT_TMPDIR=$(mktemp -d); trap 'rm -rf "$PR_AUTOPILOT_TMPDIR"' EXIT
   PR_AUTOPILOT_STOP_ACTIVE=1 PR_AUTOPILOT_TMPDIR="$PR_AUTOPILOT_TMPDIR" \
-    timeout --kill-after=5s "$AP_STOP" "$0" "$@"
-  stop_rc=$?
-  if [ "$stop_rc" != "124" ] && [ "$stop_rc" != "137" ]; then
-    rm -f "$AP_DEFERRED_FILE"
-    exit "$stop_rc"
-  fi
-  # The stop kills the run's process group, but each bounded() call is a
-  # timeout(1) in a group of its own: a call in flight outlived the cut run
-  # until its own cap (af-i9llwm, caught by lib/ci_test_reaper.py). Every
-  # process of the run carries its scratch dir in its environment; what is
-  # left of it is killed here.
-  for _pid in $(grep -lzxF "PR_AUTOPILOT_TMPDIR=$PR_AUTOPILOT_TMPDIR" /proc/[0-9]*/environ 2>/dev/null \
-                | sed 's#^/proc/\([0-9]*\)/environ$#\1#'); do
-    kill -KILL "$_pid" 2>/dev/null
-  done
-  load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
-  in_a_row=$(( $(cat "$AP_DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
-  if mkdir -p "$(dirname "$AP_DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$AP_DEFERRED_FILE" 2>/dev/null \
-     && [ "$in_a_row" -lt "$AP_DEFER_LIMIT" ]; then
-    printf 'pr-autopilot: run stopped at %ss — pass deferred (%s of %s in a row, loadavg %s), retried next tick\n' \
-      "$AP_STOP" "$in_a_row" "$AP_DEFER_LIMIT" "$load"
-    exit 0
-  fi
-  printf 'pr-autopilot: run stopped at %ss — %s passes in a row cut short (loadavg %s)\n' "$AP_STOP" "$in_a_row" "$load" >&2
-  exit 2
+    "$(dirname "${BASH_SOURCE[0]}")/bounded-pass" pr-autopilot --budget "$AP_STOP" -- "$0" "$@"
+  exit $?
 fi
 
 # rig_dir | repo | protected branch | required GitHub Actions workflow

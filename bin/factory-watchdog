@@ -86,8 +86,6 @@ CONVOY_STATE="${FACTORY_WATCHDOG_CONVOY_STATE_BIN:-$(dirname "${BASH_SOURCE[0]}"
 OPERATOR_CONFIG="${OPERATOR_CONFIG_BIN:-$(dirname "${BASH_SOURCE[0]}")/operator-config}"
 OBSERVE_BIN="${FACTORY_WATCHDOG_OBSERVE_BIN:-$(dirname "${BASH_SOURCE[0]}")/factory-observe}"
 BUDGET_SECONDS="${FACTORY_WATCHDOG_BUDGET_SECONDS:-150}"
-DEFER_LIMIT="${FACTORY_WATCHDOG_DEFER_LIMIT:-3}"
-DEFERRED_FILE="$ROOT/.gc/runtime/factory-watchdog-deferred-passes"
 # The child's own "pass cut short, nothing lost" exit: the live observation
 # did not fit in what was left of the budget and runs again next pass.
 EXIT_DEFERRED=75
@@ -101,30 +99,14 @@ EXIT_DEFERRED=75
 # budget: every gc read is slower, none is wedged. One pass cut short loses
 # nothing -- the next one, five minutes later, reads the same state and resends
 # what factory-observe still holds pending -- so it is deferred (exit 0), and
-# only DEFER_LIMIT passes cut short in a row are a watchdog failure (exit 2).
+# only three passes cut short in a row are a watchdog failure (exit 2).
+# `bin/bounded-pass` holds that rule for every order (S.load-cut,
+# af-56yoam.7); EXIT_DEFERRED counts as a cut.
 if [ "${FACTORY_WATCHDOG_BUDGET_ACTIVE:-0}" != "1" ]; then
-  FACTORY_WATCHDOG_DEADLINE=$(awk -v now="$(date +%s.%N)" -v b="$BUDGET_SECONDS" 'BEGIN { printf "%.3f", now + b }') \
-    FACTORY_WATCHDOG_BUDGET_ACTIVE=1 timeout --kill-after=5s "$BUDGET_SECONDS" "$0" "$@"
-  budget_rc=$?
-  if [ "$budget_rc" != "124" ] && [ "$budget_rc" != "137" ] && [ "$budget_rc" != "$EXIT_DEFERRED" ]; then
-    rm -f "$DEFERRED_FILE"
-    exit "$budget_rc"
-  fi
-  if [ "$budget_rc" = "$EXIT_DEFERRED" ]; then
-    cut="live observation deferred: it did not fit in the ${BUDGET_SECONDS}s budget"
-  else
-    cut="internal budget exceeded after ${BUDGET_SECONDS}s"
-  fi
-  load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
-  in_a_row=$(( $(cat "$DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
-  if mkdir -p "$(dirname "$DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$DEFERRED_FILE" 2>/dev/null \
-     && [ "$in_a_row" -lt "$DEFER_LIMIT" ]; then
-    printf 'factory-watchdog: %s — pass deferred (%s of %s in a row, loadavg %s)\n' \
-      "$cut" "$in_a_row" "$DEFER_LIMIT" "$load"
-    exit 0
-  fi
-  printf 'factory-watchdog: %s — %s passes in a row cut short (loadavg %s)\n' "$cut" "$in_a_row" "$load" >&2
-  exit 2
+  FACTORY_WATCHDOG_DEADLINE=$(awk -v now="$(date +%s.%N)" -v b="$BUDGET_SECONDS" 'BEGIN { printf "%.3f", now + b }')
+  export FACTORY_WATCHDOG_DEADLINE FACTORY_WATCHDOG_BUDGET_ACTIVE=1
+  exec "$(dirname "${BASH_SOURCE[0]}")/bounded-pass" factory-watchdog --budget "$BUDGET_SECONDS" \
+    --deferred-exit "$EXIT_DEFERRED" -- "$0" "$@"
 fi
 
 while [ $# -gt 0 ]; do

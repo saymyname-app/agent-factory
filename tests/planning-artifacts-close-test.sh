@@ -318,8 +318,8 @@ grep -q "closed=2 skipped=2 failed=0" <<<"$out" || { echo "$out" >&2; fail "expe
 # =============================================================================
 # 7. A loaded host slows every tracker call (af-p1d8ka): a run cut by the
 #    tool's own budget, below the order's timeout, is deferred (exit 0)
-#    and closes nothing half-way; only runs cut three times in a row fail,
-#    and a run that finishes clears the count.
+#    and closes nothing half-way, and a run that finishes clears the count.
+#    bin/bounded-pass holds the count and its limit (tests/bounded-pass-test.py).
 # =============================================================================
 
 DEFERRED_FILE="$TMP/.gc/runtime/planning-artifacts-close-deferred-passes"
@@ -341,18 +341,11 @@ rc=0
 out=$(cut_run) || rc=$?
 elapsed_ns=$(( $(date +%s%N) - started_ns ))
 [ "$rc" -eq 0 ] || { echo "$out" >&2; fail "one run cut by the budget must be deferred, not failed (was $rc)"; }
-grep -q 'internal budget exceeded after 0.3s — run deferred (1 of 3 in a row' <<<"$out" \
+grep -q 'planning-artifacts-close: budget exceeded after 0.3s — pass deferred (1 of 3 in a row' <<<"$out" \
   || { echo "$out" >&2; fail "a deferred run must name its own deadline and its count"; }
 [ "$elapsed_ns" -lt 4000000000 ] || fail "a slow tracker call must be cut at the tool's budget"
 [ -s "$CLOSE_LOG" ] && fail "a run cut by the budget closed something"
-rc=0
-cut_run >/dev/null || rc=$?
-[ "$rc" -eq 0 ] || fail "a second run cut in a row must still be deferred (was $rc)"
-rc=0
-out=$(cut_run) || rc=$?
-[ "$rc" -eq 2 ] || { echo "$out" >&2; fail "a third run cut in a row must exit 2 (was $rc)"; }
-grep -q 'internal budget exceeded after 0.3s — 3 runs in a row cut short' <<<"$out" \
-  || { echo "$out" >&2; fail "a repeated budget expiry must say it is repeated"; }
+[ -e "$DEFERRED_FILE" ] || fail "a deferred run must be counted"
 
 out=$(run_tool)
 grep -q "closed=2 skipped=0 failed=0" <<<"$out" || { echo "$out" >&2; fail "the run after the deferred ones did not close what they left"; }
@@ -444,4 +437,4 @@ order_timeout=$(sed -n 's/^timeout = "\([0-9][0-9]*\)s"$/\1/p' "$ORDER")
 grep -qx 'trigger = "cooldown"' "$ORDER" || fail "the order must be a cooldown, not fired on every bead close"
 grep -q '^on = ' "$ORDER" && fail "the order still names an event"
 
-echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run, a run slowed past its budget deferred until cut three times in a row, a run with no convoy closed since the last pass stops after one tracker call, budget and order timeout hold the whole pass)"
+echo "PASS: planning-artifacts-close (open convoy untouched, bead-mode closes idempotently, claimed Spec closes, file-draft mode untouched without error, marked convoy closed outside its commands keeps its Spec and Draft, unreadable state closes nothing, one bd show per run, a run slowed past its budget deferred, a run with no convoy closed since the last pass stops after one tracker call, budget and order timeout hold the whole pass)"

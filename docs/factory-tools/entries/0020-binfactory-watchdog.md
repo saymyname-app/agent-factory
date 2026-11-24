@@ -27,8 +27,8 @@ Le watchdog possède aussi son groupe de processus et un budget interne de
 mesuré contre un passage live de 47 secondes le 02/11/2026. Il garde ainsi
 plus de trois fois cette durée tout en laissant 30 secondes au contrôleur de
 l'order pour recueillir une erreur précise et tuer le groupe avant sa propre
-limite de 180 secondes. Un enfant bloqué rend donc `factory-watchdog: internal
-budget exceeded` ; il ne survit pas au passage et ne devient pas un vague
+limite de 180 secondes. Un enfant bloqué rend donc `factory-watchdog: budget
+exceeded after 150s` ; il ne survit pas au passage et ne devient pas un vague
 `context deadline exceeded` du contrôleur (`af-ll4hju`).
 
 Sous une forte charge (load 15m ~34), un passage sain peut dépasser ce budget
@@ -38,9 +38,10 @@ lente. L'observation live tourne en dernier, bornée par le temps restant moins
 dans ce temps, ne perd rien : le passage suivant relit le même état et renvoie
 ce que `factory-observe` garde en attente. Il est donc reporté (sortie 0, avec
 `pass deferred (n of 3 in a row, loadavg …)`), et seuls trois passages coupés
-de suite sortent 2 (`FACTORY_WATCHDOG_DEFER_LIMIT`). Le compte est tenu dans
+de suite sortent 2. Le compte est tenu dans
 `.gc/runtime/factory-watchdog-deferred-passes` et remis à zéro par un passage
-qui finit (`af-onrwp8`).
+qui finit (`af-onrwp8`) ; `bin/bounded-pass` tient cette règle pour chaque
+ordre (af-56yoam.7).
 
 **Observe et page seulement** (ADR-0016 §7) : il ne résout jamais une porte,
 ne fusionne ni ne ferme jamais une PR, et ne rouvre jamais un workflow. Chaque

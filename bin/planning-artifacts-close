@@ -37,7 +37,8 @@
 # leaves room for order-pause's own tracker read before it. A run cut by it
 # loses nothing -- every close is idempotent, and the next bead close runs the
 # same pass again over the same convoys -- so it is deferred (exit 0); only
-# PLANNING_ARTIFACTS_CLOSE_DEFER_LIMIT runs cut in a row fail (exit 2).
+# three runs cut in a row fail (exit 2). `bin/bounded-pass` holds that rule
+# for every order (S.load-cut, af-56yoam.7).
 #
 # Most bead closes close no convoy, yet each one paid the whole pass: the
 # list of every closed convoy (12 s at loadavg 20), the state command and
@@ -66,8 +67,6 @@ GC_BIN="${GC_BIN:-gc}"
 CONVOY_STATE_BIN="${CONVOY_STATE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/convoy-state}"
 CHECK_ONLY=0
 BUDGET_SECONDS="${PLANNING_ARTIFACTS_CLOSE_BUDGET_SECONDS:-150}"
-DEFER_LIMIT="${PLANNING_ARTIFACTS_CLOSE_DEFER_LIMIT:-3}"
-DEFERRED_FILE="$ROOT/.gc/runtime/planning-artifacts-close-deferred-passes"
 FULL_PASS_SECONDS="${PLANNING_ARTIFACTS_CLOSE_FULL_PASS_SECONDS:-3600}"
 LAST_PASS_FILE="$ROOT/.gc/runtime/planning-artifacts-close-last-pass"
 
@@ -76,23 +75,9 @@ LAST_PASS_FILE="$ROOT/.gc/runtime/planning-artifacts-close-last-pass"
 # controller's vague "context deadline exceeded" (af-p1d8ka, as af-onrwp8 did
 # for factory-watchdog).
 if [ "${PLANNING_ARTIFACTS_CLOSE_BUDGET_ACTIVE:-0}" != "1" ]; then
-  PLANNING_ARTIFACTS_CLOSE_BUDGET_ACTIVE=1 timeout --kill-after=3s "$BUDGET_SECONDS" "$0" "$@"
-  budget_rc=$?
-  if [ "$budget_rc" != "124" ] && [ "$budget_rc" != "137" ]; then
-    rm -f "$DEFERRED_FILE"
-    exit "$budget_rc"
-  fi
-  load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
-  in_a_row=$(( $(cat "$DEFERRED_FILE" 2>/dev/null || echo 0) + 1 ))
-  if mkdir -p "$(dirname "$DEFERRED_FILE")" 2>/dev/null && printf '%s\n' "$in_a_row" > "$DEFERRED_FILE" 2>/dev/null \
-     && [ "$in_a_row" -lt "$DEFER_LIMIT" ]; then
-    printf '%s: internal budget exceeded after %ss — run deferred (%s of %s in a row, loadavg %s)\n' \
-      "$PROGRAM_NAME" "$BUDGET_SECONDS" "$in_a_row" "$DEFER_LIMIT" "$load"
-    exit 0
-  fi
-  printf '%s: internal budget exceeded after %ss — %s runs in a row cut short (loadavg %s)\n' \
-    "$PROGRAM_NAME" "$BUDGET_SECONDS" "$in_a_row" "$load" >&2
-  exit 2
+  export PLANNING_ARTIFACTS_CLOSE_BUDGET_ACTIVE=1
+  exec "$(dirname -- "${BASH_SOURCE[0]}")/bounded-pass" "$PROGRAM_NAME" --budget "$BUDGET_SECONDS" --kill-after 3 \
+    -- "$0" "$@"
 fi
 
 while [ $# -gt 0 ]; do

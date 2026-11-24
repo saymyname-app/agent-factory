@@ -674,7 +674,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   - `S.load-cut` : Une passe d'ordre coupée ou ralentie par la charge, ou
     qui ne fait que retrouver un constat déjà déposé, est reportée
     (sortie 0) ; seules N passes coupées de suite sont un échec. Passage :
-    aucun (chaque ordre code son report ; T9 : `bounded-pass`).
+    `bin/bounded-pass` (N : sa constante `DEFER_LIMIT`), par lequel passent
+    `convoy-parent-sweep`, `planning-artifacts-close`, `factory-watchdog` et
+    `pr-autopilot` ; un constat déjà déposé reste hors passage.
   - `S.watchdog-stall` : Le gardien signale un ticket sans suite si et
     seulement si personne ne le fait bouger ni ne l'attend par choix de
     Benjamin. Passage : `assess_ticket` de `lib/factory_watchdog.py`, avec
@@ -701,6 +703,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   - `S.autre` : Défaut isolé de la famille, sans règle nommée. Passage :
     aucun.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
+  `python3 tests/bounded-pass-test.py`,
   `python3 tests/alert-dedup-status-test.py`,
   `python3 tests/factory-observe-test.py LiveObservationTest`,
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
