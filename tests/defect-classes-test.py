@@ -78,7 +78,11 @@ class RegisterTest(unittest.TestCase):
             # (rules block, expected rules or the refusal)
             ("", {}),
             ("- Règles :\n  - `P.own` : Meurt avec son\n    propriétaire. Passage : `lib/b.py`.\n",
-             {"P.own": ("Meurt avec son propriétaire.", "`lib/b.py`")}),
+             {"P.own": ("Meurt avec son propriétaire.", "`lib/b.py`", None)}),
+            # af-56yoam.5: a closed rule, its single function delivered.
+            ("- Règles :\n  - `P.own` : Meurt. Passage : `lib/b.py`. Fermée\n    le 2026-11-24 par #933.\n",
+             {"P.own": ("Meurt.", "`lib/b.py`", {"date": "2026-11-24", "pr": 933})}),
+            ("- Règles :\n  - `P.own` : Meurt. Passage : `lib/b.py`. Fermée le 24/11 par #933.\n", "mal écrit"),
             ("- Règles :\n  - `I.own` : Phrase. Passage : aucun.\n", "rangée sous la catégorie P"),
             ("- Règles :\n  - `P.own` : Phrase sans passage.\n", "sans sa phrase"),
             ("- Règles :\n  - `P.own` : A. Passage : aucun.\n  - `P.own` : B. Passage : aucun.\n", "en double"),
@@ -92,7 +96,7 @@ class RegisterTest(unittest.TestCase):
                         defect_classes.load(registry)
                     continue
                 entry = defect_classes.load(registry)["P"]
-                self.assertEqual(expected, {k: (r["rule"], r["passage"]) for k, r in entry["rules"].items()})
+                self.assertEqual(expected, {k: (r["rule"], r["passage"], r["closed"]) for k, r in entry["rules"].items()})
                 self.assertEqual("aucune connue.", entry["Ouvertes"])
 
 
@@ -313,10 +317,14 @@ class ByRuleTest(unittest.TestCase):
         self.assertLessEqual(set(range(717, 930)) - {714, 715, 716}, set(baseline))
         self.assertEqual("aucune", baseline[737]["rule"])
         self.assertEqual(("I.repair-resume", "premiere"), (baseline[783]["rule"], baseline[783]["nature"]))
-        decision = defect_classes.d1(baseline)
-        self.assertEqual("2026-12-21", decision["review"])
-        self.assertIn("I.repair-resume", decision["watched"])
-        self.assertEqual(decision["reference_slips"] // 2, decision["monthly_max"])
+        self.assertEqual(("P.own", "prevue"), (baseline[738]["rule"], baseline[738]["nature"]))
+        decision = defect_classes.d1(baseline, known)
+        # af-56yoam.5: D1 as fixed on 23/11/2026 19:50 Paris.
+        self.assertEqual(("2026-12-21", ["2026-12-01", "2026-12-20"], 0.3),
+                         (decision["review"], decision["period"], decision["max_slip_share"]))
+        self.assertEqual((86, 140, 0.61), (decision["reference_slips"], decision["reference_defects"],
+                                           decision["reference_share"]))
+        self.assertEqual({"date": "2026-11-24", "pr": 933}, decision["closed"]["S.merge-confirmed"])
 
     def test_a_baseline_row_with_an_unknown_rule_or_nature_is_refused(self):
         for line, refusal in [("1\t2026-11-01\tP.nope\tpremiere\tx\n", "P.nope"),
@@ -362,6 +370,23 @@ class ByRuleTest(unittest.TestCase):
         self.assertEqual({"2026-11": {"premiere": 1, "prevue": 0, "glissement": 1}}, counted["months"])
         self.assertEqual({"P.own": [11]}, counted["slips"])
 
+    def test_a_slip_merged_after_its_rule_was_closed_is_counted_apart(self):
+        # af-56yoam.5: D1 holds the slips on a closed rule at zero.
+        known = dict(KNOWN, **{"P.own": {"closed": {"date": "2026-11-10", "pr": 15}}})
+        baseline = {10: row(10, "2026-10-30", "P.own", "premiere"),
+                    11: row(11, "2026-11-02", "P.own", "glissement"),
+                    14: row(14, "2026-11-10", "P.own", "glissement"),
+                    15: row(15, "2026-11-10", "P.own", "glissement"),
+                    16: row(16, "2026-11-10", "P.own", "glissement")}
+        prs = [{"number": 20, "body": "Règle : P.own\n", "mergedAt": "2026-11-30T23:30:00Z"},
+               {"number": 21, "body": "Règle : P.own — prévue (af-x)\n", "mergedAt": "2026-12-02T10:00:00Z"}]
+
+        counted = defect_classes.by_rule(prs, baseline, known, "2026-10-01")
+
+        self.assertEqual([{"pr": 16, "rule": "P.own", "date": "2026-11-10"},
+                          {"pr": 20, "rule": "P.own", "date": "2026-12-01"}], counted["closed_slips"])
+        self.assertEqual([], defect_classes.by_rule(prs, baseline, KNOWN, "2026-10-01")["closed_slips"])
+
     def test_a_rule_fixed_before_the_window_still_makes_a_later_fix_a_slip(self):
         baseline = {10: row(10, "2026-10-30", "P.own", "premiere")}
         prs = [{"number": 20, "body": "Règle : P.own\n", "mergedAt": "2026-12-02T10:00:00Z"}]
@@ -382,7 +407,8 @@ class ByRuleTest(unittest.TestCase):
             self.assertEqual(0, proc.returncode, proc.stderr)
             out = json.loads(proc.stdout)
             self.assertEqual(1, out["rules"]["P.own"]["2026-12"]["glissement"])
-            self.assertIn("P.own", out["d1"]["watched"])
+            self.assertEqual(0.61, out["d1"]["reference_share"])
+            self.assertEqual([], out["closed_slips"])
             self.assertEqual([], out["unclassified"])
 
 

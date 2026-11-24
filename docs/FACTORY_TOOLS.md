@@ -2355,9 +2355,10 @@ la semaine (Paris), `observed.rule_recurrence` donne les glissements, les
 répétitions prévues et les premières corrections par règle concrète de
 `docs/DEFECT_CLASSES.md`, lues par `lib/defect_classes.py` dans
 `docs/defect-rules-baseline.tsv` puis sur la ligne `Règle :` des PR plus
-récentes, et les juge contre l'objectif D1 : zéro glissement sur les règles
-qui ont glissé au moins deux fois dans la base, au plus la moitié des
-glissements de novembre 2026 par mois, revue le 21/12/2026 (af-56yoam.4).
+récentes, et les juge contre l'objectif D1 (af-56yoam.5) : la part des PR
+de défaut du mois qui sont des glissements, au plus 30 % (novembre 2026 :
+61 %), et zéro glissement sur une règle que le registre marque « Fermée le
+<date> par #<PR> », revue le 21/12/2026 (af-56yoam.4).
 Une PR sans ligne ni place dans la base est comptée « sans règle ».
 
 Une mesure sans source vaut `null`, état `unmeasured`, avec sa raison ;

@@ -53,13 +53,28 @@ concrète : une phrase vérifiable par du code, un identifiant stable, son
 point de passage unique. Une répétition est **prévue** quand un « où
 ailleurs » antérieur a ouvert un ticket pour ce site, ou qu'elle suit un
 découpage planifié ; c'est un **glissement** quand la règle avait déjà une
-correction fusionnée et revient. Objectif D1 : zéro glissement sur les
-règles qui ont glissé au moins deux fois dans la base de référence (les
-règles qui reviennent vraiment), et les glissements du mois divisés par
-deux par rapport à novembre 2026 (du 1er au 23, dans la base) ; revue le
-21/12/2026 (af-56yoam.4). Une règle `<CODE>.autre` range les défauts isolés d'une
-famille : elle ne glisse jamais, et trois PR de même cause en font une
-règle nommée.
+correction fusionnée et revient. Une règle `<CODE>.autre` range les
+défauts isolés d'une famille : elle ne glisse jamais, et trois PR de même
+cause en font une règle nommée.
+
+Objectif D1, figé le 23/11/2026 à 19:50 Paris (commentaire sur af-56yoam).
+Intent (Benjamin, ses mots, 23/11/2026 19:41 Paris) : « Fait », à la
+proposition de lancer un juge aveugle et d'appliquer la nouvelle forme de
+D1 si l'accord atteint 70 %. Le juge s'est accordé à 90 % sur « glissement
+ou non » (20 PR). Mechanism (interprétation de l'agent, af-56yoam.5) :
+
+1. la part des PR de défaut qui sont des glissements : 86/140 (61 %) en
+   novembre 2026, du 1er au 23, dans la base ; au plus 30 % du 01/12 au
+   20/12/2026 ;
+2. zéro glissement sur une règle **fermée**, celle dont la fonction unique
+   est livrée : sa ligne porte `Fermée le <AAAA-MM-JJ> par #<PR>.` après
+   son passage. Un glissement sur une règle fermée rouvre sa fonction
+   unique : on ne lui ajoute pas un cas ;
+3. revue le 21/12/2026 (af-56yoam.4).
+
+Cette forme remplace celle de af-56yoam.1 (18 règles à zéro, plafond de 43
+glissements par mois). `lib/defect_classes.py` la calcule (`d1`) et
+`bin/factory-weekly` la juge chaque semaine.
 
 ## Format
 
@@ -76,7 +91,9 @@ espaces) :
 
 Et le champ `Règles` : la ligne `- Règles :`, puis une règle concrète par
 ligne `` - `<CODE>.<règle>` : <phrase vérifiable>. Passage : <point de
-passage unique, ou aucun>. `` indentée de deux espaces (sa suite de quatre).
+passage unique, ou aucun>. `` indentée de deux espaces (sa suite de quatre),
+suivie de `Fermée le <AAAA-MM-JJ> par #<PR>.` quand la PR qui livre sa
+fonction unique est fusionnée.
 L'identifiant ne change plus une fois écrit : la base de référence et les
 PR le citent.
 
@@ -656,7 +673,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
     la règle de levée de `lib/delivery_rules.py`.
   - `S.merge-confirmed` : Un état de PR (armée, fusionnée, relancée) n'est
     annoncé qu'une fois relu sur GitHub. Passage : `merge_and_confirm` de
-    `lib/merge_confirm.sh` (armer, fusionner, désarmer, relancer).
+    `lib/merge_confirm.sh` (armer, fusionner, désarmer, relancer). Fermée
+    le 2026-11-24 par #933.
   - `S.fixed-deadline` : Un test attend l'événement qu'il éprouve, jamais
     une échéance d'horloge fixe que la charge fait tomber. Passage :
     `isolated_city_wait_for` (`tests/lib/isolated-city.sh`) pour les
