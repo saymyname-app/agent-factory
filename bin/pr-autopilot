@@ -111,6 +111,10 @@ fi
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/protected_rigs.sh"
 # shellcheck source=lib/work_route_release.sh
 . "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/work_route_release.sh"
+# Every arm, merge, disarm and rerun goes through merge_and_confirm, which
+# reads GitHub back before a state is announced (S.merge-confirmed).
+# shellcheck source=lib/merge_confirm.sh
+. "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/merge_confirm.sh"
 RIGS=("${PROTECTED_RIGS[@]}")
 DELIVER_CLOSE_BIN="${DELIVER_CLOSE_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/deliver-close}"
 DELIVERY_PROOF_BIN="${DELIVERY_PROOF_BIN:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd -P)/factory_delivery_proof.py}"
@@ -444,26 +448,39 @@ case "$ARMED_MERGE_DELAY_SECONDS" in *[!0-9]*|'') log "invalid armed merge delay
 # Branch deletion is separate: a queued request is not a merge (af-x2ozgs).
 # GitHub/native maintenance cleans branches only after confirmed merge.
 direct_merge() {  # repo num head_sha
-  local repo=$1 num=$2 sha=$3 rc d_rc final
-  local -a args=(pr merge "$num" --repo "$repo" --squash)
-  [ "$sha" != "unknown" ] && args+=(--match-head-commit "$sha")
-  if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh ${args[*]}"; return 0; fi
-  bounded "$AP_WRITE_CAP" gh "${args[@]}" >/dev/null 2>&1; d_rc=$?
-  # A successful request may only enqueue the PR; always read GitHub before
-  # claiming merge (PR #778 waited in the queue after gh returned zero).
-  final=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" --json state \
-    --jq .state 2>/dev/null); rc=$?
-  if [ "$final" = "MERGED" ]; then
-    if [ "$d_rc" = 0 ]; then log "    merged (server-confirmed)"
-    else log "    merged (local cleanup failed; see factory-guard worktrees)"; fi
-    ARMED=$((ARMED+1))
-  elif [ "$d_rc" = 0 ] && [ "$rc" = 0 ] && [ "$final" = "OPEN" ]; then
-    log "    merge requested; GitHub still reports OPEN"
-    ARMED=$((ARMED+1))
-  elif timed_out "$d_rc" || timed_out "$rc"; then
-    log "    direct merge outcome unknown (a gh call timed out) -- re-read next tick"
+  local repo=$1 num=$2 sha=$3 rc pin=""
+  [ "$sha" != "unknown" ] && pin=" --match-head-commit $sha"
+  if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh pr merge $num --repo $repo --squash$pin"; return 0; fi
+  # A successful request may only enqueue the PR; merge_and_confirm reads
+  # GitHub before merged is claimed (PR #778 waited in the queue after gh
+  # returned zero).
+  MERGE_CONFIRM_WRITE_CAP=$AP_WRITE_CAP MERGE_CONFIRM_READ_CAP=$AP_READ_CAP \
+    merge_and_confirm merge "$repo" "$num" "$sha"; rc=$?
+  case "$rc:$MERGE_CONFIRMED_STATE" in
+    0:merged)
+      if [ "$MERGE_CONFIRMED_REQUEST_RC" = 0 ]; then log "    merged (server-confirmed)"
+      else log "    merged (local cleanup failed; see factory-guard worktrees)"; fi
+      ARMED=$((ARMED+1)) ;;
+    1:queued)
+      log "    merge requested; GitHub still reports OPEN -- queued or waiting for checks, not merged"
+      ARMED=$((ARMED+1)) ;;
+    2:*)
+      log "    direct merge outcome unknown (a gh call timed out or GitHub could not be read) -- re-read next tick" ;;
+    *)
+      log "    direct merge failed (GitHub reads $MERGE_CONFIRMED_STATE) — left for a human"; ERRORS=$((ERRORS+1)) ;;
+  esac
+}
+
+# Disarm through the confirming door: the log says what GitHub reads after.
+disarm_auto_merge() {  # repo num why
+  local repo=$1 num=$2 why=$3
+  log "  PR #$num: disarming auto-merge ($why)"
+  if [ "$DRY_RUN" = "1" ]; then log "  DRY-RUN: gh pr merge $num --repo $repo --disable-auto"; return 0; fi
+  if MERGE_CONFIRM_WRITE_CAP=$AP_WRITE_CAP MERGE_CONFIRM_READ_CAP=$AP_READ_CAP \
+      merge_and_confirm disarm "$repo" "$num"; then
+    log "    auto-merge disarmed server-side"
   else
-    log "    direct merge failed — left for a human"; ERRORS=$((ERRORS+1))
+    log "    disarm not confirmed: GitHub reads ${MERGE_CONFIRMED_STATE} -- re-read next tick"
   fi
 }
 
@@ -519,8 +536,7 @@ reversibility_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
       if [ "$rc" = "4" ]; then label=irreversible-change; color=B60205
       else label=reversibility-declaration-needed; color=FBCA04; fi
       if [ "$armed" != "null" ] && [ -n "$armed" ]; then
-        log "  PR #$num: disarming auto-merge (reversibility)"
-        run gh pr merge "$num" --repo "$repo" --disable-auto >/dev/null 2>&1
+        disarm_auto_merge "$repo" "$num" "reversibility"
       fi
       case "$labels" in
         *" $label "*) vlog "PR #$num: held ($label), already explained on the PR" ;;
@@ -586,8 +602,7 @@ project_descriptor_gate() {  # repo num sha labels armed -> 0 proceed, 1 hold
     return 0
   fi
   if [ "$armed" != "null" ] && [ -n "$armed" ]; then
-    log "  PR #$num: disarming auto-merge (project descriptor add/remove)"
-    run gh pr merge "$num" --repo "$repo" --disable-auto >/dev/null 2>&1
+    disarm_auto_merge "$repo" "$num" "project descriptor add/remove"
   fi
   case "$labels" in
     *" $PROJECT_HOLD_LABEL "*) vlog "PR #$num: held ($PROJECT_HOLD_LABEL), already explained on the PR" ;;
@@ -730,8 +745,7 @@ maintenance_form_gate() {  # repo rig_dir num sha branch labels armed -> 0 proce
     return 1
   fi
   if [ "$armed" != "null" ] && [ -n "$armed" ]; then
-    log "  PR #$num: disarming auto-merge (maintenance form missing)"
-    run gh pr merge "$num" --repo "$repo" --disable-auto >/dev/null 2>&1
+    disarm_auto_merge "$repo" "$num" "maintenance form missing"
   fi
   case "$labels" in
     *" $MAINTENANCE_FORM_LABEL "*) vlog "PR #$num: held ($MAINTENANCE_FORM_LABEL), already explained on the PR" ;;
@@ -903,10 +917,15 @@ retry_ci_failure() {  # repo num sha workflow -> 0 retried, 1 already retried, 2
   run_id=$(jq -r --arg wf "$workflow" \
     '[.[]|select(.name==$wf and .conclusion=="failure")][0].databaseId // empty' <<<"$runs" 2>/dev/null)
   [ -n "$run_id" ] || return 2
-  log "  PR #$num: required check failed -> retrying once (run $run_id)"
-  run gh run rerun "$run_id" --repo "$repo" --failed >/dev/null 2>&1; rc=$?
-  timed_out "$rc" && return 2
-  [ "$rc" = 0 ] || return 2
+  if [ "$DRY_RUN" = "1" ]; then
+    log "  DRY-RUN: gh run rerun $run_id --repo $repo --failed"
+  else
+    # Retried only once GitHub reads the run as started again: a refused
+    # request, or a run still completed, is not a retry (af-1l3znv).
+    MERGE_CONFIRM_WRITE_CAP=$AP_WRITE_CAP MERGE_CONFIRM_READ_CAP=$AP_READ_CAP \
+      merge_and_confirm rerun "$repo" "$run_id" || return 2
+    log "  PR #$num: required check failed -> rerun confirmed on GitHub (run $run_id)"
+  fi
   run gh pr comment "$num" --repo "$repo" --body "$marker" >/dev/null 2>&1
   return 0
 }
@@ -1463,21 +1482,25 @@ Push a commit that fixes it (often a conflict with what merged meanwhile), or qu
       log "  DRY-RUN: gh pr merge $num --repo $repo --auto --squash"
       ARMED=$((ARMED+1))
     else
-      bounded "$AP_WRITE_CAP" gh pr merge "$num" --repo "$repo" --auto --squash >/dev/null 2>&1; arm_rc=$?
+      MERGE_CONFIRM_WRITE_CAP=$AP_WRITE_CAP MERGE_CONFIRM_READ_CAP=$AP_READ_CAP \
+        merge_and_confirm arm "$repo" "$num"; arm_confirmed=$?; arm_rc=$MERGE_CONFIRMED_REQUEST_RC
       if timed_out "$arm_rc"; then
         # Unknown, not failed: no re-read and no direct merge on a guess -- the
         # next tick reads autoMergeRequest from the server like any other PR.
         log "    arm request timed out -- outcome unknown, re-read next tick"
+      elif [ "$arm_confirmed" = 2 ]; then
+        log "    state re-read failed or timed out -- unknown, not merging this pass"
+      elif [ "$MERGE_CONFIRMED_STATE" = "merged" ]; then
+        log "    already merged server-side"; ARMED=$((ARMED+1))
+      elif [ "$MERGE_CONFIRMED_STATE" = "armed" ]; then
+        log "    auto-merge is armed server-side"; ARMED=$((ARMED+1))
       else
         # A zero exit means the request was accepted locally, not that GitHub
-        # persisted it (PR #767). Re-read the complete merge gate after every
-        # definite response, including the exact head; stale pre-request data
-        # must never authorize the fallback direct merge.
-        after_json=$(bounded "$AP_READ_CAP" gh pr view "$num" --repo "$repo" \
-          --json state,autoMergeRequest,mergeStateStatus,statusCheckRollup,headRefOid 2>/dev/null); after_rc=$?
-        after=""
-        if [ "$after_rc" = 0 ] && ! after=$(printf '%s' "$after_json" | jq -r --arg reqcheck "$required_check" '[
-            .state, (.autoMergeRequest!=null), (.mergeStateStatus//"?"),
+        # persisted it (PR #767). The complete merge gate is read from the
+        # view merge_and_confirm read back, including the exact head; stale
+        # pre-request data must never authorize the fallback direct merge.
+        after=$(printf '%s' "$MERGE_CONFIRMED_VIEW" | jq -r --arg reqcheck "$required_check" '[
+            .state, (.mergeStateStatus//"?"),
             ((.statusCheckRollup//[]) as $roll
              | ($roll|map(select((((.name//.context//"")=="") or ((.name//.context//"")==$reqcheck))))) as $req
              | if ($req|length)==0 then "NONE"
@@ -1485,26 +1508,14 @@ Push a commit that fixes it (often a conflict with what merged meanwhile), or qu
                elif ($req|any((.status//"COMPLETED")!="COMPLETED" or .state=="PENDING" or .state=="EXPECTED")) then "PENDING"
                else "OK" end),
             (.headRefOid//"unknown")
-          ]|@tsv' 2>/dev/null); then
-          after_rc=1
-        fi
-        if timed_out "$after_rc"; then
-          log "    state re-read timed out -- unknown, not merging this pass"
-        elif [ "$after_rc" != 0 ] || [ -z "$after" ]; then
-          log "    state re-read failed -- unknown, not merging this pass"
+          ]|@tsv' 2>/dev/null) || after=""
+        IFS=$'\t' read -r after_state after_merge_state after_checks after_sha <<<"$after"
+        if [ "$after_state" = "OPEN" ] && [ "$after_merge_state" = "CLEAN" ] \
+            && [ "$after_checks" = "OK" ] && [ "$sha" != "unknown" ] && [ "$after_sha" = "$sha" ]; then
+          log "    auto-merge unavailable after local exit $arm_rc; same head is green and CLEAN -> direct squash merge"
+          direct_merge "$repo" "$num" "$sha"
         else
-          IFS=$'\t' read -r after_state after_armed after_merge_state after_checks after_sha <<<"$after"
-          if [ "$after_state" = "MERGED" ]; then
-            log "    already merged server-side"; ARMED=$((ARMED+1))
-          elif [ "$after_armed" = "true" ]; then
-            log "    auto-merge is armed server-side"; ARMED=$((ARMED+1))
-          elif [ "$after_state" = "OPEN" ] && [ "$after_merge_state" = "CLEAN" ] \
-              && [ "$after_checks" = "OK" ] && [ "$sha" != "unknown" ] && [ "$after_sha" = "$sha" ]; then
-            log "    auto-merge unavailable after local exit $arm_rc; same head is green and CLEAN -> direct squash merge"
-            direct_merge "$repo" "$num" "$sha"
-          else
-            log "    auto-merge not confirmed; server gate is '$after_state'/'$after_merge_state'/'$after_checks' head '$after_sha' — waiting, not merging"
-          fi
+          log "    auto-merge not confirmed; server gate is '$after_state'/'$after_merge_state'/'$after_checks' head '$after_sha' — waiting, not merging"
         fi
       fi
     fi

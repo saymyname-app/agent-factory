@@ -65,7 +65,7 @@ JSON
 
 # gh stub: `pr merge` exits 1 for PR 33 and 34 (33 is nevertheless merged
 # server-side, as when gh cannot delete a branch a worktree still pins);
-# `pr view --json state` answers MERGED for 33 and OPEN for the others.
+# `pr view --json state,...` answers MERGED for 33 and OPEN for the others.
 cat > "$TMP/bin/gh" <<STUB
 #!/usr/bin/env bash
 echo "\$*" >> "$TMP/gh.log"
@@ -97,6 +97,8 @@ if [[ \$1 == pr && \$2 == view ]]; then
       40) printf '%s\n' '{"state":"OPEN","autoMergeRequest":null,"mergeStateStatus":"DIRTY","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"af40"}' ;;
       41) exit 1 ;;
       42) printf '%s\n' '{"state":"OPEN","autoMergeRequest":{"mergeMethod":"SQUASH"},"mergeStateStatus":"CLEAN","statusCheckRollup":[{"name":"Tests","status":"COMPLETED","conclusion":"SUCCESS"}],"headRefOid":"af42"}' ;;
+      33) printf '%s\n' '{"state":"MERGED","autoMergeRequest":null}' ;;
+      *)  printf '%s\n' '{"state":"OPEN","autoMergeRequest":null}' ;;
     esac
     exit 0
   fi

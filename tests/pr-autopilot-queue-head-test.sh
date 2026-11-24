@@ -98,6 +98,8 @@ if [[ \$1 == pr && \$2 == view ]]; then
   if [[ "\$*" == *"--json comments"* ]]; then cat "$TMP/comments.txt"; exit 0; fi
   echo '["OPEN","false"]' | jq -r '@tsv'; exit 0
 fi
+# The rerun is read back started (S.merge-confirmed): GitHub reads it queued.
+if [[ \$1 == run && \$2 == view ]]; then echo '{"status":"queued","conclusion":""}'; exit 0; fi
 if [[ \$1 == run && \$2 == list ]]; then
   [[ " \$* " == *" --arg "* || " \$* " == *" --jq "* ]] && { echo "unsupported by this fake: \$*" >&2; exit 1; }
   [ -n "\${RETRY_RUN:-}" ] && echo "[{\\"databaseId\\":\$RETRY_RUN,\\"name\\":\\"Factory CI\\",\\"conclusion\\":\\"failure\\"}]" || echo '[]'
