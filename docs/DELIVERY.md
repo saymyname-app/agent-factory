@@ -676,7 +676,8 @@ fix repaired the place it was seen and wrote the rest « hors périmètre ».
   rule already fixed that comes back), from `docs/defect-rules-baseline.tsv`
   for the pull requests merged from 22/10 to 23/11/2026 and from the
   `Règle :` line after. `bin/factory-weekly` shows the month's slips against
-  decision D1.
+  decision D1, the pull requests the « Maintenance form » check refused
+  during D1's period, and D1's stop criterion (`docs/DEFECT_CLASSES.md`).
 
 | Kind of change | Where CI runs | Before the pull request | Why |
 |---|---|---|---|

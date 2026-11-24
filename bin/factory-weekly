@@ -39,8 +39,10 @@ concrete rule of docs/DEFECT_CLASSES.md, from `lib/defect_classes.py`
 (baseline docs/defect-rules-baseline.tsv, then the `Règle :` line of later
 pull requests), against decision D1 (af-56yoam.5): the share of the month's
 defect pull requests that are slips, at most 30 % (November 2026: 61 %), and
-zero slip on a rule the register marks closed; review on 21/12/2026. Observed
-under "rule_recurrence"; a pull request with neither is counted unclassified.
+zero slip on a rule the register marks closed; review on 21/12/2026 with its
+stop criterion, and the pull requests the gate « Maintenance form » refused
+during the period (af-56yoam.9). Observed under "rule_recurrence"; a pull
+request with neither is counted unclassified.
 
 A measure without a source is null, status "unmeasured", with its reason.
 Contract of the JSON: agent-factory-weekly-measure/v1 (read by the Cockpit).
@@ -251,6 +253,8 @@ def rule_recurrence(repo, end):
     except (defect_classes.RegistryError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
         return {"month": month, "status": "unmeasured", "reason": str(exc)[:200]}
     decision = defect_classes.d1(baseline, known)
+    until = datetime.fromtimestamp(end - 1, PARIS).strftime("%Y-%m-%d")
+    decision["gate_refusals"] = gate_refusals(repo, decision["period"][0], min(decision["period"][1], until))
     natures = counted["months"].get(month, dict.fromkeys(defect_classes.NATURES, 0))
     by_rule = {rule: cells[month]["glissement"] for rule, cells in counted["rules"].items()
                if cells.get(month, {}).get("glissement")}
@@ -261,6 +265,22 @@ def rule_recurrence(repo, end):
             "planned": natures["prevue"], "first": natures["premiere"], "slip_share": share,
             "slips_by_rule": dict(sorted(by_rule.items(), key=lambda kv: (-kv[1], kv[0]))),
             "closed_slips": closed, "unclassified": len(counted["unclassified"]), "d1": decision}
+
+
+def gate_refusals(repo, start, end):
+    """The pull requests whose required check « Maintenance form » failed at
+    least once from `start` to `end` (run creation dates, GitHub's UTC): the
+    refusals of the gate (af-56yoam.9). Whether each was justified is judged at
+    D1's review."""
+    if end < start:
+        return {"prs": 0, "branches": []}
+    try:
+        runs = json.loads(run([GH, "run", "list", "-R", repo, "--workflow", "maintenance-form.yml", "--status", "failure",
+                               "--created", f"{start}..{end}", "--limit", "1000", "--json", "headBranch,event"]) or "[]")
+    except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        return {"prs": None, "reason": str(exc)[:200]}
+    branches = sorted({r["headBranch"] for r in runs if r.get("event") == "pull_request"})
+    return {"prs": len(branches), "branches": branches}
 
 
 def week_bounds(week):
@@ -361,6 +381,9 @@ def recurrence_lines(r):
     review = datetime.strptime(d1["review"], "%Y-%m-%d").strftime("%d/%m/%Y")
     share = "sans PR de défaut" if r["slip_share"] is None else f"{round(r['slip_share'] * 100)} %"
     start, end = (datetime.strptime(day, "%Y-%m-%d").strftime("%d/%m") for day in d1["period"])
+    gate, stop = d1["gate_refusals"], d1["stop"]
+    refusals = (f"non mesuré : {gate['reason']}" if gate["prs"] is None
+                else f"{gate['prs']} PR" + (f" ({', '.join(gate['branches'])})" if gate["branches"] else ""))
     return [f"Récidives par règle ({month}, Paris, af-56yoam) : {r['slips']} glissements, {r['planned']} répétitions "
             f"prévues, {r['first']} premières corrections ; {r['unclassified']} PR fusionnées sans ligne « Règle : » "
             f"ni place dans la base de référence.",
@@ -369,7 +392,13 @@ def recurrence_lines(r):
             f"{round(d1['max_slip_share'] * 100)} % du {start} au {end} (novembre 2026 : "
             f"{d1['reference_slips']}/{d1['reference_defects']}, {round(d1['reference_share'] * 100)} %) ; "
             f"0 glissement sur les {len(d1['closed'])} règles fermées (ce mois : {closed}) : "
-            f"{'OK' if r['status'] == 'ok' else 'KO'}. Revue le {review} ({d1['bead']})."]
+            f"{'OK' if r['status'] == 'ok' else 'KO'}. Revue le {review} ({d1['bead']}).",
+            f"Refus de la porte « Maintenance form » du {start} au {end} (contrôle en échec au moins une fois) : "
+            f"{refusals}.",
+            f"Critère d'arrêt (Benjamin, 24/11/2026) : à la revue, si la part des glissements dépasse encore "
+            f"{round(stop['share_above'] * 100)} %, ou si plus d'un refus sur "
+            f"{stop['unjustified_refusals_above'].split('/')[1]} est injustifié, on retire la porte obligatoire ; "
+            f"la mesure reste."]
 
 
 def main(argv):
