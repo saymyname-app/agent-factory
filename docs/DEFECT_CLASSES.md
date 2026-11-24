@@ -655,8 +655,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
     Benjamin. Passage : `assess_ticket` de `lib/factory_watchdog.py`, avec
     la règle de levée de `lib/delivery_rules.py`.
   - `S.merge-confirmed` : Un état de PR (armée, fusionnée, relancée) n'est
-    annoncé qu'une fois relu sur GitHub. Passage : aucun (T9 :
-    `merge_and_confirm`).
+    annoncé qu'une fois relu sur GitHub. Passage : `merge_and_confirm` de
+    `lib/merge_confirm.sh` (armer, fusionner, désarmer, relancer).
   - `S.fixed-deadline` : Un test attend l'événement qu'il éprouve, jamais
     une échéance d'horloge fixe que la charge fait tomber. Passage :
     `isolated_city_wait_for` (`tests/lib/isolated-city.sh`) pour les
@@ -677,6 +677,7 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `bash tests/pr-autopilot-armed-not-merged-test.sh`,
   `bash tests/pr-autopilot-transient-retry-test.sh`,
   `bash tests/pr-autopilot-unproven-merge-test.sh`,
+  `bash tests/merge-confirm-test.sh`,
   `python3 tests/tdd-step-test.py TddStepTest.test_green_refusal_keeps_the_failing_control_after_long_regression_output`,
   `python3 tests/role-adoption-trial-codex-test.py`,
   `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
@@ -708,7 +709,11 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   vérification n'échoue et qu'elle n'est ni fusionnée ni fermée ; le troisième refuse qu'une sortie locale 0 compte comme
   armement sans relecture GitHub et tient la fusion directe au head, à CLEAN et
   au contrôle requis vert ; il relit aussi GitHub après toute demande de fusion
-  directe et n'annonce la fusion que si le serveur répond `MERGED`. Le contrôle
+  directe et n'annonce la fusion que si le serveur répond `MERGED`. Le
+  contrôle `merge-confirm` tient la table de `merge_and_confirm` : une
+  demande acceptée dont la PR reste en file n'est pas « fusionnée », une PR
+  relue `MERGED` l'est, une erreur GitHub laisse l'état inconnu et sans
+  annonce, et une relance n'est dite faite que si le run relu a redémarré. Le contrôle
   9 du gardien (#688) couvre les tickets que personne ne bouge, pas les autres
   signaux ; `StalledTicketRules` tient qu'un ticket qui attend ce que Benjamin
   a choisi (le Planning Run, une réparation liée encore ouverte) n'est pas

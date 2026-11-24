@@ -74,6 +74,11 @@ if [[ "\$1" == run && "\$2" == list ]]; then
   jq -r "\$jq_expr" <<<"\$runs"
   exit
 fi
+# After the accepted rerun of run-50, GitHub reads the run queued again.
+if [[ "\$1" == run && "\$2" == view ]]; then
+  [[ "\$3" == run-50 ]] && echo '{"status":"queued","conclusion":""}'
+  exit 0
+fi
 if [[ "\$1" == run && "\$2" == rerun ]]; then
   [[ "\$3" == run-50 ]]
   exit
