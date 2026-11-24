@@ -7,9 +7,14 @@ On 2026-11-13 on-order-failed looked for the bead of a failing order with
 `--status open` only. That bead, af-65mbq2, was in_progress under its repair,
 so three more beads of the same cause were filed and paged beside it
 (af-0965hq, af-uzajg3, af-to7kkp). A bead taken for repair, or parked, is
-still the bead of its cause. Every `bd list --title-contains` in bin/ either
-reads the unfinished statuses below, or is a sweep that closes only the
-alerts nobody took yet and says so on the line above (`# open only: ...`).
+still the bead of its cause. Every `bd list --title-contains` or
+`--metadata-field` in bin/ and lib/ either reads the unfinished statuses
+below, or is a sweep that closes only the alerts nobody took yet and says so
+on the line above (`# open only: ...`).
+
+Its passage point is lib/alert_dedup.sh (af-56yoam.8): on-order-failed finds
+the bead of a failing order there, by the order's name in metadata, and does
+not list beads itself.
 """
 
 from __future__ import annotations
@@ -20,7 +25,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 UNFINISHED = "--status open,in_progress,blocked,deferred"
-LOOKUP = re.compile(r"\bbd list\b.*--title-contains")
+LOOKUP = re.compile(r"\bbd list\b.*--(title-contains|metadata-field)")
+PASSAGE = "lib/alert_dedup.sh"
 OPEN_ONLY = "# open only:"
 
 
@@ -41,7 +47,7 @@ def offenders(text: str) -> list[str]:
 class AlertDedupStatusTest(unittest.TestCase):
     def test_every_title_lookup_in_bin_reads_the_unfinished_statuses(self):
         bad = {}
-        for script in sorted((ROOT / "bin").iterdir()):
+        for script in sorted([*(ROOT / "bin").iterdir(), *(ROOT / "lib").glob("*.sh")]):
             if not script.is_file():
                 continue
             try:
@@ -49,7 +55,7 @@ class AlertDedupStatusTest(unittest.TestCase):
             except UnicodeDecodeError:
                 continue
             if found := offenders(text):
-                bad[script.name] = found
+                bad[str(script.relative_to(ROOT))] = found
         self.assertEqual(bad, {}, f"a title lookup reads open beads only; use `{UNFINISHED}`, "
                                   f"or mark a sweep that closes untaken alerts with `{OPEN_ONLY} <why>` "
                                   f"on the line above")
@@ -57,6 +63,17 @@ class AlertDedupStatusTest(unittest.TestCase):
     def test_the_lookup_of_the_incident_is_refused(self):
         incident = 'done < <(gc bd list --status open --title-contains "$title" --json)'
         self.assertEqual(len(offenders(incident)), 1)
+
+    def test_on_order_failed_finds_its_bead_through_the_passage_point(self):
+        text = (ROOT / "bin" / "on-order-failed").read_text(encoding="utf-8")
+        self.assertIn(PASSAGE, text)
+        self.assertIn("alert_dedup_unfinished", text)
+        self.assertIn("alert_dedup_last_closed", text)
+        self.assertNotRegex(text, r"\bbd list\b", "on-order-failed lists beads beside its passage point")
+
+    def test_a_metadata_lookup_of_open_beads_only_is_refused(self):
+        lookup = 'gc bd list --status open --metadata-field "gc.order_subject=$s" --json'
+        self.assertEqual(len(offenders(lookup)), 1)
 
     def test_a_marked_sweep_and_the_unfinished_lookup_pass(self):
         sweep = "  # open only: closed by its repair\n  done < <(gc bd list --status open --title-contains \"$P\")"
