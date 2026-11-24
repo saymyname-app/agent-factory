@@ -29,9 +29,10 @@ délai de 120 secondes de son ordre : sous une forte charge (load 15m ~30), un
 passage sain peut l'atteindre sans appel bloqué. Un passage ainsi coupé ne
 perd rien, le suivant relit tout trois minutes plus tard ; il est donc reporté
 (sortie 0, avec `pass deferred (n of 3 in a row, loadavg …)`), et seuls trois
-passages coupés de suite sortent 2 (`PR_AUTOPILOT_DEFER_LIMIT`). Le compte est
+passages coupés de suite sortent 2. Le compte est
 tenu dans `.gc/runtime/pr-autopilot-deferred-passes` et remis à zéro par un
-passage qui finit (`af-pmbhlh`).
+passage qui finit (`af-pmbhlh`) ; `bin/bounded-pass` tient cette règle pour
+chaque ordre (af-56yoam.7).
 
 L'historique entier des Beads d'un rig (`gc bd list --all`), dont la
 réconciliation a besoin à chaque passage, est gardé entre les passages dans
