@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from bounded_process import run as bounded_run  # noqa: E402
+from mail_landed import mail_landed  # noqa: E402
 
 ROOT = os.environ.get("FACTORY_ROOT", "/home/benja/agent-factory")
 GC = os.environ.get("GC_BIN", "gc")
@@ -148,13 +149,17 @@ def main(argv):
             reason=reason, tokens=tokens, age_h=round(age / 3600, 1),
             limit=TOKENS, max_h=round(MAX_AGE / 3600, 1))
         subject = f"HANDOFF: automatic context rotation ({reason})"
+        # A send that overruns its timeout under load has often landed: it is
+        # read back under its --dedup key before the log calls it lost
+        # (af-hlg74k). One key per rotated conversation.
+        dedup = f"mayor-context-rotation:{key}"
         try:
             mail_rc = bounded_run(
-                [GC, "mail", "send", ALIAS, "-s", subject, "-m", body],
+                [GC, "mail", "send", ALIAS, "--dedup", dedup, "-s", subject, "-m", body],
                 cwd=ROOT, capture_output=True, text=True, timeout=COMMAND_TIMEOUT,
             ).returncode
         except subprocess.TimeoutExpired:
-            mail_rc = "timeout"
+            mail_rc = "landed" if mail_landed(GC, dedup) else "timeout"
     status = "rotated" if reset_rc == 0 else "reset-failed"
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     with open(LOG, "a", encoding="utf-8") as fh:

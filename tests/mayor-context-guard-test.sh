@@ -25,10 +25,24 @@ KEY_FILE="$TMP/mayor-key"
 ATTACHED_FILE="$TMP/mayor-attached"; printf 'false' > "$ATTACHED_FILE"
 RESET_RC_FILE="$TMP/reset-rc"; printf '0' > "$RESET_RC_FILE"
 HANG_COMMAND_FILE="$TMP/hang-command"; : > "$HANG_COMMAND_FILE"
+# Keys of the mails the stub stored before hanging (gc stores, then notifies).
+MAIL_STORE="$TMP/mail-store"; : > "$MAIL_STORE"; LANDS_FILE="$TMP/mail-lands"; : > "$LANDS_FILE"
 
 cat > "$TMP/bin/gc" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$CALLS"
+if [ "\$1 \$2" = "mail send" ] && [ -s "$LANDS_FILE" ]; then
+  for a in "\$@"; do [ "\$prev" = "--dedup" ] && printf '%s\n' "\$a" >> "$MAIL_STORE"; prev="\$a"; done
+fi
+if [ "\$1 \$2 \$3 \$4" = "bd list --type message" ]; then
+  for a in "\$@"; do [ "\$prev" = "--metadata-field" ] && want="\${a#mail.dedup_key=}"; prev="\$a"; done
+  if grep -qxF "\$want" "$MAIL_STORE"; then
+    jq -n --arg k "\$want" '[{id:"af-msg", metadata:{"mail.dedup_key":\$k}}]'
+  else
+    echo '[]'
+  fi
+  exit 0
+fi
 if [ "\$(cat "$HANG_COMMAND_FILE")" = "\$1 \$2" ]; then
   sleep 10
 fi
@@ -162,5 +176,14 @@ grep -q 'conversation=conv-g.*mail_rc=timeout.*reset_rc=0' \
 : > "$CALLS"; out=$(guard)
 [ "$(field action "$out")" = "already-rotated" ] || fail "mail timeout must not repeat the reset: $out"
 [ "$(mails)$(resets)" = "00" ] || fail "mail timeout must preserve once-per-conversation state"
+
+# 13. hung mail that stored its message -> recorded as landed, not timeout --
+transcript conv-h 160000 3600 end_turn
+printf 'mail send' > "$HANG_COMMAND_FILE"; printf '1' > "$LANDS_FILE"
+: > "$CALLS"; out=$(guard_with_short_command_budget) || fail "a landed mail stays non-fatal: $out"
+[ "$(field action "$out")" = "rotated" ] || fail "a landed mail must keep the rotation: $out"
+grep -q 'conversation=conv-h.*mail_rc=landed.*reset_rc=0' \
+  "$TMP/city/var/mayor-context-guard.log" || fail "a mail found under its --dedup key must be recorded as landed"
+: > "$HANG_COMMAND_FILE"; : > "$LANDS_FILE"
 
 printf 'PASS: mayor-context-guard rotates the Mayor once per conversation above 150k tokens or 8h\n'

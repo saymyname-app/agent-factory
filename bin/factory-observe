@@ -42,6 +42,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 import factory_observe as fo  # noqa: E402
 import factory_measures as fm  # noqa: E402
 from bounded_process import run as bounded_run  # noqa: E402
+from mail_landed import mail_landed  # noqa: E402
 
 FACTORY_ROOT = Path(os.environ.get("FACTORY_ROOT") or ROOT)
 POLICY_FILE = Path(
@@ -353,7 +354,13 @@ def queue_routes(live: dict[str, Any], events: list[dict[str, Any]]) -> None:
     pending = live.setdefault("pending", [])
     for event in events:
         recipient = event["recipient"]
-        existing = next((item for item in pending if item.get("recipient") == recipient), None)
+        # A route whose send may have landed keeps its events: its mail is
+        # confirmed by its --dedup key, so an event added to it would ride a
+        # mail that never cited it.
+        existing = next((
+            item for item in pending
+            if item.get("recipient") == recipient and not item.get("unconfirmed_passes")
+        ), None)
         if existing is None:
             existing = {
                 "route_id": "route-" + fingerprint({"recipient": recipient, "event": event["event_id"]}),
@@ -388,15 +395,21 @@ def send_route(recipient: str, dedup: str, event_ids: list[Any]) -> str:
     return "sent" if result.returncode == 0 else "refused"
 
 
+def landed(dedup: str) -> bool:
+    return mail_landed(GC_BIN, dedup, timeout=LIVE_SOURCE_TIMEOUT_SECONDS)
+
+
 def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) -> tuple[list[str], list[str]]:
     """Send each pending route once. Returns (failures, deferred).
 
     A loaded host can create the mail and still overrun the timeout before gc
-    answers (af-usvfdb, af-onrwp8). Such a route stays pending and is resent on
-    the next pass under the same --dedup key, which gc suppresses (exit 0) when
-    the first copy landed: it is deferred, not failed. Only a send gc refuses,
-    or a route left unconfirmed MAIL_UNCONFIRMED_PASSES passes in a row, is a
-    failed route.
+    answers (af-usvfdb, af-onrwp8), and on every resend (af-hlg74k): a send
+    that times out is confirmed by reading its message back under its --dedup
+    key, right away and again before the next pass resends it. Found, the
+    route is sent. Not found, it stays pending and is resent under the same
+    key on the next pass: it is deferred, not failed. Only a send gc refuses,
+    or a route whose mail is still not found MAIL_UNCONFIRMED_PASSES passes in
+    a row, is a failed route.
     """
     failures: list[str] = []
     deferred: list[str] = []
@@ -406,9 +419,20 @@ def route_pending(live: dict[str, Any], moment: str, live_sessions: set[str]) ->
         event_ids = route.get("event_ids") if isinstance(route.get("event_ids"), list) else []
         recipient = route.get("recipient") or "mayor"
         if recipient != "mayor" and recipient not in live_sessions:
+            # A --dedup key names one mailbox: the mail found under the old
+            # key is in the box of a session that has left.
             recipient = "mayor"
             route["recipient"] = recipient
-        outcome = send_route(recipient, str(route["route_id"]), event_ids)
+            first = event_ids[0] if event_ids else route.get("route_id")
+            route["route_id"] = "route-" + fingerprint({"recipient": recipient, "event": first})
+            route.pop("unconfirmed_passes", None)
+        dedup = str(route["route_id"])
+        if route.get("unconfirmed_passes") and landed(dedup):
+            outcome = "sent"
+        else:
+            outcome = send_route(recipient, dedup, event_ids)
+            if outcome == "unconfirmed" and landed(dedup):
+                outcome = "sent"
         if outcome != "sent":
             if outcome == "unconfirmed":
                 passes = int(route.get("unconfirmed_passes") or 0) + 1
