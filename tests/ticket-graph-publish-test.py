@@ -392,6 +392,24 @@ class TicketGraphPublishBeadModeTest(unittest.TestCase):
         dedup_keys = {send[send.index("--dedup") + 1] for send in sends}
         self.assertEqual(1, len(dedup_keys))
 
+    def test_a_mayor_wake_slow_on_every_send_is_confirmed_by_its_stored_mail(self):
+        # af-hlg74k: a host that stays loaded answers the retry late too; the
+        # mail read back under its --dedup key confirms the wake.
+        self.seed({"draft-1": self.draft_bead(), "spec-1": self.spec_bead(target="A6b")})
+        gc_log = self.tmp / "gc.log"
+        proc = self.bd_publish(check=True, env={
+            SKIP_MAYOR_NOTIFY_ENV: "",
+            "GC_BIN": str(FAKE_GC),
+            "TICKET_GRAPH_GC_LOG": str(gc_log),
+            "TICKET_GRAPH_GC_MAIL_SLOW_LANDS": str(self.tmp / "mail-store"),
+            "TICKET_GRAPH_MAYOR_NOTIFY_TIMEOUT_SECONDS": "2",
+        })
+        result = json.loads(proc.stdout)
+        self.assertIs(True, result["mayor_notified"])
+        self.assertNotIn("NOT woken", proc.stderr)
+        calls = [json.loads(line) for line in gc_log.read_text().splitlines()]
+        self.assertEqual(1, len([call for call in calls if "message" in call]))
+
     def test_bd_publish_accepts_a_spec_claimed_by_a_to_tickets_session(self):
         # Spec handoff (docs/agents/issue-tracker.md): the Spec offered for
         # /to-tickets stays claimed -- in_progress, assigned, maybe still

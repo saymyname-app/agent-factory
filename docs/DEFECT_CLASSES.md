@@ -700,6 +700,9 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
     `bin/escalation-door benjamin`.
   - `S.failure-evidence` : Un échec garde sa preuve (nom du contrôle en
     échec, dossier de l'essai). Passage : aucun.
+  - `S.mail-landed` : Un `gc mail send` borné qui dépasse son délai n'est
+    dit perdu qu'une fois son message cherché sous sa clé `--dedup` et non
+    trouvé. Passage : `mail_landed` de `lib/mail_landed.py`.
   - `S.autre` : Défaut isolé de la famille, sans règle nommée. Passage :
     aucun.
 - Contrôle : `bash tests/on-order-failed-test.sh`,
@@ -714,6 +717,8 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   `python3 tests/role-adoption-trial-codex-test.py`,
   `python3 tests/factory-delivery-proof-test.py ClaimedShippedBead`,
   `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_delivered_but_slow_to_answer_is_not_reported_as_lost`,
+  `python3 tests/ticket-graph-publish-test.py TicketGraphPublishBeadModeTest.test_a_mayor_wake_slow_on_every_send_is_confirmed_by_its_stored_mail`,
+  `python3 tests/mail-landed-callers-test.py`,
   `bash tests/factory-watchdog-test.sh`,
   `python3 tests/factory-watchdog-test.py StalledTicketRules`,
   `bash tests/pr-autopilot-time-budget-test.sh`,
@@ -769,7 +774,12 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   lent à répondre, compte comme perdu : `ticket-graph-publish` rejoue l'envoi
   une fois sous la même clé `--dedup` ; `factory-observe` garde la route en
   attente et la renvoie sous la même clé au passage suivant, et seul un envoi
-  refusé par gc ou resté sans réponse trois passages de suite est un échec. Le
+  refusé par gc ou resté sans réponse trois passages de suite est un échec.
+  Un envoi coupé par son délai est d'abord relu sous sa clé (`mail_landed`) :
+  trouvé, il est remis, même lent à chaque passage (af-hlg74k) ; une route
+  renvoyée au Mayor change de clé, celle d'une session partie ne la confirme
+  pas. `mail-landed-callers` refuse dans `bin/` et `lib/` un `gc mail send`
+  Python borné par un délai qui ne relit pas son message. Le
   contrôle `factory-watchdog` refuse qu'un passage du gardien coupé par son budget sous la charge,
   ou dont l'observation live n'a pas tenu dans le temps restant, compte comme
   un échec de l'ordre : il est reporté (sortie 0), et seuls trois passages
@@ -884,9 +894,16 @@ nouvelle s'ajoute ici, dans la PR du correctif qui la découvre.
   son essai par `timeout 3`, tombé avant que l'essai ait pris son verrou
   et posé son nettoyage, et son dossier restait ; même échéance fixe dans
   `tests/bounded-process-test.py`, qui lisait le pid d'un descendant pas
-  encore écrit).
+  encore écrit) ;
+  af-hlg74k (le 24/11/2026, `gc mail send --notify` prenait ~27 s contre
+  les 20 s de `factory-observe` à chaque passage : le mail était dans la
+  boîte du destinataire, la route comptait trois passages sans réponse et
+  l'ordre `factory-watchdog` a échoué cinq fois en trois heures ; même
+  décision corrigée dans `ticket-graph-publish` et `mayor-context-guard`).
 - Ouvertes : af-dc8eqb (`tests/host-slots-test.py`, budget `timeout 3`
-  d'un essai d'une seconde, qui peut couper sous la charge).
+  d'un essai d'une seconde, qui peut couper sous la charge) ; af-oj3rnv
+  (`idle-ready-work-wake` compte comme envoyé un réveil coupé par son délai,
+  sans le relire).
 
 ## L — Ticket rouvert réclamable par un ouvrier lancé pour un autre
 

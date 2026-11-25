@@ -75,6 +75,7 @@ PROGRAM = "ticket-graph-publish"
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 from factory_city import city_root  # noqa: E402
+from mail_landed import mail_landed  # noqa: E402
 
 # Gas City 1.5 gives an order BD_BIN set and empty: an empty value is no
 # override (af-d130xt).
@@ -1817,6 +1818,10 @@ def notify_mayor(command: str, graph_digest: str, convoy_id: str | None) -> dict
                 return {"mayor_notified": True, "mayor_city": str(city)}
             detail = (proc.stderr or proc.stdout or "").strip() or "no output"
             error = f"gc mail send exited {proc.returncode}: {detail}"
+    # The retry can time out as well when the host stays loaded (af-hlg74k):
+    # whatever gc answered, the mail found under its key was delivered.
+    if mail_landed(GC_BIN, dedup, city=city):
+        return {"mayor_notified": True, "mayor_city": str(city)}
     print(
         f"{PROGRAM}: WARNING: {command} succeeded but the Mayor was NOT woken "
         f"(city {city}): {error}",

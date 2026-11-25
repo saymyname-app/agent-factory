@@ -6,6 +6,11 @@ TICKET_GRAPH_GC_CWD_LOG when set. TICKET_GRAPH_GC_MAIL_FAIL=1 makes the mail
 fail the way a real gc does outside a city. TICKET_GRAPH_GC_MAIL_SLOW_ONCE=<path>
 makes the first mail create <path> (the mail landed) then hang past any
 timeout, the way a loaded host answers late (af-usvfdb); later mails answer.
+TICKET_GRAPH_GC_MAIL_SLOW_LANDS=<path> makes every mail store its --dedup key
+in <path> then hang, the way a host that stays loaded answers every resend
+late (af-hlg74k); `bd list --type message --metadata-field
+mail.dedup_key=<key>` reads that store back, or, under SLOW_ONCE, the mark
+of the first mail.
 
 It also serves the two tracker calls bin/convoy-state makes (`gc bd show <id>
 --json`, `gc bd update <id> [--status S] [--add-label L] [--unset-metadata k] --set-metadata k=v ...`) on the same store as the
@@ -38,11 +43,28 @@ if command[:3] == ["mail", "send", "mayor"]:
     if os.environ.get("TICKET_GRAPH_GC_MAIL_FAIL"):
         print("gc mail send: not in a city directory (no city.toml or .gc/ found)", file=sys.stderr)
         raise SystemExit(1)
+    slow_lands = os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_LANDS")
+    if slow_lands:
+        with Path(slow_lands).open("a", encoding="utf-8") as handle:
+            handle.write(command[command.index("--dedup") + 1] + "\n")
+        import time
+        time.sleep(30)
     slow_once = os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_ONCE")
     if slow_once and not Path(slow_once).exists():
         Path(slow_once).write_text("sent\n", encoding="utf-8")
         import time
         time.sleep(30)
+    raise SystemExit(0)
+if command[:4] == ["bd", "list", "--type", "message"] and (
+    os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_LANDS") or os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_ONCE")
+):
+    key = command[command.index("--metadata-field") + 1].partition("=")[2]
+    if os.environ.get("TICKET_GRAPH_GC_MAIL_SLOW_LANDS"):
+        store = Path(os.environ["TICKET_GRAPH_GC_MAIL_SLOW_LANDS"])
+        landed = store.exists() and key in store.read_text(encoding="utf-8").split()
+    else:  # one publish, one key: the first mail landed when it left its mark
+        landed = Path(os.environ["TICKET_GRAPH_GC_MAIL_SLOW_ONCE"]).exists()
+    print(json.dumps([{"id": "af-msg", "metadata": {"mail.dedup_key": key}}] if landed else []))
     raise SystemExit(0)
 
 

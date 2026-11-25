@@ -32,6 +32,7 @@ EXEMPT = {
     "bin/factory-waiting-guard": "its default is the live city's fixed path",
     "bin/role-adoption-trial": "it names the trial city it builds itself",
     "bin/factory-maintain": "it names only the city given by its --city argument",
+    "lib/mail_landed.py": "it names only the city its caller passes, and none by default",
 }
 NAMES_A_CITY = re.compile(r'--city "\$|"--city",')
 

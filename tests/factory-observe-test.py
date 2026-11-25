@@ -163,6 +163,12 @@ class LiveToolCase(ToolCase):
         self.mail_rc.write_text("0")
         self.mail_sleep = self.tmp / "mail-sleep"
         self.mail_sleep.write_text("0")
+        # A send that lands stores its message (its --dedup key) before the
+        # slow --notify part, as gc does.
+        self.mail_lands = self.tmp / "mail-lands"
+        self.mail_lands.write_text("0")
+        self.messages = self.tmp / "messages.json"
+        self.messages.write_text("[]")
         self.active = self.tmp / "active.json"
         self.requests = self.tmp / "requests.json"
         self.prs = self.tmp / "prs.json"
@@ -240,7 +246,11 @@ args = sys.argv[1:]
 with pathlib.Path({str(self.calls)!r}).open('a') as handle:
     handle.write(json.dumps(args) + '\\n')
 {self._rendezvous_source()}
-if args[:2] == ['bd', 'list']:
+if args[:2] == ['bd', 'list'] and '--type' in args and args[args.index('--type') + 1] == 'message':
+    wanted = args[args.index('--metadata-field') + 1].split('=', 1)
+    messages = json.loads(pathlib.Path({str(self.messages)!r}).read_text())
+    print(json.dumps([m for m in messages if m['metadata'].get(wanted[0]) == wanted[1]]))
+elif args[:2] == ['bd', 'list']:
     rendezvous('bd')
     statuses = args[args.index('--status') + 1].split(',')
     issues = {{}}
@@ -253,6 +263,11 @@ elif args[:2] == ['session', 'list']:
     print(pathlib.Path({str(self.sessions)!r}).read_text())
 elif args[:2] == ['mail', 'send']:
     pathlib.Path({str(self.mail_state)!r}).write_text(pathlib.Path({str(self.state_file)!r}).read_text())
+    if pathlib.Path({str(self.mail_lands)!r}).read_text() == '1':
+        store = pathlib.Path({str(self.messages)!r})
+        store.write_text(json.dumps(json.loads(store.read_text()) + [{{
+            'to': args[2], 'metadata': {{'mail.dedup_key': args[args.index('--dedup') + 1]}},
+        }}]))
     sleep = float(pathlib.Path({str(self.mail_sleep)!r}).read_text())
     time.sleep(sleep)
     active = {{
@@ -489,6 +504,69 @@ class LiveObservationTest(unittest.TestCase):
                 codes.append(run.returncode)
             self.assertEqual([0, 0, 2], codes)
             self.assertEqual(["factory-worker-af-fixture"], json.loads(run.stdout)["route_failures"])
+
+    def slow_live(self, case, moment, timeout="0.1"):
+        env = {**case.live_env(moment), "FACTORY_OBSERVE_MAIL_TIMEOUT_SECONDS": timeout}
+        return case.run_tool("live", env=env, check=False)
+
+    def test_a_slow_mail_found_under_its_key_is_sent_not_deferred(self):
+        # af-hlg74k: gc stored the mail, then took 27 s in --notify against a
+        # 20 s timeout on every pass; the route failed with its mail delivered.
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_sleep.write_text("30")
+            case.mail_lands.write_text("1")
+            # Long enough for the fake to store its message, short of its sleep.
+            slow = self.slow_live(case, 1300, timeout="5")
+            self.assertEqual(0, slow.returncode, slow.stderr)
+            result = json.loads(slow.stdout)
+            self.assertEqual(([], []), (result["route_failures"], result["route_deferred"]))
+            status = json.loads(case.run_tool("status", "--json", env=case.live_env(1300), check=True).stdout)
+            self.assertEqual([], status["live"]["pending"])
+            self.assertEqual("factory-worker-af-fixture", status["live"]["routes"][0]["recipient"])
+
+    def test_a_mail_found_after_its_pass_is_confirmed_without_a_resend(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_sleep.write_text("30")
+            self.assertEqual(0, self.slow_live(case, 1300).returncode)
+            pending = json.loads(case.run_tool(
+                "status", "--json", env=case.live_env(1300), check=True,
+            ).stdout)["live"]["pending"]
+            self.assertEqual(1, len(pending))
+            # The mail landed once the first pass had given up on it.
+            case.messages.write_text(json.dumps([
+                {"to": "factory-worker-af-fixture", "metadata": {"mail.dedup_key": pending[0]["route_id"]}},
+            ]))
+            sends_before = len(case.calls_matching(["mail", "send"]))
+            confirmed = self.slow_live(case, 1600)
+            self.assertEqual(0, confirmed.returncode)
+            self.assertEqual(([], []), (
+                json.loads(confirmed.stdout)["route_failures"], json.loads(confirmed.stdout)["route_deferred"],
+            ))
+            self.assertEqual(sends_before, len(case.calls_matching(["mail", "send"])))
+
+    def test_a_rerouted_route_is_not_confirmed_by_the_mail_of_the_session_that_left(self):
+        with LiveToolCase() as case:
+            case.run_live(1000)
+            case.write_incident(resumed=True, request_active=True)
+            case.mail_sleep.write_text("30")
+            case.mail_lands.write_text("0")
+            self.slow_live(case, 1300)
+            old_key = json.loads(case.run_tool(
+                "status", "--json", env=case.live_env(1300), check=True,
+            ).stdout)["live"]["pending"][0]["route_id"]
+            case.messages.write_text(json.dumps([
+                {"to": "factory-worker-af-fixture", "metadata": {"mail.dedup_key": old_key}},
+            ]))
+            case.sessions.write_text(json.dumps({"sessions": []}))
+            case.mail_sleep.write_text("0")
+            json.loads(case.run_live(1600).stdout)
+            last = case.calls_matching(["mail", "send"])[-1]
+            self.assertEqual("mayor", last[2])
+            self.assertNotEqual(old_key, last[last.index("--dedup") + 1])
 
     def operator_pr(self, case, **changes):
         pr = {
